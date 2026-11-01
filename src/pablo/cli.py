@@ -368,3 +368,33 @@ def export_training(out: Path = Path("training/approved.jsonl")) -> None:
     """Export approved, trainable traces. Escalation traces are always excluded."""
     count = TraceStore(load_settings().traces_dir).export_training(out)
     console.print(f"wrote {count} examples to {out}")
+
+
+@app.command("eval-judge")
+def eval_judge(
+    fake: FakeOpt = False,
+    model: Annotated[
+        str | None, typer.Option(help="Gateway alias (default: the judge lane)")
+    ] = None,
+    write: Annotated[bool, typer.Option(help="Append the table to docs/benchmarks.md")] = False,
+) -> None:
+    """Score the judge on 10 fixed good/bad diffs (evals/judge). Used in M3 to tune it."""
+    from pablo.judge_eval import run_judge_eval
+
+    settings = load_settings()
+    alias = model or settings.lane("judge").model
+    report = run_judge_eval(
+        _backend(settings, fake), alias, threshold=settings.thresholds.judge_needs_you
+    )
+    table = report.to_markdown(alias)
+    console.print(table)
+    sneaky = [r.id for r in report.tests_passed_but_bad if not r.correct]
+    if sneaky:
+        console.print(
+            f"[yellow]Passed tests but should be rejected, judge missed: {', '.join(sneaky)}[/]"
+        )
+    if write:
+        bench = Path(__file__).resolve().parents[2] / "docs" / "benchmarks.md"
+        with bench.open("a", encoding="utf-8") as fh:
+            fh.write("\n" + table)
+        console.print(f"appended to {bench}")

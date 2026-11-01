@@ -18,9 +18,10 @@ lane to port 8003 and the deep lane to 8004.
 4. Bench the judge model on each engine that supports it. Stop other lanes first so VRAM is clean.
 5. Choose an engine per lane; record why in `docs/decisions.md`. Serve judge on 127.0.0.1:8003,
    point `pablo/judge` in `config/litellm.yaml` at it.
-6. Judge quality check: run 10 real M1 diffs (5 good, 5 deliberately broken) through the judge and
-   record certainty. Tune `JUDGE_PROMPT` until broken diffs score below 0.75 and good ones above.
-   Save these 10 as fixtures for M7 evals.
+6. Judge quality check: `uv run pablo eval-judge --write` scores the judge on the 10 fixtures in
+   `evals/judge` (5 good, 5 bad; four of the bad ones pass their tests, so the judge must read the
+   diff). Tune `JUDGE_PROMPT` in judge.py until accuracy is at least 9/10, re-running each time.
+   Add 5 more cases from real M1 runs to `evals/judge/cases.yaml` (they feed M7 evals).
 7. Repeat steps 3–5 for the deep lane on 8004 (fine if it's slow; it runs overnight).
 
 **Acceptance**
