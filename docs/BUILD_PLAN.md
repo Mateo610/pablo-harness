@@ -10,7 +10,7 @@ Status: `todo` · `doing` · `done`. Update this table when a gate passes.
 ## Pablo track (Cursor on Pablo)
 | # | Milestone | Gate (must pass to close) | Status |
 |---|---|---|---|
-| M0 | Pablo baseline | `bootstrap-pablo.sh` reports ready; cockpit in `--fake` mode opens from your laptop over Tailscale and a demo run can be approved | todo |
+| M0 | Pablo baseline | `bootstrap-pablo.sh` reports ready; cockpit in `--fake` mode opens from your laptop over Tailscale and a demo run can be approved | done (phone install skipped) |
 | M1 | Gateway + router and coder lanes | `pablo doctor` shows gateway up; `pablo run` makes a real diff in a scratch repo, checks run, judge scores it | todo |
 | M2 | Port the good parts of ai-coding-team | Complexity predictor and TOON export live under `src/pablo/` with tests; old folder archived read-only | todo |
 | M3 | Judge and deep engines + benchmarks | Judge lane on KTransformers (or best measured engine); `docs/benchmarks.md` compares engines on tok/s, VRAM, load time | todo |

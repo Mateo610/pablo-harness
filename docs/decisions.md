@@ -9,6 +9,8 @@ One entry per choice the prompts left open: date, decision, why, alternatives.
 | 2026-10-31 | Start fresh; port the good parts of ai-coding-team in M2 | Clean structure without losing the useful pieces |
 | 2026-10-31 | Apache-2.0 | Permissive with a patent grant; compatible with the MIT/Apache tools we borrow from |
 | 2026-11-01 | CUDA toolkit 13.0 from NVIDIA's apt repo, driver 580+ | PyTorch's default PyPI wheels moved to CUDA 13.0 (2.11+) and 12.8 is being dropped (2.12); 13.0 supports the 3090 (sm_86). Ubuntu's `nvidia-cuda-toolkit` is 12.0, too old. If an engine needs 12.x, install it side by side in /usr/local/cuda-12.x. |
+| 2026-11-01 | Installed `cuda-toolkit-13-0` only; driver stayed `nvidia-driver-580-open` 580.95.05 | `nvcc` reports 13.0.88. The `cuda` meta-package also installs a driver, so it was not used. |
+| 2026-11-01 | Models and engines go in `~/pablo-data` on `/dev/nvme0n1p2` | `/` and `$HOME` are the same ext4 on the WD Black SN7100 2 TB, with about 1.7 TB free. There is no second disk or mount. This is the default `$PABLO_DATA`. |
 
 ### Installing CUDA 13.0 on Pablo
 ```bash
