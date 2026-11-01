@@ -24,25 +24,37 @@ from pablo.hunks import select as select_hunks
 from pablo.judge import judge
 from pablo.router import Router
 from pablo.traces import Trace, TraceStore
-from pablo.verify import Verdict, apply_diff, verify_diff
+from pablo.verify import Verdict, _recount_hunks, apply_diff, verify_diff
 
 RunState = Literal["running", "ready", "needs_you", "approved", "rejected", "failed"]
 
 CODER_PROMPT = """You are the coder on a small local team. Make the smallest correct change.
 Reply with a short explanation, then exactly one unified diff in a ```diff fenced block,
-with paths relative to the repo root (a/ and b/ prefixes). Include tests when behavior changes."""
+with paths relative to the repo root (a/ and b/ prefixes). Include tests when behavior changes.
+The diff must apply with `git apply`:
+- No `index` lines, and no code after the @@ header.
+- A context line starts with one space. A blank context line is one space, never an empty line.
+- The counts in @@ -start,count +start,count @@ must match the lines in that hunk.
+- Copy context exactly from the numbered files. The number before | is the line
+  number; do not copy the number or the |.
+- A new test must import every name it calls.
+End the diff with a newline."""
 
 REPAIR_PROMPT = """That diff did not apply. `git apply` said:
 
 {error}
 
-Re-read the files above and reply with one corrected unified diff in a ```diff block.
-Copy context lines exactly from the current file contents."""
+Re-read the numbered files and reply with one corrected unified diff in a ```diff block.
+No `index` lines. A blank context line is a single space.
+Hunk counts must match the lines that follow.
+Copy context exactly, without the line number or the |. End the diff with a newline."""
 
 ANSWER_PROMPT = """You are a specialist on a small local team. Answer directly and concretely."""
 
 MAX_TREE = 200
 MAX_FILE_CHARS = 12_000
+MAX_CONTEXT_FILES = 6
+_SKIP_CONTEXT_SUFFIXES = (".lock", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".woff", ".woff2")
 
 
 class PartialChecksFailed(RuntimeError):
@@ -82,11 +94,38 @@ def extract_diff(text: str) -> tuple[str, str]:
     match = re.search(r"```(?:diff|patch)\s*\n(.*?)```", text, re.S)
     if not match:
         return text.strip(), ""
-    diff = match.group(1)
-    if not diff.endswith("\n"):
-        diff += "\n"
+    diff = _clean_diff(match.group(1))
     explanation = (text[: match.start()] + text[match.end() :]).strip()
     return explanation, diff
+
+
+def _clean_diff(diff: str) -> str:
+    """Make a model diff something `git apply` can read.
+
+    Models invent non-hex `index` hashes, and they drop the leading space on a
+    blank context line. Both make git report a corrupt patch.
+    """
+    lines: list[str] = []
+    in_hunk = False
+    for line in diff.splitlines():
+        if line.startswith("index "):
+            continue
+        if line.startswith("@@"):
+            in_hunk = True
+            lines.append(line)
+            continue
+        if line.startswith(("diff --git", "--- ")):
+            in_hunk = False
+            lines.append(line)
+            continue
+        if in_hunk and line == "":
+            lines.append(" ")
+            continue
+        lines.append(line)
+    text = "\n".join(_recount_hunks(lines))
+    if text and not text.endswith("\n"):
+        text += "\n"
+    return text
 
 
 def repo_context(repo: Path, task: str) -> str:
@@ -106,10 +145,15 @@ def repo_context(repo: Path, task: str) -> str:
         ]
     tree = "\n".join(sorted(listed)[:MAX_TREE])
     named = [f for f in listed if f in task or Path(f).name in task]
+    if not named:
+        # A task like "add mul to the module" names no path. Show the small sources
+        # so the diff can copy real context. A repo map replaces this in M6.
+        named = [f for f in sorted(listed) if not f.endswith(_SKIP_CONTEXT_SUFFIXES)]
     blocks = []
-    for rel in named[:6]:
+    for rel in named[:MAX_CONTEXT_FILES]:
         body = (repo / rel).read_text(encoding="utf-8", errors="replace")[:MAX_FILE_CHARS]
-        blocks.append(f"--- {rel}\n{body}")
+        numbered = "\n".join(f"{i:4}|{line}" for i, line in enumerate(body.splitlines(), 1))
+        blocks.append(f"--- {rel}\n{numbered}")
     return f"Repo files:\n{tree}\n\n" + "\n\n".join(blocks)
 
 

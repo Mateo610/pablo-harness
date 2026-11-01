@@ -6,6 +6,7 @@ directory today; Milestone 4 swaps it for an AerolVM sandbox with no network.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import tempfile
@@ -72,6 +73,20 @@ def diff_stats(diff: str) -> tuple[int, int, list[str]]:
 
 
 def apply_diff(repo: Path, diff: str, *, check_only: bool = False) -> tuple[bool, str]:
+    ok, err = _git_apply(repo, diff, check_only=check_only)
+    if ok:
+        return True, ""
+    # Models often invent one blank context line after the last real line.
+    alt = _drop_phantom_blank_context(diff)
+    if alt != diff:
+        ok, err2 = _git_apply(repo, alt, check_only=check_only)
+        if ok:
+            return True, ""
+        err = err2 or err
+    return False, err
+
+
+def _git_apply(repo: Path, diff: str, *, check_only: bool) -> tuple[bool, str]:
     args = ["git", "apply", "--whitespace=nowarn"]
     if check_only:
         args.append("--check")
@@ -79,6 +94,78 @@ def apply_diff(repo: Path, diff: str, *, check_only: bool = False) -> tuple[bool
         [*args, "-"], cwd=repo, input=diff, text=True, capture_output=True, check=False
     )
     return proc.returncode == 0, proc.stderr.strip()
+
+
+def _recount_hunks(lines: list[str]) -> list[str]:
+    """Rewrite @@ counts from the lines that follow. Models undercount by one."""
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if not line.startswith("@@"):
+            out.append(line)
+            i += 1
+            continue
+        hunk: list[str] = []
+        i += 1
+        while i < len(lines) and not lines[i].startswith(("@@", "diff --git", "--- ")):
+            hunk.append(lines[i])
+            i += 1
+        old = new = 0
+        for hline in hunk:
+            if hline.startswith("+"):
+                new += 1
+            elif hline.startswith("-"):
+                old += 1
+            elif hline.startswith("\\"):
+                continue
+            else:
+                old += 1
+                new += 1
+        header = line
+        start = re.match(r"@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)", line)
+        if start and (old or new):
+            suffix = start.group(3)
+            header = f"@@ -{start.group(1)},{old} +{start.group(2)},{new} @@{suffix}"
+        out.append(header)
+        out.extend(hunk)
+    return out
+
+
+def _drop_phantom_blank_context(diff: str) -> str:
+    """Remove a blank context line that sits immediately before the first change."""
+    lines = diff.splitlines()
+    out: list[str] = []
+    i = 0
+    changed = False
+    while i < len(lines):
+        line = lines[i]
+        if not line.startswith("@@"):
+            out.append(line)
+            i += 1
+            continue
+        header = line
+        i += 1
+        hunk: list[str] = []
+        while i < len(lines) and not lines[i].startswith(("@@", "diff --git", "--- ")):
+            hunk.append(lines[i])
+            i += 1
+        change = next((n for n, hline in enumerate(hunk) if hline[:1] in "+-"), None)
+        if change is not None:
+            start = change
+            while start > 0 and hunk[start - 1] == " ":
+                start -= 1
+            if start != change:
+                hunk = hunk[:start] + hunk[change:]
+                changed = True
+        out.append(header)
+        out.extend(hunk)
+    if not changed:
+        return diff if diff.endswith("\n") or not diff else diff + "\n"
+    text = "\n".join(_recount_hunks(out))
+    if text and not text.endswith("\n"):
+        text += "\n"
+    return text
 
 
 def run_check(name: str, command: list[str], cwd: Path, timeout_s: float = 300) -> Check:

@@ -13,7 +13,7 @@ from pablo.orchestrator import Orchestrator, extract_diff
 from pablo.plan import Plan, starter_plan
 from pablo.router import Router, estimate_complexity
 from pablo.traces import Trace, TraceStore
-from pablo.verify import diff_stats, verify_diff
+from pablo.verify import apply_diff, diff_stats, verify_diff
 
 CHECKS = {"tests": [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"]}
 
@@ -107,6 +107,46 @@ def test_extract_diff() -> None:
     explanation, diff = extract_diff(coder_reply(GOOD_DIFF))
     assert explanation == "Here is the change."
     assert diff.startswith("diff --git")
+
+
+def test_extract_diff_drops_invented_index_lines() -> None:
+    raw = coder_reply(
+        "diff --git a/calc.py b/calc.py\nindex 1234567..abcdefg 100644\n--- a/calc.py\n"
+    )
+    _, diff = extract_diff(raw)
+    assert "index " not in diff
+    assert diff.endswith("\n")
+
+
+def test_extract_diff_restores_blank_context_lines() -> None:
+    raw = coder_reply(
+        "diff --git a/calc.py b/calc.py\n--- a/calc.py\n+++ b/calc.py\n"
+        "@@ -1,1 +1,2 @@\n context\n\n+added\n"
+    )
+    _, diff = extract_diff(raw)
+    assert "\n \n+added\n" in diff
+
+
+def test_extract_diff_fixes_hunk_counts() -> None:
+    raw = coder_reply("--- a/calc.py\n+++ b/calc.py\n@@ -1,1 +1,1 @@\n context\n+added\n")
+    _, diff = extract_diff(raw)
+    assert "@@ -1,1 +1,2 @@" in diff
+
+
+def test_phantom_blank_context_still_applies(repo: Path) -> None:
+    diff = (
+        "diff --git a/calc.py b/calc.py\n"
+        "--- a/calc.py\n"
+        "+++ b/calc.py\n"
+        "@@ -1,3 +1,6 @@\n"
+        " def add(a, b):\n"
+        "     return a + b\n"
+        " \n"
+        "+def sub(a, b):\n"
+        "+    return a - b\n"
+    )
+    ok, err = apply_diff(repo, diff, check_only=True)
+    assert ok, err
 
 
 def test_parse_judgement_handles_junk() -> None:
@@ -293,6 +333,17 @@ def test_compare_runs_both_and_approving_one_rejects_other(settings: Settings, r
     assert orch.get(b.id).state == "rejected"
     with pytest.raises(PermissionError):
         orch.compare("x", ["coder", "claude"])
+
+
+def test_unnamed_task_shows_source_files(settings: Settings, repo: Path) -> None:
+    backend = FakeBackend(
+        scripts={"pablo/coder": [coder_reply(GOOD_DIFF)], "pablo/judge": [judge_reply(0.9)]}
+    )
+    orch = Orchestrator(settings, backend, repo=repo, checks=CHECKS)
+    orch.start("add a function mul(a, b) to the module with a test", lane="coder")
+    user = backend.calls[0][1][-1]["content"]
+    assert "def add(a, b):" in user
+    assert "def test_add" in user
 
 
 def test_unappliable_diff_gets_one_repair(settings: Settings, repo: Path) -> None:

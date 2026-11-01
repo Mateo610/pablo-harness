@@ -111,7 +111,30 @@ def find_config(start: Path | None = None) -> Path:
     return Path(__file__).resolve().parents[2] / "config" / "lanes.yaml"
 
 
+def load_env_file(path: Path) -> None:
+    """Load KEY=VALUE lines from path. Variables already in the environment win."""
+    if not path.is_file():
+        return
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line.removeprefix("export ").strip()
+        key, sep, value = line.partition("=")
+        if not sep:
+            continue
+        key = key.strip()
+        if not key or key in os.environ:
+            continue
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        os.environ[key] = value
+
+
 def load_settings(path: Path | None = None) -> Settings:
     path = path or find_config()
+    load_env_file(path.parent / ".env")
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return Settings.model_validate(data)

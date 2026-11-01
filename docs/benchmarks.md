@@ -1,3 +1,24 @@
 # Benchmarks
 
 Measured on Pablo (RTX 3090 24 GB, 64 GB DDR4, WD SN7100 2 TB). Append, never overwrite.
+
+## 2026-11-01 · M1 coder and router
+
+llama.cpp `b12031` (commit `060b2fe`), CUDA sm_86. Context 16384. Thinking off (`--reasoning off`).
+
+| Lane | Weights | Where | Load | Prompt tok/s | Gen tok/s | Time to first token |
+|---|---|---|---|---|---|---|
+| coder | Qwen3.6-35B-A3B UD-Q4_K_S | GPU, `-ngl 99`, `-ctk q8_0 -ctv q8_0`, `--n-cpu-moe 2` | 9 s | 127 | 121 | 0.17 s |
+| router | Qwen3.5-4B Q4_K_M | CPU, `-ngl 0` | 3 s | 60 | 12 | 0.54 s |
+
+VRAM during a coder generation, router resident on CPU: used 20426 MiB, free 3696 MiB (headroom 3.6 GB). N was not raised past 2.
+
+Scratch repo `~/pablo-sandbox/hello`, checks `uv run pytest -q`.
+
+| Task | Result | Checks | Judge certainty |
+|---|---|---|---|
+| add `mul(a, b)` with a test | pass | passed | 1.00 |
+| fix `mul` (returned a sum) | pass | passed | 1.00 |
+| add `sub(a, b)` with a test | pass | passed | 1.00 |
+
+The coder often undercounts `@@` hunk lengths and inserts a blank context line the file does not have. The harness recounts hunks and, if `git apply` fails, retries once without that blank line.

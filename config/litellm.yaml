@@ -6,7 +6,7 @@
 # Milestone 4 puts a swapper (e.g. llama-swap) in front of 8001-8004 so lanes load on demand.
 #
 #   8001  coder   Qwen3.6 35B-A3B (GGUF, llama.cpp)          M1
-#   8002  router  OpenJev 4B v2 (always resident)            M1
+#   8002  router  Qwen3.5-4B Q4 (CPU, always loaded)        M1
 #   8003  judge   DeepSeek V4 Flash REAP (KTransformers)     M3
 #   8004  deep    GLM-5.2 (colibrì or KTransformers)         M3
 #   8005  media   media dispatcher (Qwen-Image, TRELLIS.2)   M9

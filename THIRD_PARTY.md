@@ -39,4 +39,5 @@ and how it is used. Add a row before adding a dependency or copying code.
 Record each model's name, source URL, license, and revision in its archive SOURCE.txt and here.
 | Model | License | Lane |
 |---|---|---|
-| _fill in at M1_ | | |
+| Qwen3.6-35B-A3B UD-Q4_K_S (Unsloth GGUF of `Qwen/Qwen3.6-35B-A3B`, rev `a483e9e6cbd595906af30beda3187c2663a1118c`) | Apache-2.0 | coder, and judge until M3 |
+| Qwen3.5-4B Q4_K_M (Unsloth GGUF of `Qwen/Qwen3.5-4B`, rev `e87f176479d0855a907a41277aca2f8ee7a09523`) | Apache-2.0 | router (CPU) |

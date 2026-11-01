@@ -1,0 +1,18 @@
+[Unit]
+Description=Pablo LiteLLM gateway
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/mateo610/Desktop/pablo-harness/pablo-harness-main
+EnvironmentFile=/home/mateo610/Desktop/pablo-harness/pablo-harness-main/config/.env
+Environment=LITELLM_LOCAL_MODEL_COST_MAP=True
+Environment=LITELLM_TELEMETRY=False
+Environment=DISABLE_TELEMETRY=1
+Environment=LITELLM_ENABLE_PYROSCOPE=false
+ExecStart=/home/mateo610/pablo-data/engines/litellm/bin/litellm --config /home/mateo610/Desktop/pablo-harness/pablo-harness-main/config/litellm.yaml --host 127.0.0.1 --port 4000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

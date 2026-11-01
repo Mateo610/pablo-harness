@@ -1,11 +1,13 @@
 [Unit]
-Description=Pablo harness (fake mode)
-After=network-online.target
+Description=Pablo harness
+After=network-online.target pablo-gateway.service
+Wants=pablo-gateway.service
 
 [Service]
 Type=simple
 WorkingDirectory=/home/mateo610/Desktop/pablo-harness/pablo-harness-main
-ExecStart=/home/mateo610/.local/bin/uv run pablo serve --fake --host 127.0.0.1 --port 8710 -C /home/mateo610/pablo-sandbox/hello
+EnvironmentFile=/home/mateo610/Desktop/pablo-harness/pablo-harness-main/config/.env
+ExecStart=/home/mateo610/.local/bin/uv run pablo serve --host 127.0.0.1 --port 8710 -C /home/mateo610/pablo-sandbox/hello
 Restart=on-failure
 RestartSec=2
 Environment=HOME=/home/mateo610

@@ -20,7 +20,7 @@ overnight:                # Pablo's local time
 lanes:
   router:
     role: Classifies each task and picks a lane
-    model: pablo/router          # OpenJev 4B v2, always loaded
+    model: pablo/router          # Qwen3.5-4B Q4, always loaded on CPU
     color: "#8fa7c2"
     kind: local
     train_ok: true
