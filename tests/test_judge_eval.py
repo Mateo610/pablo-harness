@@ -11,7 +11,7 @@ from pablo.verify import verify_diff
 
 def test_every_fixture_applies_and_checks_match_intent(tmp_path: Path) -> None:
     cases = load_cases()
-    assert len(cases) == 16
+    assert len(cases) == 17
     assert sum(c["expect"] == "good" for c in cases) == 7
     failing = {"bad-breaks-tests", "bad-m1-unindented", "bad-m1-sum-fails-test"}
     for case in cases:
@@ -28,8 +28,8 @@ def test_rubber_stamp_judge_is_caught() -> None:
     )
     report = run_judge_eval(always_yes, "pablo/judge")
     # 7 good, plus the three bad cases whose checks fail and get capped.
-    assert report.accuracy == 10 / 16
-    assert len(report.tests_passed_but_bad) == 6
+    assert report.accuracy == 10 / 17
+    assert len(report.tests_passed_but_bad) == 7
     assert "| bad-hardcoded | bad | pass | 0.90 | NO |" in report.to_markdown("fake")
 
 
@@ -47,6 +47,7 @@ def test_perfect_judge_scores_full_marks() -> None:
             "return a + b",
             "+return a * b",
             'setattr(textutils, "word_count"',
+            "Do not change what word_count returns",
         ]
         bad = any(m in body for m in bad_markers) or "-def test_truncate_long_text" in body
         return json.dumps({"certainty": 0.2 if bad else 0.9, "summary": "x"})

@@ -32,6 +32,9 @@ class Lane(BaseModel):
     # Prompt budget in tokens. The coder's 16k window leaves ~10.5k for context;
     # a lane with a bigger window (deep: 64k) gets more of the repo.
     context_tokens: int = 10_500
+    # Whether the router may send work here on its own. False keeps a lane available
+    # by hand (--lane, compare, the overnight queue) but out of automatic routing.
+    routable: bool = True
     # Sampling. Most lanes stay at 0.2. A lane sets top_p only when its model card requires it.
     temperature: float = 0.2
     top_p: float | None = None
@@ -42,6 +45,7 @@ class Lane(BaseModel):
         if self.kind == "remote" or self.name == ESCALATION_LANE:
             self.train_ok = False
             self.requires_approval = True
+            self.routable = False
         return self
 
 
@@ -120,6 +124,7 @@ class Settings(BaseModel):
             if name == ESCALATION_LANE:
                 lane.train_ok = False
                 lane.requires_approval = True
+                lane.routable = False
         for required in ("router", "coder", "judge"):
             if required not in self.lanes:
                 raise ValueError(f"lanes.yaml must define a '{required}' lane")

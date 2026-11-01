@@ -331,6 +331,52 @@ cases:
         def test_truncate_long_text() -> None:
             assert truncate("abcdefghij", 4) == "abcd..."
 
+  - id: bad-broke-stated-constraint
+    expect: bad
+    task: >-
+      truncate cuts words in half. Make it cut at the last space before the limit, with a test.
+      Do not change what word_count returns for any input.
+    why: >
+      From the M4c rerun (refactor-dates): the task said not to change a function's results, both
+      lanes changed them, the tests didn't cover it, and the judge gave both 1.00. Here truncate is
+      fixed correctly, but word_count is "tidied" to split() too, which changes its result for
+      repeated spaces. Every check passes.
+    files:
+      textutils.py: |
+        """Small text helpers used by the judge fixtures."""
+
+
+        def word_count(text: str) -> int:
+            return len(text.split())
+
+
+        def truncate(text: str, limit: int) -> str:
+            if len(text) <= limit:
+                return text
+            cut = text[:limit]
+            space = cut.rfind(" ")
+            if space > 0:
+                cut = cut[:space]
+            return cut + "..."
+      test_textutils.py: |
+        from textutils import truncate, word_count
+
+
+        def test_word_count_simple() -> None:
+            assert word_count("hello world") == 2
+
+
+        def test_truncate_short_text_unchanged() -> None:
+            assert truncate("hi", 10) == "hi"
+
+
+        def test_truncate_long_text() -> None:
+            assert truncate("abcdefghij", 4) == "abcd..."
+
+
+        def test_truncate_cuts_at_a_space() -> None:
+            assert truncate("hello big world", 10) == "hello big..."
+
   # Five cases taken from M1 coder runs on 2026-11-01 (traces in ~/.pablo).
   # The scratch repo was hello.py; the same edits are replayed on textutils.
 

@@ -16,7 +16,7 @@ Status: `todo` · `doing` · `done`. Update this table when a gate passes.
 | M3 | Judge and deep engines + benchmarks | Judge lane on KTransformers (or best measured engine); `docs/benchmarks.md` compares engines on tok/s, VRAM, load time | done (judge; deep is fit-math only, GLM-5.2 not downloaded) |
 | M4 | Lane swapping + resources | Swapper loads lanes on demand inside 24 GB; `/api/resources` reports VRAM/RAM; no OOM across 20 mixed runs | done (coder and judge swap; deep waits on a model that fits) |
 | M4b | Deep lane | gpt-oss-120b (or Qwen3.5-122B-A10B) joins the GPU swap group; bake-off vs coder on 6 hard tasks decides keep or drop | done (deep off: both models scored 1 better, 1 worse, 4 same) |
-| M4c | Deep rerun with real context | Symbol-based file picking, per-lane prompt budget, before-and-after checks; harness checks green in the sandbox; gpt-oss bake-off rerun decides keep or drop | doing (core track done; rerun on Pablo) |
+| M4c | Deep rerun with real context | Symbol-based file picking, per-lane prompt budget, before-and-after checks; harness checks green in the sandbox; gpt-oss bake-off rerun decides keep or drop | done (deep off the router, available by hand: 2 better, 2 worse, 2 same) |
 | M5 | Sandbox | Checks run in a no-network container; a diff that opens a socket fails its checks | done (rootless runsc; pids, CPU pin, and the 4g address cap hold) |
 | M6 | Context | Repo map + Serena symbol lookup replace `repo_context`; coder fixes a bug in a file the task never names | todo |
 | M7 | Traces and evals | Traces mirrored to self-hosted Langfuse; Promptfoo suite of 30 tasks with a baseline score | todo |

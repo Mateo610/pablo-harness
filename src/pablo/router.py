@@ -2,7 +2,8 @@
 
 Two layers: fast keyword rules (free, explainable), then an optional model
 classifier (the router lane) when the rules are unsure. The router never picks
-the escalation lane on its own; only you can send work to Claude.
+the escalation lane on its own; only you can send work to Claude. It also skips
+any lane marked `routable: false` (deep, since M4c), which stays available by hand.
 """
 
 from __future__ import annotations
@@ -31,11 +32,15 @@ class Router:
         self.settings = settings
         self.backend = backend
 
+    def _routable(self, name: str) -> bool:
+        lane = self.settings.lanes.get(name)
+        return lane is not None and lane.routable and name != ESCALATION_LANE
+
     def _rule_scores(self, task: str) -> dict[str, int]:
         text = task.lower()
         scores: dict[str, int] = {}
         for name, lane in self.settings.lanes.items():
-            if name == ESCALATION_LANE or not lane.keywords:
+            if not self._routable(name) or not lane.keywords:
                 continue
             hits = sum(1 for kw in lane.keywords if re.search(rf"\b{re.escape(kw)}", text))
             if hits:
@@ -53,7 +58,7 @@ class Router:
             best = max(scores, key=lambda k: scores[k])
             total = sum(scores.values())
             confidence = scores[best] / total if total else 0.0
-            if complexity == "deep" and "deep" in self.settings.lanes and best == "coder":
+            if complexity == "deep" and self._routable("deep") and best == "coder":
                 best, confidence = "deep", max(confidence, 0.5)
             if confidence >= RULE_CONFIDENT:
                 return RouteDecision(best, round(confidence, 2), f"keywords → {best}", complexity)
@@ -63,12 +68,14 @@ class Router:
             if decided is not None:
                 return RouteDecision(decided[0], decided[1], "router model", complexity)
 
-        fallback = "deep" if complexity == "deep" and "deep" in self.settings.lanes else "coder"
+        fallback = "deep" if complexity == "deep" and self._routable("deep") else "coder"
         return RouteDecision(fallback, 0.5, "default lane", complexity)
 
     def _ask_router_model(self, task: str) -> tuple[str, float] | None:
         assert self.backend is not None
-        choices = [n for n in self.settings.lanes if n not in (ESCALATION_LANE, "router", "judge")]
+        choices = [
+            n for n in self.settings.lanes if self._routable(n) and n not in ("router", "judge")
+        ]
         messages: list[Message] = [
             {
                 "role": "system",

@@ -71,9 +71,21 @@ def test_router_never_auto_escalates(settings: Settings) -> None:
 
 
 def test_router_uses_model_when_rules_unsure(settings: Settings) -> None:
-    backend = FakeBackend(scripts={"pablo/router": ['{"lane": "deep", "confidence": 0.8}']})
+    backend = FakeBackend(scripts={"pablo/router": ['{"lane": "media", "confidence": 0.8}']})
     decision = Router(settings, backend).route("think about this for me")
-    assert (decision.lane, decision.reason) == ("deep", "router model")
+    assert (decision.lane, decision.reason) == ("media", "router model")
+
+
+def test_router_never_picks_a_lane_that_is_off(settings: Settings) -> None:
+    """Deep is `routable: false` since M4c: every automatic path skips it; --lane still works."""
+    assert not settings.lane("deep").routable and not settings.lane("claude").routable
+    hard = "redesign the storage layer across the codebase: architecture and a research plan"
+    assert Router(settings).route(hard).lane == "coder"
+    backend = FakeBackend(scripts={"pablo/router": ['{"lane": "deep", "confidence": 0.9}']})
+    assert Router(settings, backend).route("think about this for me").lane == "coder"
+    assert Router(settings).route(hard, lane="deep").lane == "deep"
+    settings.lanes["deep"].routable = True
+    assert Router(settings).route(hard).lane == "deep"
 
 
 def test_complexity() -> None:
