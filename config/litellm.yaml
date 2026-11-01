@@ -1,0 +1,59 @@
+# LiteLLM gateway: one OpenAI-compatible door for every lane.
+# Start on Pablo:  litellm --config config/litellm.yaml --host 127.0.0.1 --port 4000
+#
+# Each alias points at a local engine on its own port. Engines are set up in the
+# Cursor milestones (docs/cursor-prompts). 24 GB VRAM cannot hold every lane at once;
+# Milestone 4 puts a swapper (e.g. llama-swap) in front of 8001-8004 so lanes load on demand.
+#
+#   8001  coder   Qwen3.6 35B-A3B (GGUF, llama.cpp)          M1
+#   8002  router  OpenJev 4B v2 (always resident)            M1
+#   8003  judge   DeepSeek V4 Flash REAP (KTransformers)     M3
+#   8004  deep    GLM-5.2 (colibrì or KTransformers)         M3
+#   8005  media   media dispatcher (Qwen-Image, TRELLIS.2)   M9
+
+model_list:
+  - model_name: pablo/router
+    litellm_params:
+      model: openai/router
+      api_base: http://127.0.0.1:8002/v1
+      api_key: "none"
+
+  - model_name: pablo/coder
+    litellm_params:
+      model: openai/coder
+      api_base: http://127.0.0.1:8001/v1
+      api_key: "none"
+
+  # Until M3 lands, the judge is the coder model with a judging prompt.
+  - model_name: pablo/judge
+    litellm_params:
+      model: openai/coder
+      api_base: http://127.0.0.1:8001/v1
+      api_key: "none"
+
+  - model_name: pablo/deep
+    litellm_params:
+      model: openai/deep
+      api_base: http://127.0.0.1:8004/v1
+      api_key: "none"
+
+  - model_name: pablo/media
+    litellm_params:
+      model: openai/media
+      api_base: http://127.0.0.1:8005/v1
+      api_key: "none"
+
+  # Escalation only. The harness refuses to call this lane unless you escalate,
+  # and its traces are never exported for training (Anthropic's terms).
+  - model_name: pablo/escalate
+    litellm_params:
+      model: anthropic/claude-sonnet-5-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+general_settings:
+  master_key: os.environ/PABLO_GATEWAY_KEY
+
+litellm_settings:
+  telemetry: false
+  drop_params: true
+  request_timeout: 900

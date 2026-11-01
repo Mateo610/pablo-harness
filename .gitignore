@@ -1,0 +1,23 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+dist/
+build/
+*.egg-info/
+
+# Web
+web/node_modules/
+web/dist/
+
+# Local state: never commit traces, runs, weights, or secrets
+.pablo/runs/
+training/
+models/
+*.gguf
+*.safetensors
+.env
+config/.env

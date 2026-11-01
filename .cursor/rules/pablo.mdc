@@ -1,0 +1,25 @@
+---
+description: Core rules for the Pablo harness. Always applied.
+globs:
+alwaysApply: true
+---
+
+Read AGENTS.md at the repo root before changing anything; it is the source of truth.
+
+Hard rules (tests enforce several of them; do not edit tests to make a change pass):
+- Never make traces from the `claude` lane trainable, and never let the router pick `claude`.
+- Only `Orchestrator.approve` writes to the user's working tree.
+- Servers bind to 127.0.0.1 or the Tailscale IP, never 0.0.0.0.
+- No telemetry, analytics, or remote fonts. Set `telemetry: false` in any tool that has it.
+- Respect licenses: AGPL/GPL tools run as separate processes; copy MIT/Apache code only with
+  its notice recorded in THIRD_PARTY.md. Never commit model weights.
+
+Working style for this repo:
+- This machine is Pablo (Ubuntu, RTX 3090 24 GB, 64 GB RAM). Check VRAM with `nvidia-smi`
+  before loading models, and stop servers you started when a step is finished.
+- Large downloads go to $PABLO_DATA (default ~/pablo-data), never inside the repo.
+- After each step, run `uv run pytest -q && uv run ruff check src tests && uv run mypy`.
+- When a milestone's acceptance checks pass, update its status in docs/BUILD_PLAN.md and
+  write measured numbers (tokens/s, VRAM, load time) to docs/benchmarks.md.
+- If a step needs a choice the prompt did not make (a model quant, an engine flag), pick the
+  conservative option, write the reason in docs/decisions.md, and continue.

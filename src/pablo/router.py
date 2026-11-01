@@ -1,0 +1,109 @@
+"""Pick a lane for each task.
+
+Two layers: fast keyword rules (free, explainable), then an optional model
+classifier (the router lane) when the rules are unsure. The router never picks
+the escalation lane on its own; only you can send work to Claude.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass
+
+from pablo.config import ESCALATION_LANE, Settings
+from pablo.gateway import ChatBackend, Message
+
+RULE_CONFIDENT = 0.6
+
+
+@dataclass(frozen=True)
+class RouteDecision:
+    lane: str
+    confidence: float
+    reason: str
+    complexity: str  # "quick" | "build" | "deep"
+
+
+def estimate_complexity(task: str) -> str:
+    words = len(task.split())
+    hard = re.search(
+        r"\b(architect|redesign|migrat|prove|across the codebase|overnight)\w*", task, re.I
+    )
+    if hard or words > 120:
+        return "deep"
+    if words < 12 and not re.search(r"\b(add|build|implement|refactor)\b", task, re.I):
+        return "quick"
+    return "build"
+
+
+class Router:
+    def __init__(self, settings: Settings, backend: ChatBackend | None = None) -> None:
+        self.settings = settings
+        self.backend = backend
+
+    def _rule_scores(self, task: str) -> dict[str, int]:
+        text = task.lower()
+        scores: dict[str, int] = {}
+        for name, lane in self.settings.lanes.items():
+            if name == ESCALATION_LANE or not lane.keywords:
+                continue
+            hits = sum(1 for kw in lane.keywords if re.search(rf"\b{re.escape(kw)}", text))
+            if hits:
+                scores[name] = hits
+        return scores
+
+    def route(self, task: str, *, lane: str | None = None) -> RouteDecision:
+        complexity = estimate_complexity(task)
+        if lane:
+            self.settings.lane(lane)  # validates the name
+            return RouteDecision(lane, 1.0, "picked by you", complexity)
+
+        scores = self._rule_scores(task)
+        if scores:
+            best = max(scores, key=lambda k: scores[k])
+            total = sum(scores.values())
+            confidence = scores[best] / total if total else 0.0
+            if complexity == "deep" and "deep" in self.settings.lanes and best == "coder":
+                best, confidence = "deep", max(confidence, 0.5)
+            if confidence >= RULE_CONFIDENT:
+                return RouteDecision(best, round(confidence, 2), f"keywords → {best}", complexity)
+
+        if self.backend is not None:
+            decided = self._ask_router_model(task)
+            if decided is not None:
+                return RouteDecision(decided[0], decided[1], "router model", complexity)
+
+        fallback = "deep" if complexity == "deep" and "deep" in self.settings.lanes else "coder"
+        return RouteDecision(fallback, 0.5, "default lane", complexity)
+
+    def _ask_router_model(self, task: str) -> tuple[str, float] | None:
+        assert self.backend is not None
+        choices = [n for n in self.settings.lanes if n not in (ESCALATION_LANE, "router", "judge")]
+        messages: list[Message] = [
+            {
+                "role": "system",
+                "content": (
+                    "You route tasks for a team of models. Reply with JSON only: "
+                    '{"lane": one of ' + json.dumps(choices) + ', "confidence": 0..1}'
+                ),
+            },
+            {"role": "user", "content": task},
+        ]
+        reply = self.backend.complete(self.settings.lane("router").model, messages, max_tokens=64)
+        try:
+            data = json.loads(_first_json(reply.text))
+            lane = str(data["lane"])
+            confidence = float(data.get("confidence", 0.5))
+        except (ValueError, KeyError, TypeError):
+            return None
+        if lane not in choices:
+            return None
+        return lane, max(0.0, min(1.0, confidence))
+
+
+def _first_json(text: str) -> str:
+    match = re.search(r"\{.*\}", text, re.S)
+    if not match:
+        raise ValueError("no JSON object in reply")
+    return match.group(0)

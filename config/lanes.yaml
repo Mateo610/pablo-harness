@@ -1,0 +1,58 @@
+# Lanes: who on the team does what.
+# `model` is the alias LiteLLM serves (see config/litellm.yaml), so swapping a model
+# never touches harness code. `train_ok: false` means traces from that lane are
+# never used as training data (Claude's terms forbid training on its outputs).
+
+gateway:
+  base_url: http://127.0.0.1:4000/v1
+  api_key_env: PABLO_GATEWAY_KEY
+
+thresholds:
+  judge_needs_you: 0.75   # below this certainty, the item lands in "Needs you"
+
+lanes:
+  router:
+    role: Classifies each task and picks a lane
+    model: pablo/router          # OpenJev 4B v2, always loaded
+    color: "#8fa7c2"
+    kind: local
+    train_ok: true
+
+  coder:
+    role: Daily coding, diffs, tests
+    model: pablo/coder           # Qwen3.6 35B-A3B
+    color: "#4fd1bc"
+    kind: local
+    train_ok: true
+    keywords: [code, bug, test, refactor, function, api, diff, fix, implement, python, typescript]
+
+  judge:
+    role: Reviews diffs and scores certainty
+    model: pablo/judge           # DeepSeek V4 Flash REAP 150B
+    color: "#b9a3ff"
+    kind: local
+    train_ok: true
+
+  deep:
+    role: Long, hard reasoning; overnight sweeps
+    model: pablo/deep            # GLM-5.2 744B via expert streaming
+    color: "#f28fa8"
+    kind: local
+    train_ok: true
+    keywords: [architecture, design doc, prove, strategy, research, plan]
+
+  media:
+    role: Images, 3D, motion, video
+    model: pablo/media           # dispatches to Qwen-Image / TRELLIS.2 / LTX workers
+    color: "#c4db72"
+    kind: local
+    train_ok: false              # media pipelines are not chat-trainable
+    keywords: [image, render, 3d, mesh, blender, video, animation, logo]
+
+  claude:
+    role: Escalation only, never automatic
+    model: pablo/escalate        # Anthropic API through the gateway
+    color: "#d9cfc2"
+    kind: remote
+    train_ok: false              # hard rule, enforced in code too
+    requires_approval: true

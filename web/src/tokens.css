@@ -1,0 +1,41 @@
+/* Pablo design system tokens (graphite). Source of truth: the Pablo design system.
+   Fonts are bundled from npm (@fontsource), so the cockpit makes no calls to Google. */
+:root {
+  --ground-000: #0e0d0c;
+  --surface-100: #151413;
+  --surface-200: #1c1a18;
+  --surface-300: #24221f;
+  --line: #2f2c28;
+  --ink: #ede8e1;
+  --ink-muted: #a39c92;
+  --ink-faint: #7a746b;
+  --accent: #f2b44c;
+  --accent-tint: #f2b44c1f;
+  --on-accent: #1a1408;
+  --lane-coder: #4fd1bc;
+  --lane-judge: #b9a3ff;
+  --lane-router: #8fa7c2;
+  --lane-deep: #f28fa8;
+  --lane-media: #c4db72;
+  --lane-escalate: #d9cfc2;
+  --status-pass: #73d18f;
+  --status-fail: #f07a62;
+  --status-wait: var(--accent);
+
+  --font-sans: "Geist", system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, monospace;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+
+  --elevation-1: 0 1px 0 #0000004d, 0 8px 24px #00000059;
+}
