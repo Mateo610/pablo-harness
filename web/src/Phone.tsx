@@ -144,6 +144,12 @@ function PhoneCard({ run, onApprove, onReject, onEscalate }: { run: Run } & Phon
           <span className="chip mono">
             +{v.added} −{v.removed}
           </span>
+          {v.sandbox && <span className="chip mono">{v.sandbox}</span>}
+          {(v.notes ?? []).map((note) => (
+            <span className="chip" key={note}>
+              {note}
+            </span>
+          ))}
         </div>
       )}
       <div className="phone-actions">

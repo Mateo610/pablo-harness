@@ -213,3 +213,21 @@ A short question through the gateway (`pablo/deep` on the swapper) returned `con
 | deep → judge | 9.8 s |
 
 One sample each: from the moment the previous GPU model left `ready` until the next was `ready`. The router stayed `ready`. No two GPU lanes were ready together. The coder was loaded again afterward and is the resident model (20316 MiB, 3809 MiB free).
+
+## 2026-11-01 · M5 check sandbox
+
+Rootless Podman 4.9.3, gVisor `runsc` 20261026.0 via `~/pablo-data/bin/runsc-ignore-cgroups`. Image `pablo-check-hello:08ffbfa46841`. Command `uv run pytest -q`. `lanes.yaml` stayed on `kind: container`.
+
+LocalSandbox on `~/pablo-sandbox/hello` (its existing `.venv`): 0.18 s, then 0.14 s. ContainerSandbox on a scratch copy, which is how a real check runs: 1.40 s the first time, then 0.64 s and 0.63 s. Warm gVisor startup adds about half a second.
+
+Three coder runs (`--lane coder`), nothing approved. Each verdict is `podman/runsc pablo-check-hello:08ffbfa46841`.
+
+| Task | Run | Check | Wall | Judge |
+|---|---|---|---|---|
+| add `div` | `083ad31c3c` | passed 0.63 s | 13.0 s | 1.00 |
+| add `clamp` | `d132eb5f13` | passed 0.63 s | 12.2 s | 0.90 |
+| add `abs_diff` | `522a463cd0` | passed 0.63 s | 11.9 s | 1.00 |
+
+`uv run pablo eval-judge --set main` scored 15/15 again. Accuracy 100% at 0.75, mean certainty good 0.96 and bad 0.28, and every case matched the table already recorded above.
+
+`--memory 4g` is set and is not enforced inside the guest. `test_memory_limit` fails: an 8 GB allocation succeeds. That is the `--ignore-cgroups` cost in `docs/decisions.md`. The other seven container tests pass. Removing the `pablo-check:py311` tag makes the next check fail with `sandbox unavailable` and nothing runs on the host. The tag was restored.

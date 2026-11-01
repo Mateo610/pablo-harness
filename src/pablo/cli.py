@@ -59,6 +59,10 @@ def _show(run: Run) -> None:
             mark = "[green]passed[/]" if check["passed"] else "[red]FAILED[/]"
             console.print(f"  {check['name']}: {mark} ({check['duration_s']}s)")
         console.print(f"  diff: +{run.verdict['added']} −{run.verdict['removed']}")
+        if run.verdict.get("sandbox"):
+            console.print(f"  sandbox: {run.verdict['sandbox']}")
+        for note in run.verdict.get("notes") or []:
+            console.print(f"  note: {note}")
     if run.certainty is not None:
         console.print(f"  judge certainty: {run.certainty:.2f}  {run.judge_summary}")
     console.print(

@@ -169,6 +169,15 @@ class ContainerSandbox:
             "PYTHONDONTWRITEBYTECODE=1",
             "--env",
             "PYTHONPATH=/work/src:/work",
+            # The baked venv. Checks must not sync: the image is read-only and has no network.
+            "--env",
+            "UV_PROJECT_ENVIRONMENT=/opt/venv",
+            "--env",
+            "UV_NO_SYNC=1",
+            "--env",
+            "UV_OFFLINE=1",
+            "--env",
+            "UV_CACHE_DIR=/tmp/uv-cache",
         ]
         if cfg.runtime:
             args += ["--runtime", cfg.runtime]

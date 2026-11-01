@@ -28,6 +28,8 @@ export interface Verdict {
   removed: number;
   files: string[];
   error: string;
+  sandbox?: string;
+  notes?: string[];
 }
 
 export type RunState = "running" | "ready" | "needs_you" | "approved" | "rejected" | "failed";

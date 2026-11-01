@@ -16,7 +16,7 @@ Status: `todo` · `doing` · `done`. Update this table when a gate passes.
 | M3 | Judge and deep engines + benchmarks | Judge lane on KTransformers (or best measured engine); `docs/benchmarks.md` compares engines on tok/s, VRAM, load time | done (judge; deep is fit-math only, GLM-5.2 not downloaded) |
 | M4 | Lane swapping + resources | Swapper loads lanes on demand inside 24 GB; `/api/resources` reports VRAM/RAM; no OOM across 20 mixed runs | done (coder and judge swap; deep waits on a model that fits) |
 | M4b | Deep lane | gpt-oss-120b (or Qwen3.5-122B-A10B) joins the GPU swap group; bake-off vs coder on 6 hard tasks decides keep or drop | doing (gpt-oss-120b on the swapper; bake-off and the overnight queue wait on M5) |
-| M5 | Sandbox | Checks run in a no-network container; a diff that opens a socket fails its checks | doing (code done in core track; Podman + gVisor install and container tests on Pablo) |
+| M5 | Sandbox | Checks run in a no-network container; a diff that opens a socket fails its checks | doing (three hello runs and the judge eval are recorded; the memory-limit test still fails because `--ignore-cgroups` drops the cap) |
 | M6 | Context | Repo map + Serena symbol lookup replace `repo_context`; coder fixes a bug in a file the task never names | todo |
 | M7 | Traces and evals | Traces mirrored to self-hosted Langfuse; Promptfoo suite of 30 tasks with a baseline score | todo |
 | M8 | Learning loop | LoRA trained on `pablo export-training` output; promoted only if eval score beats baseline | todo |

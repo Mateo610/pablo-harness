@@ -69,6 +69,22 @@ export function CertaintyGauge({
   );
 }
 
+function SandboxCard({ verdict }: { verdict: Verdict }) {
+  const notes = verdict.notes ?? [];
+  if (!verdict.sandbox && notes.length === 0) return null;
+  return (
+    <div className="evidence-card">
+      <span className="label">Sandbox</span>
+      {verdict.sandbox && <span className="mono small">{verdict.sandbox}</span>}
+      {notes.map((note) => (
+        <span className="muted small" key={note}>
+          {note}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 export function EvidenceCards({ verdict }: { verdict: Verdict }) {
   if (!verdict.applied) {
     return (
@@ -78,6 +94,7 @@ export function EvidenceCards({ verdict }: { verdict: Verdict }) {
           <span className="result fail">Did not apply</span>
           <span className="mono muted small">{verdict.error}</span>
         </div>
+        <SandboxCard verdict={verdict} />
       </div>
     );
   }
@@ -99,6 +116,7 @@ export function EvidenceCards({ verdict }: { verdict: Verdict }) {
         </span>
         <span className="mono muted small">{verdict.files.slice(0, 2).join(", ")}</span>
       </div>
+      <SandboxCard verdict={verdict} />
     </div>
   );
 }

@@ -95,6 +95,28 @@ def test_memory_limit(bare: Path) -> None:
     assert not ok, out
 
 
+def test_uv_run_pytest_is_offline_on_the_base_image(tmp_path: Path) -> None:
+    """The command hello actually runs, against a project with no third-party deps."""
+    repo = tmp_path / "bare"
+    repo.mkdir()
+    (repo / "pyproject.toml").write_text(
+        '[project]\nname = "bare"\nversion = "0.1.0"\n'
+        'requires-python = ">=3.11"\ndependencies = []\n\n[tool.uv]\npackage = false\n'
+    )
+    (repo / "calc.py").write_text("def add(a, b):\n    return a + b\n")
+    sandbox = ContainerSandbox(CFG, repo)
+    sandbox.image = CFG.image  # base image; nothing here is installed from the lock
+    verdict = verify_diff(
+        repo,
+        new_test("from calc import add\nassert add(2, 3) == 5"),
+        {"tests": ["uv", "run", "pytest", "-q"]},
+        120,
+        sandbox=sandbox,
+    )
+    assert verdict.applied, verdict.error
+    assert verdict.passed, verdict.checks[0].output_tail
+
+
 def test_timeout_kills_and_removes_the_container(bare: Path) -> None:
     ok, out = check(bare, "import time\ntime.sleep(60)", timeout_s=5)
     assert not ok and "timed out" in out

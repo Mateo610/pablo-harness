@@ -61,6 +61,16 @@ def test_argv_locks_the_container_down(tmp_path: Path) -> None:
         assert flag in joined, flag
     mounts = [argv[i + 1] for i, a in enumerate(argv) if a == "--volume"]
     assert mounts == [f"{tmp_path.resolve()}:/work:rw"]  # the scratch copy and nothing else
+    envs = [argv[i + 1] for i, a in enumerate(argv) if a == "--env"]
+    assert envs == [
+        "HOME=/tmp",
+        "PYTHONDONTWRITEBYTECODE=1",
+        "PYTHONPATH=/work/src:/work",
+        "UV_PROJECT_ENVIRONMENT=/opt/venv",
+        "UV_NO_SYNC=1",
+        "UV_OFFLINE=1",
+        "UV_CACHE_DIR=/tmp/uv-cache",
+    ]
     assert argv[-4:] == ["pablo-check:py311", "python", "-m", "pytest"]
 
 

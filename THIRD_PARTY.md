@@ -21,15 +21,15 @@ and how it is used. Add a row before adding a dependency or copying code.
 | Vite | MIT | dev dep (web) |
 | Geist, Geist Mono fonts (@fontsource) | SIL OFL 1.1 | bundled font files |
 | llama-swap v269 | MIT | process (lane swapper, `~/pablo-data/engines/llama-swap`) |
+| Podman 4.9.3 (rootless) | Apache-2.0 | process (check sandbox) |
+| gVisor `runsc` 20261026.0 | Apache-2.0 | process (OCI runtime; wrapper adds `--ignore-cgroups`) |
+| `python:3.11-slim` `@sha256:673719e071ec…` | PSF + Debian packages | base of `pablo-check:py311`, saved at `~/pablo-data/images/pablo-check-py311.tar` |
 
 ## Planned (verify each license at the source before adopting)
 | Name | Expected license | Planned use | Milestone |
 |---|---|---|---|
 | LiteLLM (core) | MIT | process (gateway) | M1 |
 | llama.cpp | MIT | process (engine) | M1 |
-| Podman (rootless) | Apache-2.0 | process (check sandbox) | M5 |
-| gVisor `runsc` | Apache-2.0 | process (OCI runtime for the sandbox) | M5 |
-| python:3.11-slim image | PSF + Debian packages | base of `pablo-check:py311`, pinned by digest | M5 |
 | KTransformers | Apache-2.0 | process (MoE engine) | M3 |
 | colibrì v2.1.0 | Apache-2.0 | process (expert streaming) | M3 |
 | Serena | MIT | process (LSP tools over MCP) | M6 |
