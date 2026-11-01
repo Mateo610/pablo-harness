@@ -56,6 +56,7 @@ class FakeAPI:
         self.runs = [make_run("r1"), make_run("r2", "ready", 0.9)]
         self.decisions: list[tuple[str, str]] = []
         self.started: list[tuple[str, str | None]] = []
+        self.queued: list[str] = []
 
     def health(self) -> Json:
         return {"ok": True}
@@ -84,6 +85,20 @@ class FakeAPI:
 
     def events(self) -> Iterator[Json]:
         return iter(())
+
+    def add_job(self, task: str, lane: str | None = None) -> Json:
+        self.queued.append(task)
+        return {"id": "j1", "task": task}
+
+    def brief(self) -> Json | None:
+        return {
+            "day": "2026-11-01",
+            "headline": "Overnight: 1 done",
+            "plan_line": "",
+            "items": [],
+            "failed_jobs": [],
+            "still_queued": 0,
+        }
 
 
 async def settle(pilot: Any) -> None:
@@ -144,5 +159,22 @@ def test_new_task_and_run_next() -> None:
             await pilot.press("x")
             await settle(pilot)
             assert api.started == [("fix it", None), ("second", "1.2")]
+
+    asyncio.run(scenario())
+
+
+def test_tonight_and_brief() -> None:
+    async def scenario() -> None:
+        api = FakeAPI()
+        app = PabloTUI(api, listen=False)
+        async with app.run_test() as pilot:
+            await settle(pilot)
+            await pilot.press("t")
+            await pilot.press(*"sweep")
+            await pilot.press("enter")
+            await settle(pilot)
+            assert api.queued == ["sweep"] and api.started == []
+            await pilot.press("b")
+            await settle(pilot)
 
     asyncio.run(scenario())

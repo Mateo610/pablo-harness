@@ -14,6 +14,7 @@ and leaves the merge decision to the human. Claude is an escalation lane, never 
   - `traces.py` JSONL traces + training export · `plan.py` GSD-style `.pablo/plan.yaml`
   - `api.py` HTTP + SSE for the cockpit · `cli.py` the `pablo` command
   - `client.py` HTTP client · `tui.py` terminal cockpit (Textual)
+  - `overnight.py` overnight queue, scheduler (runs inside `pablo serve`), morning brief
 - `web/` cockpit (React + Vite + cmdk); desktop `App.tsx`, phone `Phone.tsx` (PWA), styled only with tokens in `web/src/tokens.css`
 - `config/` lanes and the LiteLLM gateway · `scripts/` Pablo bootstrap and model archiving
 - `docs/cursor-prompts/` one prompt per milestone, each with acceptance checks

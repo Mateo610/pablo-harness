@@ -128,6 +128,30 @@ def render_plan(plan: Json | None) -> RenderableType:
     return out
 
 
+def render_brief(brief: Json | None) -> RenderableType:
+    if not brief:
+        return Text(
+            "No brief yet. One is written each morning after the overnight window.", style=MUTED
+        )
+    parts: list[RenderableType] = [
+        Text(f"MORNING BRIEF · {brief['day']}", style=MUTED),
+        Text(brief["headline"], style="bold"),
+    ]
+    if brief.get("plan_line"):
+        parts.append(Text(brief["plan_line"], style=MUTED))
+    for item in brief.get("items", []):
+        line = lane_text(item["lane"])
+        line.append(f"  {item['task'][:60]}  ")
+        needs = item["state"] == "needs_you"
+        line.append("needs you" if needs else item["state"], style=ACCENT if needs else MUTED)
+        parts.append(line)
+    for job in brief.get("failed_jobs", []):
+        parts.append(Text(f"{job['task']}: {job['error']}", style=FAIL))
+    if brief.get("still_queued"):
+        parts.append(Text(f"{brief['still_queued']} still queued for tonight.", style=MUTED))
+    return Group(*parts)
+
+
 class RunItem(ListItem):
     def __init__(self, run: Json) -> None:
         self.run = run
@@ -167,6 +191,8 @@ class PabloTUI(App[None]):
         Binding("r", "reject", "Reject"),
         Binding("e", "escalate", "Escalate"),
         Binding("n", "new_task", "New task"),
+        Binding("t", "tonight", "Tonight"),
+        Binding("b", "brief", "Brief"),
         Binding("x", "run_next", "Run next"),
         Binding("g", "refresh", "Refresh"),
         Binding("escape", "close_composer", "Close", show=False),
@@ -181,6 +207,7 @@ class PabloTUI(App[None]):
         self.plan: Json | None = None
         self.inbox: list[Json] = []
         self._escalate_armed: tuple[str, float] | None = None
+        self._compose_tonight = False
 
     def compose(self) -> ComposeResult:
         yield Static(ribbon({}), id="ribbon")
@@ -260,11 +287,11 @@ class PabloTUI(App[None]):
         kind, data = event["kind"], event.get("data", {})
         lane = data.get("lane")
         if lane:
-            self.busy[lane] = kind not in ("judged", "decided", "error", "needs_you")
+            self.busy[lane] = kind not in ("judged", "decided", "error", "needs_you", "finished")
             self.query_one("#ribbon", Static).update(ribbon(self.busy, self.size.width))
         if kind == "status":
             self.set_status(f"● {data.get('text', '')}", LANE_COLORS.get(lane or "", MUTED))
-        elif kind in ("judged", "decided", "needs_you", "error"):
+        elif kind in ("judged", "decided", "needs_you", "error", "finished"):
             self.set_status("")
             self.refresh_data()
 
@@ -315,8 +342,29 @@ class PabloTUI(App[None]):
             self._escalate_armed = (run["id"], now)
             self.set_status("Press e again to send this task to Claude (leaves Pablo).", ACCENT)
 
-    def action_new_task(self) -> None:
+    def action_tonight(self) -> None:
+        self.action_new_task(tonight=True)
+
+    @work(thread=True, group="brief")
+    def action_brief(self) -> None:
+        try:
+            brief = self.api.brief()
+        except HarnessError as exc:
+            self.call_from_thread(self.set_status, str(exc), FAIL)
+            return
+        self.call_from_thread(self.show_brief, brief)
+
+    def show_brief(self, brief: Json | None) -> None:
+        self.query_one("#detail", Static).update(render_brief(brief))
+
+    def action_new_task(self, tonight: bool = False) -> None:
+        self._compose_tonight = tonight
         composer = self.query_one("#composer", Input)
+        composer.placeholder = (
+            "Queue for tonight, Enter to queue, Esc to close"
+            if tonight
+            else "Describe the task, Enter to send, Esc to close"
+        )
         composer.disabled = False
         composer.add_class("open")
         composer.focus()
@@ -344,8 +392,18 @@ class PabloTUI(App[None]):
     def _submitted(self, event: Input.Submitted) -> None:
         task = event.value.strip()
         self.action_close_composer()
-        if task:
+        if task and self._compose_tonight:
+            self.queue_job(task)
+        elif task:
             self.start_run(task, None)
+
+    @work(thread=True, group="queue")
+    def queue_job(self, task: str) -> None:
+        try:
+            job = self.api.add_job(task)
+            self.call_from_thread(self.set_status, f"queued for tonight: {job['task'][:60]}")
+        except HarnessError as exc:
+            self.call_from_thread(self.set_status, str(exc), FAIL)
 
     @work(thread=True, group="runs")
     def start_run(self, task: str, task_id: str | None) -> None:

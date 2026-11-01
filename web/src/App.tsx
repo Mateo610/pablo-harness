@@ -1,6 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, subscribe, type HarnessEvent, type Lane, type Plan, type PlanTask, type Run } from "./api";
-import { CertaintyGauge, DiffView, EvidenceCards, LaneBadge, LaneRibbon, laneColor, stateLabel } from "./components";
+import { api, subscribe, type Brief, type HarnessEvent, type Job, type Lane, type Plan, type PlanTask, type Run } from "./api";
+import {
+  BriefCard,
+  CertaintyGauge,
+  DiffView,
+  EvidenceCards,
+  LaneBadge,
+  LaneRibbon,
+  TonightList,
+  laneColor,
+  stateLabel,
+  todayLocal,
+} from "./components";
 import { Palette } from "./Palette";
 import { Phone } from "./Phone";
 
@@ -16,13 +27,19 @@ export function App() {
   const [draft, setDraft] = useState("");
   const [mode, setMode] = useState<Mode>("build");
   const [error, setError] = useState("");
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [brief, setBrief] = useState<Brief | null>(null);
+  const [briefDismissed, setBriefDismissed] = useState(() => readDismissed());
   const composer = useRef<HTMLTextAreaElement>(null);
   const narrow = useNarrow();
+  const openBriefRef = useRef<() => void>(() => undefined);
 
   const refresh = useCallback(async () => {
     const [inbox] = await Promise.all([
       api.inbox(),
       api.plan().then(setPlan).catch(() => setPlan(null)),
+      api.queue().then(setJobs).catch(() => undefined),
+      api.brief().then(setBrief),
     ]);
     setRuns((prev) => {
       const byId = new Map(prev.map((r) => [r.id, r]));
@@ -36,23 +53,38 @@ export function App() {
     refresh().catch((e: Error) => setError(e.message));
     return subscribe((event) => {
       if (event.kind === "status") setStatus(event);
-      if (["judged", "decided", "error"].includes(event.kind)) setStatus(null);
+      if (["judged", "decided", "error", "finished"].includes(event.kind)) setStatus(null);
       if (event.data.lane) {
         const lane = event.data.lane;
-        const done = ["judged", "decided", "error", "needs_you"].includes(event.kind);
+        const done = ["judged", "decided", "error", "needs_you", "finished"].includes(event.kind);
         setBusy((b) => ({ ...b, [lane]: done ? 0 : 1 }));
       }
-      if (["judged", "decided", "needs_you"].includes(event.kind)) {
+      if (event.kind === "queue") api.queue().then(setJobs).catch(() => undefined);
+      if (event.kind === "brief") api.brief().then(setBrief);
+      if (["judged", "decided", "needs_you", "finished"].includes(event.kind)) {
         api.run(event.run_id).then((run) => setRuns((prev) => upsert(prev, run))).catch(() => undefined);
       }
     });
   }, [refresh]);
 
   useEffect(() => {
+    let lastG = 0;
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setPaletteOpen((o) => !o);
+        return;
+      }
+      const target = e.target as HTMLElement | null;
+      const typing = target?.closest("input, textarea, [contenteditable='true'], [cmdk-root]");
+      if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === "n") {
+        e.preventDefault();
+        composer.current?.focus();
+      } else if (e.key === "g") {
+        lastG = Date.now();
+      } else if (e.key === "m" && Date.now() - lastG < 1000) {
+        openBriefRef.current();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -86,6 +118,43 @@ export function App() {
 
   const runTask = (t: PlanTask) => send(t.title, t.id);
 
+  const queueTonight = (task: string, taskId?: string) => {
+    if (!task.trim()) return;
+    setDraft("");
+    setError("");
+    api
+      .addJob(task, mode === "quick" ? "coder" : undefined, taskId)
+      .then(() => api.queue().then(setJobs))
+      .catch((e: Error) => setError(e.message));
+  };
+
+  const cancelJob = (id: string) =>
+    api
+      .cancelJob(id)
+      .then(() => api.queue().then(setJobs))
+      .catch((e: Error) => setError(e.message));
+
+  const dismissBrief = () => {
+    if (!brief) return;
+    setBriefDismissed(brief.day);
+    try {
+      localStorage.setItem("pablo.briefDismissed", brief.day);
+    } catch {
+      /* storage can be unavailable; dismissal just won't persist */
+    }
+  };
+
+  const openBrief = () => {
+    setBriefDismissed("");
+    if (!brief || brief.day !== todayLocal()) {
+      api.makeBrief().then(setBrief).catch((e: Error) => setError(e.message));
+    }
+  };
+
+  openBriefRef.current = openBrief;
+
+  const showBrief = brief !== null && brief.day === todayLocal() && briefDismissed !== brief.day;
+
   if (narrow) {
     return (
       <Phone
@@ -100,6 +169,11 @@ export function App() {
         onReject={(id) => act(() => api.reject(id))}
         onEscalate={(id) => act(() => api.escalate(id))}
         onSend={(task, taskId) => send(task, taskId)}
+        jobs={jobs}
+        brief={showBrief ? brief : null}
+        onQueue={(task) => queueTonight(task)}
+        onCancelJob={cancelJob}
+        onDismissBrief={dismissBrief}
       />
     );
   }
@@ -178,10 +252,16 @@ export function App() {
               <p className="gate small muted">Gate: {phase.gate}</p>
             </section>
           )}
+
+          <section className="panel">
+            <h2 className="label">Tonight</h2>
+            <TonightList jobs={jobs} onCancel={cancelJob} />
+          </section>
         </aside>
 
         <main className="chat">
           <div className="thread">
+            {showBrief && brief && <BriefCard brief={brief} onDismiss={dismissBrief} />}
             {runs.length === 0 && (
               <div className="empty">
                 <h1 className="display">What should the team build?</h1>
@@ -237,6 +317,14 @@ export function App() {
                   </button>
                 ))}
               </div>
+              <button
+                type="button"
+                className="btn tonight-btn"
+                title="Queue for tonight instead of running now"
+                onClick={() => queueTonight(draft)}
+              >
+                Tonight
+              </button>
               <button type="submit" className="send" aria-label="Send">
                 ↑
               </button>
@@ -280,6 +368,13 @@ export function App() {
           escalate: (id) => act(() => api.escalate(id)),
           runTask,
           focusComposer: () => composer.current?.focus(),
+          openBrief,
+          runQueueNow: () => {
+            api
+              .runQueueNow()
+              .then(() => refresh())
+              .catch((e: Error) => setError(e.message));
+          },
         }}
       />
     </div>
@@ -331,6 +426,14 @@ function RunView({
       </article>
     </>
   );
+}
+
+function readDismissed(): string {
+  try {
+    return localStorage.getItem("pablo.briefDismissed") ?? "";
+  } catch {
+    return "";
+  }
 }
 
 function useNarrow(query = "(max-width: 720px)"): boolean {

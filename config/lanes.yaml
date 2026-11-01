@@ -10,6 +10,13 @@ gateway:
 thresholds:
   judge_needs_you: 0.75   # below this certainty, the item lands in "Needs you"
 
+overnight:                # Pablo's local time
+  start: "01:00"          # queued jobs run between start and end, one at a time
+  end: "06:30"
+  brief_at: "07:30"       # morning brief written after this time
+  default_lane: deep      # lane for queued tasks that don't name one
+  max_jobs: 8
+
 lanes:
   router:
     role: Classifies each task and picks a lane

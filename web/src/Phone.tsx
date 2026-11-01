@@ -1,7 +1,7 @@
 // Phone remote: decisions first. Same harness API as the desktop cockpit.
 import { useRef, useState } from "react";
-import { api, type Lane, type Phase, type PlanTask, type Run } from "./api";
-import { CertaintyGauge, LaneBadge, LaneRibbon, laneColor } from "./components";
+import { api, type Brief, type Job, type Lane, type Phase, type PlanTask, type Run } from "./api";
+import { BriefCard, CertaintyGauge, LaneBadge, LaneRibbon, TonightList, laneColor } from "./components";
 
 type Tab = "inbox" | "plan" | "new";
 
@@ -17,6 +17,11 @@ export interface PhoneProps {
   onReject: (id: string) => void;
   onEscalate: (id: string) => void;
   onSend: (task: string, taskId?: string) => void;
+  jobs: Job[];
+  brief: Brief | null;
+  onQueue: (task: string) => void;
+  onCancelJob: (id: string) => void;
+  onDismissBrief: () => void;
 }
 
 export function Phone(props: PhoneProps) {
@@ -41,6 +46,7 @@ export function Phone(props: PhoneProps) {
       <main className="phone-main">
         {tab === "inbox" && (
           <>
+            {props.brief && <BriefCard brief={props.brief} onDismiss={props.onDismissBrief} />}
             <div>
               <h1 className="phone-title">
                 {props.inbox.length === 0
@@ -58,13 +64,22 @@ export function Phone(props: PhoneProps) {
             {props.inbox.map((run) => (
               <PhoneCard key={run.id} run={run} {...props} />
             ))}
+            <section className="panel">
+              <h2 className="label">Tonight</h2>
+              <TonightList jobs={props.jobs} onCancel={props.onCancelJob} />
+            </section>
           </>
         )}
 
         {tab === "plan" && props.phase && <PhonePlan phase={props.phase} onRun={(t) => props.onSend(t.title, t.id)} />}
         {tab === "plan" && !props.phase && <p className="muted">No plan yet. Run `pablo init` on Pablo.</p>}
 
-        {tab === "new" && <PhoneNew onSend={(task) => (props.onSend(task), setTab("inbox"))} />}
+        {tab === "new" && (
+          <PhoneNew
+            onSend={(task) => (props.onSend(task), setTab("inbox"))}
+            onQueue={(task) => (props.onQueue(task), setTab("inbox"))}
+          />
+        )}
       </main>
 
       {props.statusText && (
@@ -180,7 +195,7 @@ function PhonePlan({ phase, onRun }: { phase: Phase; onRun: (t: PlanTask) => voi
   );
 }
 
-function PhoneNew({ onSend }: { onSend: (task: string) => void }) {
+function PhoneNew({ onSend, onQueue }: { onSend: (task: string) => void; onQueue: (task: string) => void }) {
   const [draft, setDraft] = useState("");
   return (
     <form
@@ -201,9 +216,14 @@ function PhoneNew({ onSend }: { onSend: (task: string) => void }) {
         onChange={(e) => setDraft(e.target.value)}
         placeholder="What should the team do?"
       />
-      <button type="submit" className="btn primary">
-        Send to the team
-      </button>
+      <div className="phone-actions-row">
+        <button type="submit" className="btn primary">
+          Run now
+        </button>
+        <button type="button" className="btn" onClick={() => draft.trim() && onQueue(draft.trim())}>
+          Run tonight
+        </button>
+      </div>
     </form>
   );
 }

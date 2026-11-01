@@ -1,5 +1,5 @@
 // Pablo design-system components: LaneBadge, CertaintyGauge, EvidenceCards, LaneRibbon, DiffView.
-import type { Lane, Run, Verdict } from "./api";
+import type { Brief, Job, Lane, Run, Verdict } from "./api";
 
 const LANE_VAR: Record<string, string> = {
   router: "var(--lane-router)",
@@ -146,4 +146,74 @@ export function stateLabel(run: Run): string {
     rejected: "Rejected",
     failed: "Failed",
   }[run.state];
+}
+
+/** "Tonight": what the slow lanes will work on while you sleep. */
+export function TonightList({ jobs, onCancel }: { jobs: Job[]; onCancel: (id: string) => void }) {
+  const visible = jobs.filter((j) => j.status === "queued" || j.status === "running" || j.status === "failed");
+  if (visible.length === 0) {
+    return <p className="muted small">Nothing queued. Use Tonight in the composer to queue slow work.</p>;
+  }
+  return (
+    <ul className="tonight">
+      {visible.map((j) => (
+        <li key={j.id} className="tonight-item">
+          <span className="tonight-bar" style={{ background: laneColor(j.lane ?? "deep") }} />
+          <span className="tonight-text">
+            <span>{j.task}</span>
+            <span className="muted small">
+              {j.lane ?? "deep"} ·{" "}
+              {j.status === "running" ? "running now" : j.status === "failed" ? `failed: ${j.error}` : "queued"}
+            </span>
+          </span>
+          {j.status === "queued" && (
+            <button type="button" className="icon-btn" aria-label={`Remove "${j.task}" from tonight`} onClick={() => onCancel(j.id)}>
+              ×
+            </button>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+export function BriefCard({ brief, onDismiss }: { brief: Brief; onDismiss: () => void }) {
+  return (
+    <section className="brief" aria-label="Morning brief">
+      <div className="row-between">
+        <span className="label">Morning brief · {brief.day}</span>
+        <button type="button" className="link-btn" onClick={onDismiss}>
+          Dismiss
+        </button>
+      </div>
+      <h2 className="brief-headline">{brief.headline}</h2>
+      {brief.plan_line && <p className="muted brief-plan">{brief.plan_line}</p>}
+      {brief.items.length > 0 && (
+        <ul className="brief-items">
+          {brief.items.map((item) => (
+            <li key={item.run_id}>
+              <a href={`#run-${item.run_id}`} className="brief-item">
+                <LaneBadge lane={item.lane} />
+                <span className="grow">{item.task}</span>
+                <span className={`small ${item.state === "needs_you" ? "accent" : "muted"}`}>
+                  {item.state === "needs_you" ? "needs you" : item.state}
+                </span>
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
+      {brief.failed_jobs.map((f, i) => (
+        <p key={i} className="small fail-text">
+          {f.task}: {f.error}
+        </p>
+      ))}
+      {brief.still_queued > 0 && <p className="muted small">{brief.still_queued} still queued for tonight.</p>}
+    </section>
+  );
+}
+
+export function todayLocal(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }

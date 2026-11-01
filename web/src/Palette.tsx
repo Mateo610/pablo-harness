@@ -9,6 +9,8 @@ export interface PaletteActions {
   escalate: (id: string) => void;
   runTask: (task: PlanTask) => void;
   focusComposer: () => void;
+  openBrief: () => void;
+  runQueueNow: () => void;
 }
 
 export function Palette({
@@ -49,7 +51,6 @@ export function Palette({
               >
                 <LaneBadge lane={run.lane} />
                 <span className="grow">Approve: {run.task}</span>
-                <kbd>A</kbd>
               </Command.Item>
             ))}
             {inbox.map((run) => (
@@ -60,7 +61,6 @@ export function Palette({
               >
                 <span className="escalate-mark" aria-hidden="true" />
                 <span className="grow">Escalate to Claude: {run.task}</span>
-                <kbd>E</kbd>
               </Command.Item>
             ))}
           </Command.Group>
@@ -71,12 +71,18 @@ export function Palette({
               <span className="grow">
                 Run next task · {nextTask.id} {nextTask.title}
               </span>
-              <kbd>R</kbd>
             </Command.Item>
           )}
           <Command.Item value="new task message the team" onSelect={close(actions.focusComposer)}>
             <span className="grow">New task</span>
             <kbd>N</kbd>
+          </Command.Item>
+          <Command.Item value="open morning brief overnight" onSelect={close(actions.openBrief)}>
+            <span className="grow">Open morning brief</span>
+            <kbd>G M</kbd>
+          </Command.Item>
+          <Command.Item value="run tonight queue now overnight" onSelect={close(actions.runQueueNow)}>
+            <span className="grow">Run tonight's queue now</span>
           </Command.Item>
         </Command.Group>
       </Command.List>

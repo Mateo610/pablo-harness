@@ -44,9 +44,30 @@ class Thresholds(BaseModel):
     judge_needs_you: float = 0.75
 
 
+class Overnight(BaseModel):
+    """When the queue runs, and when the morning brief is written (Pablo's local time)."""
+
+    start: str = "01:00"
+    end: str = "06:30"
+    brief_at: str = "07:30"
+    default_lane: str = "deep"
+    max_jobs: int = 8
+
+    @model_validator(mode="after")
+    def _valid_times(self) -> Overnight:
+        for value in (self.start, self.end, self.brief_at):
+            hours, _, minutes = value.partition(":")
+            if not (
+                hours.isdigit() and minutes.isdigit() and int(hours) < 24 and int(minutes) < 60
+            ):
+                raise ValueError(f"overnight times must be HH:MM, got '{value}'")
+        return self
+
+
 class Settings(BaseModel):
     gateway: Gateway = Field(default_factory=Gateway)
     thresholds: Thresholds = Field(default_factory=Thresholds)
+    overnight: Overnight = Field(default_factory=Overnight)
     lanes: dict[str, Lane]
     home: Path = Field(default_factory=lambda: default_home())
 

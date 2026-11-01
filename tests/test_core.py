@@ -189,3 +189,11 @@ def test_escalated_trace_never_trains(settings: Settings, repo: Path) -> None:
     assert escalated.lane == "claude" and escalated.escalated_from == first.id
     orch.approve(escalated.id)
     assert TraceStore(settings.traces_dir).export_training(settings.home / "t.jsonl") == 0
+
+
+def test_answer_only_run_emits_finished(settings: Settings, repo: Path) -> None:
+    backend = FakeBackend(scripts={"pablo/deep": ["Here is a plan, no diff."]})
+    orch = Orchestrator(settings, backend, repo=repo, checks=CHECKS)
+    run = orch.start("sketch an architecture", lane="deep")
+    kinds = [e.kind for e in orch.bus.history(run.id)]
+    assert run.state == "ready" and kinds[-1] == "finished"

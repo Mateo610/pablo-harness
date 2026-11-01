@@ -19,6 +19,8 @@ class HarnessAPI(Protocol):
     def start(self, task: str, lane: str | None = None, task_id: str | None = None) -> Json: ...
     def decide(self, run_id: str, decision: str) -> Json: ...
     def events(self) -> Iterator[Json]: ...
+    def add_job(self, task: str, lane: str | None = None) -> Json: ...
+    def brief(self) -> Json | None: ...
 
 
 class HarnessError(RuntimeError):
@@ -66,6 +68,15 @@ class HarnessClient:
         if decision not in ("approve", "reject", "escalate"):
             raise ValueError(decision)
         return dict(self._call("POST", f"/api/runs/{run_id}/{decision}"))
+
+    def add_job(self, task: str, lane: str | None = None) -> Json:
+        return dict(self._call("POST", "/api/queue", json={"task": task, "lane": lane}))
+
+    def brief(self) -> Json | None:
+        try:
+            return dict(self._call("GET", "/api/brief"))
+        except HarnessError:
+            return None
 
     def events(self) -> Iterator[Json]:
         """Blocking iterator over server-sent events; reconnect is the caller's job."""

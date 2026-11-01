@@ -80,6 +80,44 @@ export interface HarnessEvent {
   at: string;
 }
 
+export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled";
+
+export interface Job {
+  id: string;
+  task: string;
+  lane: string | null;
+  task_id: string | null;
+  status: JobStatus;
+  run_id: string | null;
+  error: string;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface BriefItem {
+  run_id: string;
+  task: string;
+  lane: string;
+  state: RunState;
+  certainty: number | null;
+  summary: string;
+  question: string;
+}
+
+export interface Brief {
+  day: string;
+  headline: string;
+  done: number;
+  needs_you: number;
+  failed: number;
+  items: BriefItem[];
+  failed_jobs: { task: string; error: string }[];
+  still_queued: number;
+  plan_line: string;
+  created_at: string;
+}
+
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
@@ -105,6 +143,16 @@ export const api = {
   approve: (id: string) => call<Run>(`/api/runs/${id}/approve`, { method: "POST" }),
   reject: (id: string) => call<Run>(`/api/runs/${id}/reject`, { method: "POST" }),
   escalate: (id: string) => call<Run>(`/api/runs/${id}/escalate`, { method: "POST" }),
+  queue: () => call<Job[]>("/api/queue"),
+  addJob: (task: string, lane?: string, taskId?: string) =>
+    call<Job>("/api/queue", {
+      method: "POST",
+      body: JSON.stringify({ task, lane: lane ?? null, task_id: taskId ?? null }),
+    }),
+  cancelJob: (id: string) => call<Job>(`/api/queue/${id}`, { method: "DELETE" }),
+  runQueueNow: () => call<Job[]>("/api/queue/run", { method: "POST" }),
+  brief: () => call<Brief>("/api/brief").catch(() => null),
+  makeBrief: () => call<Brief>("/api/brief", { method: "POST" }),
   voice: async (audio: Blob) => {
     const res = await fetch("/api/voice", { method: "POST", body: audio });
     if (!res.ok) {

@@ -20,6 +20,14 @@ from pydantic import BaseModel
 
 from pablo import __version__
 from pablo.orchestrator import Orchestrator
+from pablo.overnight import (
+    BriefStore,
+    JobQueue,
+    OvernightRunner,
+    Scheduler,
+    build_brief,
+    now_local,
+)
 from pablo.plan import Plan, Status
 
 
@@ -33,8 +41,18 @@ class StatusIn(BaseModel):
     status: Status
 
 
+class JobIn(BaseModel):
+    task: str
+    lane: str | None = None
+    task_id: str | None = None
+
+
 def create_app(orch: Orchestrator) -> FastAPI:
     app = FastAPI(title="Pablo harness", version=__version__)
+    queue = JobQueue(orch.settings.home)
+    runner = OvernightRunner(orch, queue, orch.settings.overnight)
+    briefs = BriefStore(orch.settings.home)
+    app.state.scheduler = Scheduler(runner, briefs, orch.repo)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -120,6 +138,50 @@ def create_app(orch: Orchestrator) -> FastAPI:
     @app.post("/api/runs/{run_id}/escalate")
     async def escalate(run_id: str) -> dict[str, Any]:
         return await run_in_threadpool(_decide, "escalate", run_id)
+
+    # ---- overnight queue and morning brief ------------------------------------
+    @app.get("/api/queue")
+    def list_queue() -> list[dict[str, Any]]:
+        jobs = [j for j in queue.all() if j.status != "cancelled"]
+        return [j.to_dict() for j in jobs[-50:]]
+
+    @app.post("/api/queue")
+    def add_job(body: JobIn) -> dict[str, Any]:
+        if body.lane:
+            try:
+                lane = orch.settings.lane(body.lane)
+            except KeyError as exc:
+                raise HTTPException(400, str(exc)) from exc
+            if lane.requires_approval:
+                raise HTTPException(403, f"lane '{lane.name}' can't be queued; escalate instead")
+        return queue.add(body.task, body.lane, body.task_id).to_dict()
+
+    @app.delete("/api/queue/{job_id}")
+    def cancel_job(job_id: str) -> dict[str, Any]:
+        try:
+            return queue.cancel(job_id).to_dict()
+        except KeyError as exc:
+            raise HTTPException(404, f"no job {job_id}") from exc
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.post("/api/queue/run")
+    async def run_queue_now() -> list[dict[str, Any]]:
+        finished = await run_in_threadpool(runner.run_pending, force=True)
+        return [j.to_dict() for j in finished]
+
+    @app.get("/api/brief")
+    def get_brief(day: str | None = None) -> dict[str, Any]:
+        brief = briefs.get(day) if day else briefs.latest()
+        if brief is None:
+            raise HTTPException(404, "no brief yet")
+        return brief
+
+    @app.post("/api/brief")
+    def make_brief() -> dict[str, Any]:
+        brief = build_brief(orch, queue, now_local().date(), orch.repo, since=briefs.last_created())
+        briefs.save(brief)
+        return brief.to_dict()
 
     @app.get("/api/events")
     async def events() -> StreamingResponse:

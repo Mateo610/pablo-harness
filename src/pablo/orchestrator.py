@@ -246,6 +246,7 @@ class Orchestrator:
         self._save(run)
         if run.state == "needs_you":
             self._emit("needs_you", run, question=run.question)
+        self._emit("finished", run, state=run.state)
 
     # ---- your decisions -----------------------------------------------------
     def approve(self, run_id: str) -> Run:

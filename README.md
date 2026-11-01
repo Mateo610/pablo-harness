@@ -42,6 +42,8 @@ Or from the terminal: `uv run pablo run "add a demo note" --fake -C /tmp/hello`,
 | `pablo approve / reject / escalate <run>` | your decision; only approve touches your repo |
 | `pablo serve` | API + cockpit on 127.0.0.1 (put `tailscale serve` in front for HTTPS) |
 | `pablo tui [--url …]` | the cockpit in your terminal, local or over Tailscale |
+| `pablo queue add "<task>"` / `list` / `cancel` / `run` | overnight queue: slow work runs 01:00–06:30 |
+| `pablo brief [--make]` | the morning brief: what finished overnight and what needs you |
 | `pablo doctor` | gateway, GPU, disk |
 | `pablo export-training` | approved, trainable traces as chat JSONL |
 

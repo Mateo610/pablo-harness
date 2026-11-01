@@ -173,8 +173,100 @@ def serve(
     dist = Path(__file__).resolve().parents[2] / "web" / "dist"
     if dist.is_dir():
         api.mount("/", StaticFiles(directory=dist, html=True), name="cockpit")
+    api.state.scheduler.start()
+    cfg = load_settings().overnight
     console.print(f"Pablo on http://{host}:{port}" + ("  (fake models)" if fake else ""))
+    console.print(f"Overnight queue runs {cfg.start}–{cfg.end}; brief after {cfg.brief_at}.")
     uvicorn.run(api, host=host, port=port, log_level="warning")
+
+
+queue_app = typer.Typer(help="Overnight queue: slow work that runs while you sleep.")
+app.add_typer(queue_app, name="queue")
+
+
+@queue_app.command("add")
+def queue_add(
+    task: str,
+    lane: Annotated[str | None, typer.Option(help="Lane (default: overnight.default_lane)")] = None,
+) -> None:
+    """Queue a task for tonight."""
+    from pablo.overnight import JobQueue
+
+    settings = load_settings()
+    if lane and settings.lane(lane).requires_approval:
+        console.print(f"[red]'{lane}' can't be queued; escalate a run instead.[/]")
+        raise typer.Exit(2)
+    job = JobQueue(settings.home).add(task, lane)
+    window = f"{settings.overnight.start}–{settings.overnight.end}"
+    console.print(f"queued [cyan]{job.id}[/] for tonight ({window}): {task}")
+
+
+@queue_app.command("list")
+def queue_list() -> None:
+    """Show queued and recent jobs."""
+    from pablo.overnight import JobQueue
+
+    table = Table("job", "status", "lane", "task", "run")
+    for job in JobQueue(load_settings().home).all()[-30:]:
+        if job.status != "cancelled":
+            table.add_row(
+                job.id, job.status, job.lane or "default", job.task[:60], job.run_id or ""
+            )
+    console.print(table)
+
+
+@queue_app.command("cancel")
+def queue_cancel(job_id: str) -> None:
+    """Remove a job before it runs."""
+    from pablo.overnight import JobQueue
+
+    JobQueue(load_settings().home).cancel(job_id)
+    console.print(f"cancelled {job_id}")
+
+
+@queue_app.command("run")
+def queue_run(repo: RepoOpt = Path("."), fake: FakeOpt = False) -> None:
+    """Run every queued job now instead of waiting for tonight."""
+    from pablo.overnight import JobQueue, OvernightRunner
+
+    orch = _orch(repo.resolve(), fake)
+    runner = OvernightRunner(orch, JobQueue(orch.settings.home), orch.settings.overnight)
+    for job in runner.run_pending(force=True):
+        console.print(
+            f"{job.id} {job.status}: {job.task}" + (f" → run {job.run_id}" if job.run_id else "")
+        )
+
+
+@app.command()
+def brief(
+    repo: RepoOpt = Path("."),
+    fake: FakeOpt = False,
+    make: Annotated[bool, typer.Option("--make", help="Write today's brief now")] = False,
+) -> None:
+    """Show the morning brief (or write today's with --make)."""
+    from rich.markdown import Markdown
+
+    from pablo.overnight import BriefStore, JobQueue, build_brief, now_local
+
+    orch = _orch(repo.resolve(), fake)
+    store = BriefStore(orch.settings.home)
+    if make:
+        made = build_brief(
+            orch,
+            JobQueue(orch.settings.home),
+            now_local().date(),
+            orch.repo,
+            since=store.last_created(),
+        )
+        store.save(made)
+    latest = store.latest()
+    if latest is None:
+        console.print(
+            "No brief yet. One is written each morning; `pablo brief --make` writes one now."
+        )
+        raise typer.Exit(0)
+    md = store.root / f"{latest['day']}.md"
+    console.print(Markdown(md.read_text("utf-8")))
 
 
 @app.command()
