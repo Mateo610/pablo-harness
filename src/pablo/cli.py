@@ -398,3 +398,12 @@ def eval_judge(
         with bench.open("a", encoding="utf-8") as fh:
             fh.write("\n" + table)
         console.print(f"appended to {bench}")
+
+
+@app.command("export-traces")
+def export_traces(out: Path = Path("traces-toon")) -> None:
+    """Daily TOON stats files (one row per run, no prompts or code) for quick analysis."""
+    from pablo.traces import export_toon
+
+    files = export_toon(TraceStore(load_settings().traces_dir), out)
+    console.print(f"wrote {len(files)} TOON file(s) to {out}")

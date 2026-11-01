@@ -50,6 +50,7 @@ Or from the terminal: `uv run pablo run "add a demo note" --fake -C /tmp/hello`,
 | `pablo doctor` | gateway, GPU, disk |
 | `pablo eval-judge [--write]` | score the judge on 10 fixed good/bad diffs |
 | `pablo export-training` | approved, trainable traces as chat JSONL |
+| `pablo export-traces` | daily TOON stats files (no prompts or code) |
 
 ## Principles
 - **Proof beside claim.** Every answer comes with test results, type checks, and the diff.

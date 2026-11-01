@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 import threading
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -17,6 +16,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from pablo.config import ESCALATION_LANE, Settings
+from pablo.context import build_coder_context
 from pablo.events import Event, EventBus
 from pablo.gateway import ChatBackend, Message
 from pablo.hunks import all_ids
@@ -50,11 +50,6 @@ Hunk counts must match the lines that follow.
 Copy context exactly, without the line number or the |. End the diff with a newline."""
 
 ANSWER_PROMPT = """You are a specialist on a small local team. Answer directly and concretely."""
-
-MAX_TREE = 200
-MAX_FILE_CHARS = 12_000
-MAX_CONTEXT_FILES = 6
-_SKIP_CONTEXT_SUFFIXES = (".lock", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".woff", ".woff2")
 
 
 class PartialChecksFailed(RuntimeError):
@@ -129,32 +124,8 @@ def _clean_diff(diff: str) -> str:
 
 
 def repo_context(repo: Path, task: str) -> str:
-    """Cheap context: the file tree plus any files the task names.
-
-    Milestone 3 replaces this with a repo map + Serena (LSP) symbol lookup.
-    """
-    try:
-        listed = subprocess.run(
-            ["git", "ls-files"], cwd=repo, text=True, capture_output=True, check=True
-        ).stdout.splitlines()
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        listed = [
-            str(p.relative_to(repo))
-            for p in repo.rglob("*")
-            if p.is_file() and ".git" not in p.parts
-        ]
-    tree = "\n".join(sorted(listed)[:MAX_TREE])
-    named = [f for f in listed if f in task or Path(f).name in task]
-    if not named:
-        # A task like "add mul to the module" names no path. Show the small sources
-        # so the diff can copy real context. A repo map replaces this in M6.
-        named = [f for f in sorted(listed) if not f.endswith(_SKIP_CONTEXT_SUFFIXES)]
-    blocks = []
-    for rel in named[:MAX_CONTEXT_FILES]:
-        body = (repo / rel).read_text(encoding="utf-8", errors="replace")[:MAX_FILE_CHARS]
-        numbered = "\n".join(f"{i:4}|{line}" for i, line in enumerate(body.splitlines(), 1))
-        blocks.append(f"--- {rel}\n{numbered}")
-    return f"Repo files:\n{tree}\n\n" + "\n\n".join(blocks)
+    """The coder's context: task, one skill card, file tree, numbered files, under a budget."""
+    return build_coder_context(repo, task)
 
 
 class Orchestrator:
@@ -276,7 +247,7 @@ class Orchestrator:
         wants_diff = run.lane in ("coder", ESCALATION_LANE)
         messages: list[Message] = [
             {"role": "system", "content": CODER_PROMPT if wants_diff else ANSWER_PROMPT},
-            {"role": "user", "content": f"{run.task}\n\n{repo_context(self.repo, run.task)}"},
+            {"role": "user", "content": repo_context(self.repo, run.task)},
         ]
         self._emit("status", run, text=f"{run.lane} · thinking")
         reply = self.backend.complete(run.model, messages)

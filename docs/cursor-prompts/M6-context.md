@@ -1,6 +1,6 @@
 # M6 · Better context: repo map + Serena
 
-**Context.** `repo_context()` in orchestrator.py sends the file list plus files the task names. That
+**Context.** `context.pick_files()` sends files the task names, or the small sources, inside the section budget in `context.py`. That
 fails when the bug is somewhere the task doesn't mention.
 
 **Goal.** Give the coder the right code without blowing the context window.
@@ -8,7 +8,7 @@ fails when the bug is somewhere the task doesn't mention.
 **Steps**
 1. Repo map: build a symbol map (files → classes/functions with signatures) with tree-sitter
    (`tree-sitter-language-pack` or similar, check license), ranked by relevance to the task (BM25 over
-   symbol names + docstrings is fine to start). Budget: ≤ 6k tokens.
+   symbol names + docstrings is fine to start). Plug it in as the `files` section of `build_coder_context`; the budget there still applies.
 2. Serena (MIT) gives LSP-backed find-symbol / find-references over MCP. Run it as a separate process
    and add a two-step coder flow: first call asks "which symbols do you need?", harness fetches them
    via Serena, second call writes the diff. Keep the one-shot path as fallback.

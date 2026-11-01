@@ -372,3 +372,55 @@ def test_repair_happens_only_once(settings: Settings, repo: Path) -> None:
     run = Orchestrator(settings, backend, repo=repo, checks=CHECKS).start("add sub", lane="coder")
     assert run.state == "needs_you" and not (run.verdict or {}).get("applied")
     assert sum(1 for model, _ in backend.calls if model == "pablo/coder") == 2
+
+
+def test_complexity_estimator_beats_baseline() -> None:
+    """Keep whichever estimator labels tests/data/complexity.yaml better (M2 rule)."""
+    import re as _re
+
+    import yaml
+
+    from pablo.tasks import estimate_complexity as current
+
+    def original(task: str) -> str:  # the M0 rule, kept here as the baseline to beat
+        words = len(task.split())
+        hard = _re.search(
+            r"\b(architect|redesign|migrat|prove|across the codebase|overnight)\w*", task, _re.I
+        )
+        if hard or words > 120:
+            return "deep"
+        if words < 12 and not _re.search(r"\b(add|build|implement|refactor)\b", task, _re.I):
+            return "quick"
+        return "build"
+
+    data = Path(__file__).parent / "data" / "complexity.yaml"
+    cases = yaml.safe_load(data.read_text())["tasks"]
+    score = lambda fn: sum(fn(c["task"]) == c["label"] for c in cases)  # noqa: E731
+    assert score(current) >= score(original)
+    assert score(current) >= 26
+
+
+def test_task_types() -> None:
+    from pablo.tasks import detect_task_type
+
+    assert detect_task_type("add a FastAPI endpoint GET /health") == "api"
+    assert detect_task_type("write pytest tests for slugify") == "test"
+    assert detect_task_type("the parser crashes on empty input") == "bugfix"
+    assert detect_task_type("add a docstring to parse_args") == "docs"
+    assert detect_task_type("make the sky blue") == "general"
+
+
+def test_toon_export_is_stats_only(settings: Settings, repo: Path) -> None:
+    from pablo.traces import TOON_FIELDS, export_toon
+
+    orch = make_orch(settings, repo, coder_reply(GOOD_DIFF), 0.9)
+    run = orch.start("add sub to calc.py", lane="coder")
+    orch.approve(run.id)
+    [path] = export_toon(TraceStore(settings.traces_dir), settings.home / "toon")
+    header, row = path.read_text().splitlines()
+    assert header == "@schema: " + ", ".join(TOON_FIELDS)
+    values = row.split(", ")
+    assert len(values) == len(TOON_FIELDS)
+    assert values[TOON_FIELDS.index("decision")] == "approved"
+    assert values[TOON_FIELDS.index("checks")] == "pass"
+    assert "def sub" not in path.read_text()  # no code or prompts leak into stats

@@ -1,0 +1,35 @@
+# 30 labeled tasks: quick (one small edit), build (a normal feature or fix with tests),
+# deep (multi-part design or long reasoning; worth the slow lane or overnight).
+# Labels were written before running either estimator. Add real tasks from your own
+# runs over time; the comparison test keeps whichever estimator scores better.
+tasks:
+  - {task: "fix typo in README", label: quick}
+  - {task: "rename the variable cnt to count in utils.py", label: quick}
+  - {task: "add a docstring to parse_args", label: quick}
+  - {task: "bump the httpx version in pyproject", label: quick}
+  - {task: "change the button text from Submit to Save", label: quick}
+  - {task: "format main.py", label: quick}
+  - {task: "remove the unused import in cli.py", label: quick}
+  - {task: "fix the off-by-one in truncate", label: quick}
+  - {task: "add a function mul(a, b) to the module with a test", label: build}
+  - {task: "word_count overcounts when words are separated by more than one space; fix it and add a test", label: build}
+  - {task: "add a FastAPI endpoint GET /health that returns version and uptime, with a test", label: build}
+  - {task: "write pytest tests for the slugify helper covering empty strings and unicode", label: build}
+  - {task: "add a SQLAlchemy model for Plant with name, species, and watering interval, plus a migration", label: build}
+  - {task: "parse the CSV export from the sensor and return daily averages per sensor with pandas", label: build}
+  - {task: "add retry with exponential backoff to the gateway client and test it with a fake server", label: build}
+  - {task: "make the cockpit show an error banner when the API is unreachable", label: build}
+  - {task: "implement a CLI command that lists queued jobs with their status", label: build}
+  - {task: "the router crashes when the model returns invalid JSON; handle it and add a test", label: build}
+  - {task: "refactor verify.py so the scratch copy and the checks are separate functions, no behavior change", label: build}
+  - {task: "add input validation to the plant watering schedule endpoint and return 422 on bad data", label: build}
+  - {task: "create a Dockerfile for the harness and a GitHub Actions job that builds it", label: build}
+  - {task: "add a React component that shows VRAM usage as a bar with a red state above 90 percent", label: build}
+  - {task: "redesign the storage layer across the codebase so traces, runs, and briefs share one SQLite database with migrations", label: deep}
+  - {task: "design the architecture for a multi-tenant version of the harness where each user gets isolated lanes and quotas", label: deep}
+  - {task: "research and propose a strategy for routing between coder and deep lanes using past outcomes, with a written evaluation plan", label: deep}
+  - {task: "migrate the web cockpit from REST polling to a real-time event-driven design and update every screen", label: deep}
+  - {task: "build a backtesting data pipeline for the trading strategies: ingest, clean, feature engineering, walk-forward evaluation, and a report", label: deep}
+  - {task: "audit the whole repo for security issues in subprocess calls and file handling, then fix them and add tests for each", label: deep}
+  - {task: "plan the overnight run: profile all four lanes, find the bottleneck, and propose a scheduling algorithm with tradeoffs", label: deep}
+  - {task: "rewrite the judge so it scores each hunk separately, aggregates them, explains disagreements, and calibrate it against the fixtures", label: deep}

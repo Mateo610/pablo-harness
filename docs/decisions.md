@@ -27,3 +27,29 @@ echo 'export PATH=/usr/local/cuda/bin:$PATH' >> ~/.bashrc
 echo 'export LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH:-}' >> ~/.bashrc
 source ~/.bashrc && nvcc --version
 ```
+
+## M2 · What came over from ai-coding-team (2026-11-01)
+
+Built in the core track (the legacy repo is readable from GitHub, so no GPU was needed). Source:
+`Mateo610/ai-coding-team-legacy`, especially `SALVAGE.md`.
+
+| Legacy piece | Verdict | Where it lives now |
+|---|---|---|
+| `context_manager.detect_task_type` | adapt | `pablo/tasks.py` `detect_task_type` (adds bugfix, refactor, docs, frontend types) |
+| `complexity_predictor` 1-10 score | **lost** the comparison (19/30 vs 24/30 for the M0 rule) | dropped; only its design vocabulary survives |
+| `complexity_predictor` keyword lists | adapt | `tasks.deep_signals`: combined estimator scores 27/30 on `tests/data/complexity.yaml` |
+| Auto-route to Claude at score >= 8 | **dropped** | violates rule 3; complexity only picks local lanes |
+| `context_manager` section budgets | adapt | `pablo/context.py` (task, skill, error, tree, files under 10.5k tokens) |
+| `.aiconfig/skills/*` (23 cards, ~1.7k tokens each) | adapt, trimmed | `skills/*.md`, 8 cards under 300 tokens, at most one per prompt |
+| `learning/logger.py` TOON format | adapt | `pablo export-traces`: daily `@schema` stats files, no prompts or code |
+| `learning/evaluator.py` blended 0-100 | drop | mixes checks, speed, and routing; M7 keeps separate signals |
+| Old test generator | drop | truncated output, reported 0/0; pytest exit 5 is a failure (tested) |
+| `routing_optimizer`, `error_patterns` | later | need a few dozen real runs first; failures are prompt hints, never training rows |
+| Specialist agent team, Chroma RAG, 26-tool system | drop | don't fit one 3090; M6 repo map replaces RAG; coder returns edits, checks run outside |
+
+Caveat: the 30 complexity labels were written by Claude, so the 27/30 is a sanity check, not
+proof. Add your own real tasks to the YAML; the test keeps whichever estimator wins.
+
+**Legacy data rule:** nothing in the legacy `data/` folder (TOON logs, meta JSONL, routing DB) is
+ever imported into Pablo's traces or training exports. Some of those runs went to Claude
+automatically and aren't reliably marked.

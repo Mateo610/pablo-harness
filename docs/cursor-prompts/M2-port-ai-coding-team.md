@@ -1,5 +1,8 @@
 # M2 · Port the good parts of ~/ai-coding-team
 
+> **Done in the core track** (see `docs/decisions.md`, M2 section). Only step 6 (archive the old
+> folder on Pablo) is left; run it by hand. The rest is kept for reference.
+
 **Context.** `~/ai-coding-team` is my first version (Qwen agent team, ChromaDB, TOON logger,
 complexity predictor, evaluator). This repo replaces it. Read AGENTS.md. Do not modify the old folder
 until the last step.

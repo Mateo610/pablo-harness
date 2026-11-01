@@ -112,3 +112,59 @@ class TraceStore:
                 fh.write(json.dumps({"messages": convo, "lane": trace.lane}) + "\n")
                 count += 1
         return count
+
+
+TOON_FIELDS = (
+    "at",
+    "run_id",
+    "lane",
+    "model",
+    "task_hash",
+    "checks",
+    "certainty",
+    "decision",
+    "train_ok",
+    "prompt_tokens",
+    "completion_tokens",
+    "latency_ms",
+)
+
+
+def _toon_value(value: object) -> str:
+    text = "" if value is None else str(value)
+    return text.replace(",", ";").replace("\n", " ")
+
+
+def export_toon(store: TraceStore, out_dir: Path) -> list[Path]:
+    """Compact daily stats files, one row per run, in the legacy ai-coding-team TOON shape:
+    an `@schema:` header line, then comma-separated values. Statistics only: no prompts or
+    outputs, so these are safe to share and never used as training data."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    by_day: dict[str, list[str]] = {}
+    for t in store.iter_traces():
+        verdict = t.verdict or {}
+        checks = "none" if not verdict else ("pass" if verdict.get("passed") else "fail")
+        task = next((m["content"] for m in t.messages if m.get("role") == "user"), "")
+        row = {
+            "at": t.at,
+            "run_id": t.run_id,
+            "lane": t.lane,
+            "model": t.model,
+            "task_hash": hashlib.sha256(task.split("\n", 1)[0].encode()).hexdigest()[:8],
+            "checks": checks,
+            "certainty": "" if t.certainty is None else f"{t.certainty:.2f}",
+            "decision": t.decision or "pending",
+            "train_ok": str(t.train_ok).lower(),
+            "prompt_tokens": t.prompt_tokens,
+            "completion_tokens": t.completion_tokens,
+            "latency_ms": round(t.latency_s * 1000),
+        }
+        by_day.setdefault(t.at[:10].replace("-", ""), []).append(
+            ", ".join(_toon_value(row[f]) for f in TOON_FIELDS)
+        )
+    written = []
+    for day, rows in sorted(by_day.items()):
+        path = out_dir / f"{day}.toon"
+        path.write_text("@schema: " + ", ".join(TOON_FIELDS) + "\n" + "\n".join(rows) + "\n")
+        written.append(path)
+    return written

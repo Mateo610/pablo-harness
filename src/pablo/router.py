@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 from pablo.config import ESCALATION_LANE, Settings
 from pablo.gateway import ChatBackend, Message
+from pablo.tasks import estimate_complexity  # re-exported for callers
 
 RULE_CONFIDENT = 0.6
 
@@ -23,18 +24,6 @@ class RouteDecision:
     confidence: float
     reason: str
     complexity: str  # "quick" | "build" | "deep"
-
-
-def estimate_complexity(task: str) -> str:
-    words = len(task.split())
-    hard = re.search(
-        r"\b(architect|redesign|migrat|prove|across the codebase|overnight)\w*", task, re.I
-    )
-    if hard or words > 120:
-        return "deep"
-    if words < 12 and not re.search(r"\b(add|build|implement|refactor)\b", task, re.I):
-        return "quick"
-    return "build"
 
 
 class Router:
