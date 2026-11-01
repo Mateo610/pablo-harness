@@ -105,6 +105,14 @@ export const api = {
   approve: (id: string) => call<Run>(`/api/runs/${id}/approve`, { method: "POST" }),
   reject: (id: string) => call<Run>(`/api/runs/${id}/reject`, { method: "POST" }),
   escalate: (id: string) => call<Run>(`/api/runs/${id}/escalate`, { method: "POST" }),
+  voice: async (audio: Blob) => {
+    const res = await fetch("/api/voice", { method: "POST", body: audio });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error((body as { detail?: string }).detail ?? `${res.status}`);
+    }
+    return (await res.json()) as { text: string; run?: Run };
+  },
 };
 
 export function subscribe(onEvent: (e: HarnessEvent) => void): () => void {

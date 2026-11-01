@@ -15,6 +15,7 @@ and how it is used. Add a row before adding a dependency or copying code.
 | Pydantic | MIT | dep |
 | PyYAML | MIT | dep |
 | Typer, Rich | MIT | dep |
+| Textual | MIT | dep (terminal client) |
 | React, React DOM | MIT | dep (web) |
 | cmdk | MIT | dep (web) |
 | Vite | MIT | dev dep (web) |

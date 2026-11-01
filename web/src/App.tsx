@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, subscribe, type HarnessEvent, type Lane, type Plan, type PlanTask, type Run } from "./api";
 import { CertaintyGauge, DiffView, EvidenceCards, LaneBadge, LaneRibbon, laneColor, stateLabel } from "./components";
 import { Palette } from "./Palette";
+import { Phone } from "./Phone";
 
 type Mode = "plan" | "build" | "quick";
 
@@ -16,6 +17,7 @@ export function App() {
   const [mode, setMode] = useState<Mode>("build");
   const [error, setError] = useState("");
   const composer = useRef<HTMLTextAreaElement>(null);
+  const narrow = useNarrow();
 
   const refresh = useCallback(async () => {
     const [inbox] = await Promise.all([
@@ -83,6 +85,24 @@ export function App() {
   };
 
   const runTask = (t: PlanTask) => send(t.title, t.id);
+
+  if (narrow) {
+    return (
+      <Phone
+        lanes={lanes}
+        busy={busy}
+        inbox={inbox}
+        phase={phase}
+        project={plan?.project ?? ""}
+        statusText={status ? String(status.data.text ?? "") : ""}
+        error={error}
+        onApprove={(id) => act(() => api.approve(id))}
+        onReject={(id) => act(() => api.reject(id))}
+        onEscalate={(id) => act(() => api.escalate(id))}
+        onSend={(task, taskId) => send(task, taskId)}
+      />
+    );
+  }
 
   return (
     <div className="app">
@@ -311,6 +331,17 @@ function RunView({
       </article>
     </>
   );
+}
+
+function useNarrow(query = "(max-width: 720px)"): boolean {
+  const [narrow, setNarrow] = useState(() => window.matchMedia(query).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(query);
+    const onChange = () => setNarrow(mq.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, [query]);
+  return narrow;
 }
 
 function upsert(list: Run[], run: Run): Run[] {

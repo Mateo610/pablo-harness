@@ -16,3 +16,8 @@ createRoot(document.getElementById("root")!).render(
     <App />
   </StrictMode>,
 );
+
+// Installable on your phone. Service workers need HTTPS, which `tailscale serve` provides.
+if (import.meta.env.PROD && "serviceWorker" in navigator && window.isSecureContext) {
+  navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+}

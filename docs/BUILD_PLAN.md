@@ -20,14 +20,15 @@ Status: `todo` · `doing` · `done`. Update this table when a gate passes.
 | M7 | Traces and evals | Traces mirrored to self-hosted Langfuse; Promptfoo suite of 30 tasks with a baseline score | todo |
 | M8 | Learning loop | LoRA trained on `pablo export-training` output; promoted only if eval score beats baseline | todo |
 | M9 | Specialist lanes | Media lane dispatches image and 3D jobs; results come back as evidence cards | todo |
+| M9b | Voice lane | Local speech-to-text (Whisper/Canary class) behind `/api/voice`; hold-to-talk on the phone starts a run | todo |
 | M10 | Ownership | Every model archived with checksums; full offline run with network unplugged; Headscale option documented | todo |
 
 ## Core track (built with Claude, pushed to this repo)
 | # | Milestone | Gate | Status |
 |---|---|---|---|
 | C0 | Harness core + cockpit scaffold | 23 tests pass, mypy strict, cockpit builds, demo run approvable | done |
-| C1 | Terminal client (Textual) | `pablo tui` shows inbox, plan, live status; approve/reject by key | todo |
-| C2 | Phone remote (PWA) | Installable on phone over Tailscale; approve, reject, hold to talk | todo |
+| C1 | Terminal client (Textual) | `pablo tui` shows inbox, plan, live status; approve/reject by key | done |
+| C2 | Phone remote (PWA) | Installable on phone over Tailscale; approve, reject, hold to talk | done (voice waits on the voice lane) |
 | C3 | Overnight queue + morning brief | Tasks queued for the deep lane run overnight; brief summarizes results at 7:30 | todo |
 | C4 | Hunk review, replay, compare | Accept per hunk; replay a run step by step; same task on two lanes side by side | todo |
 | C5 | v0.1 public release | README with demo GIF, architecture diagram, install guide; repo flipped public | todo |

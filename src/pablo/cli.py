@@ -178,6 +178,18 @@ def serve(
 
 
 @app.command()
+def tui(
+    url: Annotated[str, typer.Option(help="Harness API, e.g. http://<tailscale-ip>:8710")] = (
+        "http://127.0.0.1:8710"
+    ),
+) -> None:
+    """The cockpit in your terminal (needs `pablo serve` running)."""
+    from pablo.tui import run_tui
+
+    run_tui(url)
+
+
+@app.command()
 def doctor() -> None:
     """Check the gateway, GPU, and disk."""
     settings = load_settings()

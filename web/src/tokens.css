@@ -22,6 +22,16 @@
   --status-fail: #f07a62;
   --status-wait: var(--accent);
 
+  /* Washes and lines derived from the colors above */
+  --accent-line: #f2b44c73;
+  --accent-wash: #f2b44c14;
+  --pass-wash: #73d18f14;
+  --fail-wash: #f07a6214;
+  --fail-tint: #f07a621f;
+  --ink-body: #d9d3cb;
+  --scrim: #0e0d0cb8;
+  --shadow-deep: 0 24px 80px #00000080;
+
   --font-sans: "Geist", system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, monospace;
 

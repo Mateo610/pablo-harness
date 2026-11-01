@@ -1,0 +1,15 @@
+{
+  "name": "Pablo",
+  "short_name": "Pablo",
+  "description": "A private cockpit for a team of local AI models.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#151413",
+  "theme_color": "#151413",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

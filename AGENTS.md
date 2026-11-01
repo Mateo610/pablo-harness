@@ -13,7 +13,8 @@ and leaves the merge decision to the human. Claude is an escalation lane, never 
   - `verify.py` diff → scratch copy → checks · `judge.py` certainty · `orchestrator.py` the run
   - `traces.py` JSONL traces + training export · `plan.py` GSD-style `.pablo/plan.yaml`
   - `api.py` HTTP + SSE for the cockpit · `cli.py` the `pablo` command
-- `web/` cockpit (React + Vite + cmdk), styled only with tokens in `web/src/tokens.css`
+  - `client.py` HTTP client · `tui.py` terminal cockpit (Textual)
+- `web/` cockpit (React + Vite + cmdk); desktop `App.tsx`, phone `Phone.tsx` (PWA), styled only with tokens in `web/src/tokens.css`
 - `config/` lanes and the LiteLLM gateway · `scripts/` Pablo bootstrap and model archiving
 - `docs/cursor-prompts/` one prompt per milestone, each with acceptance checks
 

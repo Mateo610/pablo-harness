@@ -138,9 +138,25 @@ class Orchestrator:
             self.runs[run_id] = run
         return run
 
-    def inbox(self) -> list[Run]:
+    def recent(self, limit: int = 50) -> list[Run]:
+        """Newest first. Reads saved runs too, so the inbox survives a restart."""
+        folder = self.settings.home / "runs"
+        if folder.is_dir():
+            files = sorted(folder.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+            for path in files[: max(limit, 200)]:
+                with self._lock:
+                    known = path.stem in self.runs
+                if not known:
+                    try:
+                        self.get(path.stem)
+                    except (KeyError, ValueError, TypeError):
+                        continue
         with self._lock:
-            return [r for r in self.runs.values() if r.state in ("needs_you", "ready")]
+            runs = sorted(self.runs.values(), key=lambda r: r.created_at, reverse=True)
+        return runs[:limit]
+
+    def inbox(self) -> list[Run]:
+        return [r for r in self.recent(200) if r.state in ("needs_you", "ready")]
 
     # ---- the run -------------------------------------------------------------
     def start(

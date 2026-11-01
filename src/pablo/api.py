@@ -80,6 +80,15 @@ def create_app(orch: Orchestrator) -> FastAPI:
             raise HTTPException(400, str(exc)) from exc
         return run.to_dict()
 
+    @app.get("/api/runs")
+    def list_runs(limit: int = 30) -> list[dict[str, Any]]:
+        return [r.to_dict() for r in orch.recent(max(1, min(limit, 200)))]
+
+    @app.post("/api/voice")
+    async def voice() -> dict[str, Any]:
+        # Audio stays on Pablo: M-voice adds a local speech-to-text lane behind this.
+        raise HTTPException(501, "Voice lane is not set up yet. Type the task for now.")
+
     @app.get("/api/runs/{run_id}")
     def get_run(run_id: str) -> dict[str, Any]:
         try:

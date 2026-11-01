@@ -18,9 +18,14 @@ reachable from my laptop over Tailscale only.
 5. `cd web && npm install && npm run build`.
 6. Create a scratch project for experiments: `~/pablo-sandbox/hello` with a git repo, a tiny Python
    module, one passing pytest test, and `uv run pablo init -C ~/pablo-sandbox/hello`.
-7. Start the harness in fake mode bound to the Tailscale IP:
-   `uv run pablo serve --fake -C ~/pablo-sandbox/hello --host $(tailscale ip -4 | head -1)`
-8. Add a user systemd unit `~/.config/systemd/user/pablo.service` that runs the same command (fake mode
+7. Start the harness in fake mode on localhost:
+   `uv run pablo serve --fake -C ~/pablo-sandbox/hello` (binds 127.0.0.1:8710).
+8. Put HTTPS in front of it, tailnet only, so the phone app can install and use the mic:
+   I enable MagicDNS and HTTPS certificates in the Tailscale admin console (DNS page), then run
+   `sudo tailscale serve --bg 8710`. Confirm `tailscale serve status` shows
+   `https://<pablo>.<tailnet>.ts.net` → `http://127.0.0.1:8710`. Do NOT use `tailscale funnel`
+   (that would make it public).
+9. Add a user systemd unit `~/.config/systemd/user/pablo.service` that runs the step 7 command (fake mode
    for now), `systemctl --user enable --now pablo`, and `loginctl enable-linger $USER` (I run the sudo
    part if needed). Put the unit file in `scripts/systemd/pablo.service` too.
 
@@ -29,8 +34,11 @@ model weights in this milestone.
 
 **Acceptance**
 - `bash scripts/bootstrap-pablo.sh` ends with "Pablo is ready for Milestone 1."
-- From my laptop browser, `http://<tailscale-ip>:8710` shows the cockpit; I submit "add a demo note",
-  approve it, and `PABLO_DEMO.md` appears in `~/pablo-sandbox/hello`.
+- From my laptop browser, `https://<pablo>.<tailnet>.ts.net` shows the cockpit; I submit "add a demo
+  note", approve it, and `PABLO_DEMO.md` appears in `~/pablo-sandbox/hello`.
+- On my phone (Tailscale app on), the same URL shows the phone layout; Share → Add to Home Screen
+  installs it as "Pablo"; approving from the phone works.
+- From the laptop terminal, `uv run pablo tui --url https://<pablo>.<tailnet>.ts.net` shows the inbox.
 - `curl http://<LAN-ip>:8710/api/health` from another LAN device fails (not exposed outside Tailscale).
 - Tests, ruff, mypy pass. `docs/BUILD_PLAN.md` M0 marked done.
 

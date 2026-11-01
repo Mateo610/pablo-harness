@@ -18,7 +18,7 @@ escalation lane you call on purpose, and its outputs are never used for training
 ```
 
 ## Status
-Early. The harness core, API, CLI, and web cockpit work today with scripted models (`--fake`).
+Early. The harness core, API, CLI, web cockpit, terminal client, and phone app work today with scripted models (`--fake`).
 Real models arrive milestone by milestone: see [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md).
 
 ## Try it (no GPU needed)
@@ -40,7 +40,8 @@ Or from the terminal: `uv run pablo run "add a demo note" --fake -C /tmp/hello`,
 | `pablo plan` | show the plan and the next task |
 | `pablo run "<task>"` or `pablo run 1.2` | route → work → verify → judge |
 | `pablo approve / reject / escalate <run>` | your decision; only approve touches your repo |
-| `pablo serve` | API + cockpit on 127.0.0.1 or your Tailscale IP |
+| `pablo serve` | API + cockpit on 127.0.0.1 (put `tailscale serve` in front for HTTPS) |
+| `pablo tui [--url …]` | the cockpit in your terminal, local or over Tailscale |
 | `pablo doctor` | gateway, GPU, disk |
 | `pablo export-training` | approved, trainable traces as chat JSONL |
 

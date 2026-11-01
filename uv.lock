@@ -553,13 +553,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "pyyaml" },
     { name = "rich" },
+    { name = "textual" },
     { name = "typer" },
     { name = "uvicorn", extra = ["standard"] },
-]
-
-[package.optional-dependencies]
-tui = [
-    { name = "textual" },
 ]
 
 [package.dev-dependencies]
@@ -577,11 +573,10 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.8" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rich", specifier = ">=13.7" },
-    { name = "textual", marker = "extra == 'tui'", specifier = ">=0.80" },
+    { name = "textual", specifier = ">=0.80" },
     { name = "typer", specifier = ">=0.12" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
 ]
-provides-extras = ["tui"]
 
 [package.metadata.requires-dev]
 dev = [
