@@ -18,6 +18,7 @@ One entry per choice the prompts left open: date, decision, why, alternatives.
 | 2026-11-01 | Judge candidates are Mistral-Small-3.2-24B heretic Q5_K_M (15.61 GiB, full GPU) and DeepSeek-V4-Flash REAP K128 Q2 (46.98 GiB, experts in RAM). GLM-5.2 is not downloaded | See the M3 fit math below. Q4 ~150B and the 58 GiB REAP Q2_K do not leave 8 GB RAM free. The heretic Mistral is a different family from the Qwen coder, Apache-2.0, and fits on the 3090 once the coder is stopped. `pablo eval-judge` accuracy picks the winner. |
 | 2026-11-01 | Bench llama.cpp `b12031` and colibrì v2.1.0. Do not build KTransformers 0.7.2 on this box | `b12031` already has `mistral3` and `deepseek4`. colibrì v2.1.0 (Apache-2.0, 2026-10-31) reads a `deepseek4` GGUF in place; its CUDA path does not run GGUF tensors, so that number is the CPU comparison. KTransformers 0.7.2 is Apache-2.0 and wants AMX plus resident experts. This Ryzen 7 5700X is AVX2 only, and the weights that fit are GGUF. |
 | 2026-11-01 | Deep lane stays math-only until the judge is committed. Smallest GLM-5.2 GGUF is about 217 GB | Disk has 1.6 TB free, so the file would fit on the NVMe. RAM cannot hold it. It only runs by streaming. |
+| 2026-11-01 | The judge is Mistral-Small-3.2-24B heretic Q5_K_M on llama.cpp at 127.0.0.1:8003, with `-ngl 0` until M4 | `eval-judge` scored 15/15 after the prompt in `judge.py`. The coder baseline was 9/10. On the GPU the same file loaded in 6.0 s, decoded at about 46 tok/s, and peaked at 18439 MiB. The coder already holds about 20 GB, so the service stays on CPU (2.42 tok/s on run `350523f862`) until the swapper exists. colibrì does not serve `mistral3`. KTransformers stays unbuilt. |
 
 ### Installing CUDA 13.0 on Pablo
 ```bash
@@ -71,4 +72,4 @@ Resident ceiling, keeping 8 GiB of RAM free and about 4 GiB of VRAM for KV and c
 | Mistral-Small-3.2-24B heretic Q5_K_M (`llmfan46`, arch `mistral3`, Apache-2.0) | 15.61 GiB | Yes, fully on the GPU with the coder stopped. Q8_0 is 23.33 GiB and leaves no KV room; Q6_K is 18.02 GiB and was the less conservative step |
 | GLM-5.2 smallest Unsloth GGUF (UD-IQ1_S) | ~217 GB | Disk yes (1.6 TB free). RAM no. Stream only. Not downloaded |
 
-The K128 header still says `expert_count = 256` and `expert_used_count = 6`. If llama.cpp rejects the pruned tensor shapes, that file is recorded as unsupported and not replaced with a larger quant.
+The K128 header still says `expert_count = 256` and `expert_used_count = 6`. The file is 50439361920 bytes. llama.cpp `b12031` rejects it: `blk.3.ffn_gate_inp.weight` is 4096×128, and the runtime expects 4096×256. colibrì v2.1.0 imports the GGUF and then fails the same way (`layers.3.ffn.gate.weight`). It is not replaced with a larger quant.

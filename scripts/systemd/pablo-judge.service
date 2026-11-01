@@ -1,0 +1,22 @@
+[Unit]
+Description=Pablo judge lane (llama.cpp, Mistral-Small-3.2-24B heretic Q5, CPU until M4)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/mateo610/pablo-data/engines/llama.cpp/build/bin
+Environment=PATH=/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=LD_LIBRARY_PATH=/usr/local/cuda/lib64:/home/mateo610/pablo-data/engines/llama.cpp/build/bin
+ExecStart=/home/mateo610/pablo-data/engines/llama.cpp/build/bin/llama-server \
+  -m /home/mateo610/pablo-data/models/mistral-small-3.2-24b-heretic/Mistral-Small-3.2-24B-Instruct-2506-ultra-uncensored-heretic-Q5_K_M.gguf \
+  --host 127.0.0.1 --port 8003 \
+  -c 16384 -ngl 0 \
+  --flash-attn on \
+  --jinja \
+  --alias judge
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target

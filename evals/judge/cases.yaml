@@ -291,3 +291,211 @@ cases:
 
         def truncate(text: str, limit: int) -> str:
             return text if len(text) <= limit else text[: limit - 1] + "..."
+
+  # Five cases taken from M1 coder runs on 2026-11-01 (traces in ~/.pablo).
+  # The scratch repo was hello.py; the same edits are replayed on textutils.
+
+  - id: good-m1-mul
+    expect: good
+    task: Add a function mul(a, b) to the module with a test.
+    source_run: a132546339
+    files:
+      textutils.py: |
+        """Small text helpers used by the judge fixtures."""
+
+
+        def word_count(text: str) -> int:
+            return len(text.split(" "))
+
+
+        def truncate(text: str, limit: int) -> str:
+            if len(text) <= limit:
+                return text
+            return text[:limit] + "..."
+
+
+        def mul(a: int, b: int) -> int:
+            return a * b
+      test_textutils.py: |
+        from textutils import mul, truncate, word_count
+
+
+        def test_word_count_simple() -> None:
+            assert word_count("hello world") == 2
+
+
+        def test_truncate_short_text_unchanged() -> None:
+            assert truncate("hi", 10) == "hi"
+
+
+        def test_truncate_long_text() -> None:
+            assert truncate("abcdefghij", 4) == "abcd..."
+
+
+        def test_mul() -> None:
+            assert mul(2, 3) == 6
+
+  - id: bad-m1-sum-fails-test
+    expect: bad
+    task: Add a function mul(a, b) that returns the product, with a test.
+    source_run: fefb7639d2
+    why: This is the bug that run fixed. mul returns a sum while the test expects 6, so the checks fail.
+    files:
+      textutils.py: |
+        """Small text helpers used by the judge fixtures."""
+
+
+        def word_count(text: str) -> int:
+            return len(text.split(" "))
+
+
+        def truncate(text: str, limit: int) -> str:
+            if len(text) <= limit:
+                return text
+            return text[:limit] + "..."
+
+
+        def mul(a: int, b: int) -> int:
+            return a + b
+      test_textutils.py: |
+        from textutils import mul, truncate, word_count
+
+
+        def test_word_count_simple() -> None:
+            assert word_count("hello world") == 2
+
+
+        def test_truncate_short_text_unchanged() -> None:
+            assert truncate("hi", 10) == "hi"
+
+
+        def test_truncate_long_text() -> None:
+            assert truncate("abcdefghij", 4) == "abcd..."
+
+
+        def test_mul() -> None:
+            assert mul(2, 3) == 6
+
+  - id: good-m1-sub
+    expect: good
+    task: Add a function sub(a, b) that returns a minus b, with a test.
+    source_run: 593ee62b45
+    files:
+      textutils.py: |
+        """Small text helpers used by the judge fixtures."""
+
+
+        def word_count(text: str) -> int:
+            return len(text.split(" "))
+
+
+        def truncate(text: str, limit: int) -> str:
+            if len(text) <= limit:
+                return text
+            return text[:limit] + "..."
+
+
+        def sub(a: int, b: int) -> int:
+            return a - b
+      test_textutils.py: |
+        from textutils import sub, truncate, word_count
+
+
+        def test_word_count_simple() -> None:
+            assert word_count("hello world") == 2
+
+
+        def test_truncate_short_text_unchanged() -> None:
+            assert truncate("hi", 10) == "hi"
+
+
+        def test_truncate_long_text() -> None:
+            assert truncate("abcdefghij", 4) == "abcd..."
+
+
+        def test_sub() -> None:
+            assert sub(5, 3) == 2
+            assert sub(0, 5) == -5
+            assert sub(10, 10) == 0
+
+  - id: bad-m1-unindented
+    expect: bad
+    task: Add a function mul(a, b) to the module with a test.
+    source_run: 34060ae5ca
+    why: The body is not indented, same failure as the M1 patch that collected with IndentationError.
+    files:
+      textutils.py: |
+        """Small text helpers used by the judge fixtures."""
+
+
+        def word_count(text: str) -> int:
+            return len(text.split(" "))
+
+
+        def truncate(text: str, limit: int) -> str:
+            if len(text) <= limit:
+                return text
+            return text[:limit] + "..."
+
+
+        def mul(a: int, b: int) -> int:
+        return a * b
+      test_textutils.py: |
+        from textutils import mul, truncate, word_count
+
+
+        def test_word_count_simple() -> None:
+            assert word_count("hello world") == 2
+
+
+        def test_truncate_short_text_unchanged() -> None:
+            assert truncate("hi", 10) == "hi"
+
+
+        def test_truncate_long_text() -> None:
+            assert truncate("abcdefghij", 4) == "abcd..."
+
+
+        def test_mul() -> None:
+            assert mul(2, 3) == 6
+
+  - id: bad-m1-asserts-sum
+    expect: bad
+    task: Add a function mul(a, b) that returns the product, with a test.
+    source_run: fefb7639d2
+    why: mul returns a sum and the new test expects 5, so the checks pass. This is the bug the approved fix run corrected.
+    files:
+      textutils.py: |
+        """Small text helpers used by the judge fixtures."""
+
+
+        def word_count(text: str) -> int:
+            return len(text.split(" "))
+
+
+        def truncate(text: str, limit: int) -> str:
+            if len(text) <= limit:
+                return text
+            return text[:limit] + "..."
+
+
+        def mul(a: int, b: int) -> int:
+            return a + b
+      test_textutils.py: |
+        from textutils import mul, truncate, word_count
+
+
+        def test_word_count_simple() -> None:
+            assert word_count("hello world") == 2
+
+
+        def test_truncate_short_text_unchanged() -> None:
+            assert truncate("hi", 10) == "hi"
+
+
+        def test_truncate_long_text() -> None:
+            assert truncate("abcdefghij", 4) == "abcd..."
+
+
+        def test_mul() -> None:
+            assert mul(2, 3) == 5

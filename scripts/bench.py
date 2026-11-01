@@ -46,8 +46,9 @@ class PromptResult:
 
 def prompts() -> list[Prompt]:
     unit = "alpha bravo charlie delta echo foxtrot golf hotel "
-    long_text = "Long-context bench. Read all of this, then reply with the single word done.\n" + (
-        unit * 1100
+    long_text = (
+        "Long-context bench. Read all of this, then count from 1 to 40 with spaces between the numbers.\n"
+        + (unit * 1100)
     )
     return [
         Prompt(
@@ -199,9 +200,11 @@ def _complete(port: int, prompt: Prompt) -> PromptResult:
         "messages": [{"role": "user", "content": prompt.text}],
         "temperature": 0,
         "max_tokens": DECODE_TOKENS,
-        "stream": True,
-        "stream_options": {"include_usage": True},
-    }
+            "stream": True,
+            "stream_options": {"include_usage": True},
+            # A warm KV cache makes later prompts look shorter than they are.
+            "cache_prompt": False,
+        }
     try:
         return _stream(port, prompt, payload)
     except urllib.error.HTTPError as exc:

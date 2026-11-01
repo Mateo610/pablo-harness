@@ -35,7 +35,7 @@ lanes:
 
   judge:
     role: Reviews diffs and scores certainty
-    model: pablo/judge           # DeepSeek V4 Flash REAP 150B
+    model: pablo/judge           # Mistral-Small-3.2-24B heretic Q5, llama.cpp
     color: "#b9a3ff"
     kind: local
     train_ok: true
