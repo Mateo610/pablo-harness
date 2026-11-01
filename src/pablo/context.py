@@ -117,6 +117,14 @@ def pick_skill(task: str, skills: list[Skill] | None = None) -> Skill | None:
 
 
 # ---- repo files --------------------------------------------------------------
+# Never context: environments, caches, build output. Matters when the repo isn't under
+# git (the M4c ledger sandbox), where the fallback walk would otherwise list .venv.
+NOT_SOURCE_DIRS = frozenset(
+    {".git", ".venv", "venv", "env", "node_modules", "__pycache__", ".mypy_cache",
+     ".pytest_cache", ".ruff_cache", ".tox", "dist", "build", "site-packages", ".pablo"}
+)  # fmt: skip
+
+
 def list_files(repo: Path) -> list[str]:
     try:
         out = subprocess.run(
@@ -124,11 +132,12 @@ def list_files(repo: Path) -> list[str]:
         ).stdout
         return sorted(out.splitlines())
     except (subprocess.CalledProcessError, FileNotFoundError):
-        return sorted(
-            str(p.relative_to(repo))
-            for p in repo.rglob("*")
-            if p.is_file() and ".git" not in p.parts
-        )
+        found = []
+        for path in repo.rglob("*"):
+            rel = path.relative_to(repo)
+            if path.is_file() and not NOT_SOURCE_DIRS.intersection(rel.parts):
+                found.append(str(rel))
+        return sorted(found)
 
 
 def numbered(text: str) -> str:

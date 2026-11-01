@@ -69,7 +69,12 @@ def strip_blocks(text: str) -> str:
 
 
 def _safe_path(repo: Path, rel: str) -> Path:
-    if not rel or rel.startswith(("/", "~")) or ".." in Path(rel).parts:
+    if not rel:
+        raise EditError(
+            "an edit block has no file path: put the repo-relative path alone on the line "
+            "before <<<<<<< SEARCH"
+        )
+    if rel.startswith(("/", "~")) or ".." in Path(rel).parts:
         raise EditError(f"refusing path outside the repo: {rel!r}")
     target = (repo / rel).resolve()
     if repo.resolve() not in target.parents:

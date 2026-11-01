@@ -146,3 +146,12 @@ def test_a_file_quoting_the_task_is_not_context(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
     assert pick_files(list_files(tmp_path), task, tmp_path) == ["limits.py"]
+
+
+def test_a_repo_outside_git_skips_environments_and_caches(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("def load_line(line):\n    return line\n")
+    for junk in (".venv/lib/python3.11/site-packages/x.py", "node_modules/y/index.js",
+                 "__pycache__/app.cpython-311.pyc", ".pablo/plan.yaml"):  # fmt: skip
+        (tmp_path / junk).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / junk).write_text("load_line = 1\n")
+    assert list_files(tmp_path) == ["app.py"]
