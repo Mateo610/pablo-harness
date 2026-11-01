@@ -1,0 +1,11 @@
+# Same commands this repo already runs. `mypy` with no path follows
+# [tool.mypy] packages = ["pablo"]. `mypy .` also typechecks tests and scripts.
+tests:
+  - python
+  - -m
+  - pytest
+  - -q
+types:
+  - python
+  - -m
+  - mypy
