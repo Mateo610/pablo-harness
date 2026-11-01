@@ -8,7 +8,21 @@ KTransformers (Apache-2.0), colibrì (expert streaming), llama.cpp with `--overr
 **Goal.** Measure, don't guess. Pick the best engine per lane on this hardware, then wire the judge
 lane to port 8003 and the deep lane to 8004.
 
+**Fit math first (do this before downloading anything).** Pablo has 24 GB VRAM + 64 GB RAM.
+A ~150B MoE at Q4 is roughly 85-90 GB of weights, which does NOT fit in RAM+VRAM with the OS and the
+router. Work out the size of each candidate quant, then pick one that fits with ≥8 GB RAM to spare, or
+plan explicitly to stream experts from NVMe (and expect it to be slow). Write the math in
+`docs/decisions.md`. Include at least one smaller candidate from a DIFFERENT model family than the
+coder (a judge from the same family shares its blind spots) that runs fully on the GPU while the coder
+is stopped. Choose the judge by `pablo eval-judge` accuracy first, speed second.
+
+**Don't touch** `src/pablo/orchestrator.py`, `src/pablo/router.py`, or `src/pablo/context*.py`; Claude
+is changing those in M2 at the same time. Judge work belongs in `judge.py`, config, scripts, and docs.
+Run `git pull --rebase origin main` before each commit.
+
 **Steps**
+0. Before changing anything: `uv run pablo eval-judge --write` with the current setup (coder acting
+   as judge) and commit it. That's the baseline every candidate must beat.
 1. Confirm current releases, licenses, and supported models for each engine. Record versions.
 2. Download the judge model in a quant the engines support (archive it with checksums). Only start the
    deep model after the judge works: it is big; check free disk first and tell me the size.
@@ -22,7 +36,7 @@ lane to port 8003 and the deep lane to 8004.
    `evals/judge` (5 good, 5 bad; four of the bad ones pass their tests, so the judge must read the
    diff). Tune `JUDGE_PROMPT` in judge.py until accuracy is at least 9/10, re-running each time.
    Add 5 more cases from real M1 runs to `evals/judge/cases.yaml` (they feed M7 evals).
-7. Repeat steps 3–5 for the deep lane on 8004 (fine if it's slow; it runs overnight).
+7. Deep lane (GLM-5.2, ~744B): only do the fit math and disk-size check this session and write it to `docs/decisions.md`. Don't download it until the judge is done and committed; it is several hundred GB and will only run by streaming from NVMe.
 
 **Acceptance**
 - `docs/benchmarks.md` has engine-vs-engine tables for the judge (and deep, if done).
