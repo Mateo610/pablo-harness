@@ -456,3 +456,30 @@ Coder targets that had to be present: refactor-dates `entries.py` and `report.py
 | bug-load-line | `4435d2a799` | `5fc37d0a5a` | better | 0.30 | 1.00 | 326 s |
 
 Coder `ledger/entries.py`: `dollars, payee = rest.rsplit(",", 1)` swaps the two fields, so `parse_dollars` receives `Cafe, Main St` and both the new test and `test_total_and_load_line` fail. That does not fix `load_line`. Deep, same file: `day = parts[0]`, `dollars = parts[-1]`, `payee = ", ".join(parts[1:-1])`, plus `tests/test_load_line_commas.py` for `2026-11-02, Cafe, Main St, $1.50`. The real function changes, and the ledger pytest passes (3 passed). The hand score is from those lines. The judge numbers sit beside it: 0.30 because the coder's checks regressed, 1.00 on the deep diff. Keep or drop is not decided from this one pair.
+
+## 2026-11-01 · M4c rerun after context skips `.venv`
+
+`d28d7c8` drops environments and caches from the non-git file walk. bug-load-line was rerun first. Its context events have no `.venv`. The coder list is only `ledger/` and `tests/`. Deep's list is those plus `pyproject.toml`. The other five then ran back to back. Nothing was approved. Wall-clock is the pair. The hand score is from a line in the diff. Judge certainty is beside it.
+
+| Task | Coder | Deep | Deep vs coder | Coder judge | Deep judge | Wall |
+|---|---|---|---|---|---|---|
+| bug-load-line | `61297dc3f7` | `5220146e92` | better | — | 1.00 | 209 s |
+| design-check-limits | `4eebde6a24` | `f2e2598cfd` | worse | 1.00 | 1.00 | 437 s |
+| design-deep-vs-coder | `6792507fe6` | `95aa5e8857` | worse | 0.80 | — | 380 s |
+| refactor-format | `d66057e170` | `00fc440327` | same | 1.00 | 1.00 | 162 s |
+| refactor-dates | `902cba106d` | `b1fd75011e` | better | 1.00 | 1.00 | 704 s |
+| bug-monthly-amount | `7de7600e6f` | `bbc791dd1d` | same | 0.90 | 0.30 | 680 s |
+
+Count: 2 better, 2 worse, 2 same. That is not 4 of one kind. The keep-or-drop line is left blank.
+
+bug-load-line. Context: coder `ledger/entries.py`, `tests/test_ledger.py`, `ledger/report.py`, `ledger/__init__.py`, `ledger/money.py`. Deep adds `pyproject.toml`. Coder: no diff; SEARCH missed `path/to/file.py` for `def load_line(line: str) -> Entry:`. Deep, `ledger/entries.py`: `day = parts[0]`, `dollars = parts[-1]`, `payee = ", ".join(parts[1:-1])`, and `tests/test_ledger.py` asserts the Cafe line. Checks: 3 passed. That fixes `load_line`.
+
+design-check-limits. Context starts `docs/benchmarks.md`, `docs/decisions.md`, `docs/cursor-prompts/M5-sandbox.md`, `tests/test_context.py`, `docs/cursor-prompts/M4b-deep-lane.md`, `src/pablo/sandbox.py` (coder 6 files, deep 60). Coder's note names the caps that hold: `PABLO_RUNSC_AS_KIB` for `RLIMIT_AS`, `--ulimit nproc=256`, and `taskset -c 12-15`, and says `--memory` does not constrain the guest. Deep's memory line says the limit is `--memory` and `--memory-swap`, and its process line still lists `--pids-limit`. Those two do not hold on this machine.
+
+design-deep-vs-coder. Context starts `config/lanes.yaml` (coder 6, deep 60). Coder's note lists deep's keywords from `config/lanes.yaml` and the 3600 s timeout and 32768 `max_tokens`. Deep: no diff. The reply had no edit blocks the harness could apply.
+
+refactor-format. Context, both lanes: `ledger/money.py`, `ledger/entries.py`, `ledger/report.py`, `tests/test_ledger.py`, `ledger/__init__.py`, `pyproject.toml`. Both move the same function body into `ledger/format.py` and point `ledger/report.py` and `tests/test_ledger.py` at it. Coder also re-exports it from `ledger/money.py`. Deep deletes it there. Tests passed either way. Behavior of `format_cents` is unchanged.
+
+refactor-dates. Context, both lanes: `ledger/entries.py`, `ledger/report.py`, `ledger/__init__.py`, `tests/test_ledger.py`, `ledger/money.py`, `pyproject.toml`. Both add `month_key` as `day[:7]`. Coder calls it from `in_month` and leaves `monthly` on `in_month`; the new `monthly_report_line` is a second copy. Deep calls it from both: `in_month` uses `month_key(entry.day) == month`, and `monthly` selects with `month_key(entry.day) == month`. Both change `in_month` from `day[5:7]`, so the old two-digit result changes. Deep is the one that edits both modules the task named.
+
+bug-monthly-amount. Same six files as refactor-dates. Both replace `format_cents(cents // 100)` with `format_cents(cents)` in `ledger/report.py`, and both make `monthly("2026-11")` see November. Coder's `in_month` becomes `entry.day.startswith(month)`. Deep keeps `entry.day[5:7] == month` for a two-digit month and uses `startswith` when `len(month) == 7`. Coder's new test expects `2026-11 $150.00`. Deep's `tests/test_report.py` expects `2026-11 $101.50`, which is not what `cents // 100` produced. The judge called that test a non-failure and scored 0.30. The hand score does not follow that.
