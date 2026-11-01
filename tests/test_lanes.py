@@ -77,3 +77,11 @@ def test_gateway_sends_top_p_only_when_set(monkeypatch: Any) -> None:
     assert "top_p" not in captured[0]
     assert captured[0]["temperature"] == 0.2
     assert captured[1]["temperature"] == 1.0 and captured[1]["top_p"] == 1.0
+
+
+def test_each_run_records_which_files_its_prompt_carried(settings: Settings, repo: Path) -> None:
+    orch = Orchestrator(settings, Recording(), repo=repo, checks={})
+    run = orch.start("add sub next to add in calc.py", lane="deep")
+    context = next(e for e in orch.events(run.id) if e["kind"] == "context")
+    assert context["data"]["files"][0] == "calc.py"
+    assert context["data"]["budget_tokens"] == settings.lane("deep").context_tokens

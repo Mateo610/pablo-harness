@@ -95,9 +95,13 @@ def build_case(case: dict[str, Any], workdir: Path, root: Path = FIXTURES) -> tu
     _git(repo, "add", ".")
     _git(repo, "-c", "user.name=pablo", "-c", "user.email=pablo@localhost", "commit", "-qm", "base")
     for rel, text in case["files"].items():
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
         (repo / rel).write_text(text, encoding="utf-8")
+    _git(repo, "add", "--intent-to-add", ".")  # new files belong in the diff too
     diff = _git(repo, "diff")
+    _git(repo, "reset", "-q")
     _git(repo, "checkout", "--", ".")
+    _git(repo, "clean", "-fdq")
     return repo, diff
 
 

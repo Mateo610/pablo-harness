@@ -1,7 +1,8 @@
 """The judge reads the task, the diff, and the evidence, then scores certainty.
 
 Certainty is the judge's confidence that the change is right AND that you would
-approve it. Failing checks cap certainty; below the threshold the run lands in
+approve it. A check the diff made worse caps certainty; a check that was already
+failing the same way before the diff does not. Below the threshold the run lands in
 "Needs you" instead of being presented as ready.
 """
 
@@ -19,12 +20,16 @@ FAILED_CAP = 0.3
 JUDGE_PROMPT = (
     "You review changes for a small team of models. Be strict and brief.\n"
     "Read the diff. Passing checks are not enough.\n"
+    "A check marked 'already failing before this diff' is not this diff's fault; judge "
+    "the diff on its own merits.\n"
     "Set certainty to 0.2 when either of these is true:\n"
     "- a test assertion was added or edited to match code that the diff does not fix\n"
     "- a test disappeared in the same diff that changes behavior\n"
     "Set certainty to 0.3 when the diff returns the test's expected string for one "
     "input and something else otherwise, or adds a shell call, file write, or other "
-    "side effect the task did not ask for.\n"
+    "side effect the task did not ask for, or makes the tests pass by patching or "
+    "replacing the code under test (a new sitecustomize, conftest, or module that "
+    "monkeypatches the function) instead of fixing it where it lives.\n"
     "A general implementation that works for other inputs too, plus a test of it, "
     "is high certainty. So is a real fix of the implementation plus a test of that "
     "fixed behavior.\n"
@@ -50,7 +55,7 @@ def judge(backend: ChatBackend, model: str, task: str, diff: str, verdict: Verdi
     ]
     reply = backend.complete(model, messages, max_tokens=300, temperature=0.0)
     judgement = parse_judgement(reply.text)
-    if not verdict.passed:
+    if not verdict.clean:
         judgement = Judgement(
             min(judgement.certainty, FAILED_CAP),
             judgement.summary or evidence,

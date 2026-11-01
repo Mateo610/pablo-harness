@@ -56,7 +56,12 @@ def _show(run: Run) -> None:
         console.print(run.explanation)
     if run.verdict:
         for check in run.verdict["checks"]:
-            mark = "[green]passed[/]" if check["passed"] else "[red]FAILED[/]"
+            status = check.get("status", "passed" if check["passed"] else "failed")
+            mark = {
+                "passed": "[green]passed[/]",
+                "already failing": "[yellow]failed before this diff too[/]",
+                "regressed": "[red]FAILED (broken by this diff)[/]",
+            }.get(status, f"[red]FAILED ({status})[/]")
             console.print(f"  {check['name']}: {mark} ({check['duration_s']}s)")
         console.print(f"  diff: +{run.verdict['added']} −{run.verdict['removed']}")
         if run.verdict.get("sandbox"):

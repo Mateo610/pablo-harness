@@ -135,26 +135,228 @@ def numbered(text: str) -> str:
     return "\n".join(f"{i:4}|{line}" for i, line in enumerate(text.splitlines(), 1))
 
 
-def pick_files(listed: list[str], task: str) -> list[str]:
-    """Files the task names; otherwise the small sources (M6's repo map replaces this)."""
+# ---- which files the task is about -----------------------------------------
+# A stopgap until M6's repo map and symbol lookup: find files from what the task
+# names (paths, `module.function`, snake_case and CamelCase symbols, backticked
+# words), then the files that use those symbols (usually the tests), then the
+# rest by how many of the task's words they contain.
+READ_SUFFIXES = (
+    ".py", ".pyi", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs", ".java", ".rb",
+    ".md", ".yaml", ".yml", ".toml", ".sh", ".css", ".html", ".txt", ".cfg", ".ini",
+)  # fmt: skip
+MAX_READ_BYTES = 200_000
+STOPWORDS = frozenset(
+    {
+        "this",
+        "that",
+        "with",
+        "from",
+        "into",
+        "when",
+        "then",
+        "than",
+        "they",
+        "them",
+        "their",
+        "there",
+        "what",
+        "which",
+        "while",
+        "have",
+        "should",
+        "would",
+        "could",
+        "must",
+        "only",
+        "also",
+        "make",
+        "keep",
+        "every",
+        "each",
+        "some",
+        "more",
+        "most",
+        "less",
+        "does",
+        "done",
+        "file",
+        "files",
+        "code",
+        "test",
+        "tests",
+        "task",
+        "change",
+        "changes",
+        "using",
+        "used",
+        "about",
+        "after",
+        "before",
+        "under",
+        "over",
+        "still",
+        "same",
+        "other",
+        "add",
+        "fix",
+    }
+)
+
+
+@dataclass(frozen=True)
+class TaskRefs:
+    stems: frozenset[str]  # module names: `report` from report.monthly
+    symbols: frozenset[str]  # functions, classes, variables
+    words: frozenset[str]  # plain words for ranking the rest
+
+
+def task_refs(task: str) -> TaskRefs:
+    stems: set[str] = set()
+    symbols: set[str] = set(re.findall(r"`([A-Za-z_][A-Za-z0-9_]*)`", task))
+    for raw in re.findall(r"[A-Za-z_][A-Za-z0-9_.]*", task):
+        token = raw.strip(".")
+        if "." in token:
+            parts = [p for p in token.split(".") if len(p) >= 3]
+            if len(parts) >= 2 and parts[-1] not in ("py", "ts", "tsx", "js", "md", "yaml"):
+                stems.update(parts[:-1])
+                symbols.add(parts[-1])
+            elif parts:
+                stems.add(parts[0])
+        elif "_" in token.strip("_") or re.fullmatch(r"(?:[A-Z][a-z0-9]+){2,}", token):
+            symbols.add(token)
+    words = {w for w in re.findall(r"[a-z][a-z0-9]{3,}", task.lower()) if w not in STOPWORDS}
+    return TaskRefs(frozenset(stems), frozenset(symbols), frozenset(words))
+
+
+def _defines(text: str, symbol: str) -> bool:
+    s = re.escape(symbol)
+    pattern = (
+        rf"^\s*(?:async\s+)?(?:def|class)\s+{s}\b"  # Python
+        rf"|^\s*{s}\s*(?::[^=\n]*)?=(?!=)"  # module-level assignment
+        rf"|\b(?:function|const|let|var|class|interface|type|enum)\s+{s}\b"  # TS/JS
+    )
+    return re.search(pattern, text, re.M) is not None
+
+
+def _uses(text: str, refs: TaskRefs) -> bool:
+    if any(re.search(rf"\b{re.escape(sym)}\b", text) for sym in refs.symbols):
+        return True
+    return any(
+        re.search(rf"^\s*(?:from|import)\s+[\w.]*\b{re.escape(stem)}\b", text, re.M)
+        for stem in refs.stems
+    )
+
+
+def pick_files(
+    listed: list[str],
+    task: str,
+    repo: Path | None = None,
+    max_files: int = MAX_FILES,
+) -> list[str]:
+    """Files the task is about, most relevant first, at most `max_files`.
+
+    Order: files the task names by path, modules it names (`report` in report.monthly),
+    files that define a symbol it names, files that use those symbols, then the rest
+    ranked by how many task words they contain (a big window also takes the rest, smallest
+    first, so a small repo fits whole). Without `repo` only paths are matched.
+    """
     named = [f for f in listed if f in task or Path(f).name in task]
-    if not named:
-        named = [f for f in listed if not f.endswith(SKIP_SUFFIXES)]
-    return named[:MAX_FILES]
+    if repo is None:
+        if not named:
+            named = [f for f in listed if not f.endswith(SKIP_SUFFIXES)]
+        return named[:max_files]
+
+    refs = task_refs(task)
+    readable = [f for f in listed if f.endswith(READ_SUFFIXES)]
+    cache: dict[str, str] = {}
+
+    def text(rel: str) -> str:
+        if rel not in cache:
+            path = repo / rel
+            try:
+                data = path.read_bytes()[:MAX_READ_BYTES] if path.is_file() else b""
+            except OSError:
+                data = b""
+            cache[rel] = data.decode("utf-8", errors="replace")
+        return cache[rel]
+
+    modules = [f for f in readable if Path(f).stem in refs.stems]
+    definers = [f for f in readable if any(_defines(text(f), sym) for sym in refs.symbols)]
+    picked: list[str] = []
+    for rel in [*named, *modules, *definers]:
+        if rel not in picked:
+            picked.append(rel)
+    if refs.symbols or refs.stems:
+        for rel in readable:
+            if rel not in picked and _uses(text(rel), refs):
+                picked.append(rel)
+
+    def score(rel: str) -> tuple[int, int]:
+        body = text(rel).lower()
+        path = rel.lower()
+        hits = sum(3 if w in path else 1 for w in refs.words if w in path or w in body)
+        return (-hits, len(body))
+
+    # A file that quotes the task (an eval or plan listing it) is the question, not the code.
+    quote = " ".join(task.split())[:60]
+    rest = sorted(
+        (f for f in readable if f not in picked and quote not in " ".join(text(f).split())),
+        key=score,
+    )
+    if max_files <= MAX_FILES:  # a small window keeps only files that share task words
+        rest = [f for f in rest if score(f)[0] < 0] or (rest if not picked else [])
+    return [*picked, *rest][:max_files]
 
 
-def build_coder_context(repo: Path, task: str, *, last_error: str = "") -> str:
+@dataclass(frozen=True)
+class Budget:
+    """Token caps for one prompt. `for_window` scales the files section with the lane."""
+
+    total: int = TOTAL
+    files: int = BUDGET["files"]
+    tree: int = BUDGET["tree"]
+    max_files: int = MAX_FILES
+
+    @classmethod
+    def for_window(cls, total: int) -> Budget:
+        if total <= TOTAL:
+            return cls()
+        extra = total - TOTAL
+        tree = min(BUDGET["tree"] + extra // 10, 3000)
+        files = BUDGET["files"] + extra - (tree - BUDGET["tree"])
+        return cls(total=total, files=files, tree=tree, max_files=60)
+
+    @property
+    def per_file(self) -> int:
+        """No single file may eat more than a third of the files section."""
+        return max(1500, self.files // 3)
+
+
+def context_files(
+    repo: Path, task: str, budget: Budget | None = None, listed: list[str] | None = None
+) -> list[str]:
+    """The files a prompt for this task will carry, in order (shown in the run's replay)."""
+    budget = budget or Budget()
+    return pick_files(
+        listed if listed is not None else list_files(repo), task, repo, budget.max_files
+    )
+
+
+def build_coder_context(
+    repo: Path, task: str, *, last_error: str = "", budget: Budget | None = None
+) -> str:
+    budget = budget or Budget()
     listed = list_files(repo)
     blocks = []
-    for rel in pick_files(listed, task):
+    for rel in context_files(repo, task, budget, listed):
         body = (repo / rel).read_text(encoding="utf-8", errors="replace")
-        blocks.append(f"--- {rel}\n{numbered(body)}")
+        blocks.append(f"--- {rel}\n{clip(numbered(body), budget.per_file)}")
     skill = pick_skill(task)
     sections = [
         Section("task", task, BUDGET["task"]),
         Section("skill", skill.body if skill else "", BUDGET["skill"], "Guidance:"),
         Section("error", last_error, BUDGET["error"], "Last attempt failed with:"),
-        Section("tree", "\n".join(listed[:MAX_TREE_FILES]), BUDGET["tree"], "Repo files:"),
-        Section("files", "\n\n".join(blocks), BUDGET["files"]),
+        Section("tree", "\n".join(listed[:MAX_TREE_FILES]), budget.tree, "Repo files:"),
+        Section("files", "\n\n".join(blocks), budget.files),
     ]
-    return assemble(sections)
+    return assemble(sections, budget.total)

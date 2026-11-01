@@ -1,5 +1,5 @@
 // Pablo design-system components: LaneBadge, CertaintyGauge, EvidenceCards, LaneRibbon, DiffView.
-import type { Brief, Job, Lane, Resources, Run, Verdict } from "./api";
+import type { Brief, Check, Job, Lane, Resources, Run, Verdict } from "./api";
 
 const LANE_VAR: Record<string, string> = {
   router: "var(--lane-router)",
@@ -85,6 +85,20 @@ function SandboxCard({ verdict }: { verdict: Verdict }) {
   );
 }
 
+function checkLabel(c: Check): string {
+  if (c.passed) return "Passed";
+  switch (c.status) {
+    case "already failing":
+      return "Failed before this diff too";
+    case "still failing":
+      return "Failed, and may be worse";
+    case "regressed":
+      return "Broken by this diff";
+    default:
+      return "Failed";
+  }
+}
+
 export function EvidenceCards({ verdict }: { verdict: Verdict }) {
   if (!verdict.applied) {
     return (
@@ -103,9 +117,12 @@ export function EvidenceCards({ verdict }: { verdict: Verdict }) {
       {verdict.checks.map((c) => (
         <div className="evidence-card" key={c.name}>
           <span className="label">{c.name}</span>
-          <span className={`result ${c.passed ? "pass" : "fail"}`}>{c.passed ? "Passed" : "Failed"}</span>
+          <span className={`result ${c.passed ? "pass" : c.status === "already failing" ? "" : "fail"}`}>
+            {checkLabel(c)}
+          </span>
           <span className="mono muted small tabular">
             exit {c.exit_code} · {c.duration_s}s
+            {c.before ? ` · before: ${c.before}${c.before_failures != null ? ` (${c.before_failures})` : ""}` : ""}
           </span>
         </div>
       ))}

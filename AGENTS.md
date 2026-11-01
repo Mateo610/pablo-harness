@@ -10,14 +10,14 @@ and leaves the merge decision to the human. Claude is an escalation lane, never 
 ## Layout
 - `src/pablo/` harness core (Python 3.11+, FastAPI, Typer)
   - `config.py` lanes from `config/lanes.yaml` · `router.py` lane choice · `gateway.py` LiteLLM + FakeBackend
-  - `verify.py` diff → scratch copy → checks in a `sandbox.py` Sandbox (rootless Podman + gVisor on Pablo, local in tests) · `judge.py` certainty · `orchestrator.py` the run
+  - `verify.py` diff → scratch copy → checks in a `sandbox.py` Sandbox (rootless Podman + gVisor on Pablo, local in tests); a failing check is re-run on the unedited copy so a verdict blames the diff only for what it made worse · `judge.py` certainty · `orchestrator.py` the run
   - `traces.py` JSONL traces + training export · `plan.py` GSD-style `.pablo/plan.yaml`
   - `api.py` HTTP + SSE for the cockpit · `cli.py` the `pablo` command
   - `client.py` HTTP client · `tui.py` terminal cockpit (Textual)
   - `overnight.py` overnight queue, scheduler (runs inside `pablo serve`), morning brief
   - `hunks.py` split diffs into hunks for partial approval (mirrored in `web/src/hunks.ts`)
   - `resources.py` GPU/VRAM/RAM snapshot · `swap.py` which lanes llama-swap has resident · `judge_eval.py` judge accuracy on `evals/judge` fixtures
-  - `tasks.py` task type + quick/build/deep · `context.py` budgeted coder prompt + skill cards (`skills/*.md`)
+  - `tasks.py` task type + quick/build/deep · `context.py` budgeted prompt (files picked by the symbols a task names, per-lane `context_tokens`) + skill cards (`skills/*.md`)
   - `edits.py` find-and-replace edit blocks → git-made diff (the coder's default edit format)
 - `web/` cockpit (React + Vite + cmdk); desktop `App.tsx` + `RunView.tsx`, phone `Phone.tsx` (PWA), styled only with tokens in `web/src/tokens.css`
 - `config/` lanes and the LiteLLM gateway · `scripts/` Pablo bootstrap and model archiving

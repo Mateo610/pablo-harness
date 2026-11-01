@@ -76,9 +76,14 @@ def render_run(run: Json) -> RenderableType:
         table = Table.grid(padding=(0, 3))
         for check in verdict.get("checks", []):
             ok = check["passed"]
+            status = check.get("status", "passed" if ok else "failed")
+            label = {"already failing": "Failed before too", "regressed": "Broken by diff"}.get(
+                status, "Passed" if ok else "Failed"
+            )
+            color = PASS if ok else (MUTED if status == "already failing" else FAIL)
             table.add_row(
                 Text(check["name"].upper(), style=MUTED),
-                Text("Passed" if ok else "Failed", style=f"bold {PASS if ok else FAIL}"),
+                Text(label, style=f"bold {color}"),
                 Text(f"exit {check['exit_code']} · {check['duration_s']}s", style=MUTED),
             )
         table.add_row(

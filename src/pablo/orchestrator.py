@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from pablo.config import ESCALATION_LANE, Settings
-from pablo.context import build_coder_context
+from pablo.context import Budget, build_coder_context, context_files
 from pablo.edits import EditError, blocks_to_diff, has_blocks, parse_blocks, strip_blocks
 from pablo.events import Event, EventBus
 from pablo.gateway import ChatBackend, Message
@@ -28,7 +28,7 @@ from pablo.router import Router
 from pablo.sandbox import Sandbox, make_sandbox
 from pablo.swap import SwapView, model_id
 from pablo.traces import Trace, TraceStore
-from pablo.verify import Verdict, _recount_hunks, apply_diff, verify_diff
+from pablo.verify import Baselines, Verdict, _recount_hunks, apply_diff, verify_diff
 
 RunState = Literal["running", "ready", "needs_you", "approved", "rejected", "failed"]
 
@@ -149,9 +149,9 @@ def _clean_diff(diff: str) -> str:
     return text
 
 
-def repo_context(repo: Path, task: str) -> str:
+def repo_context(repo: Path, task: str, context_tokens: int = 10_500) -> str:
     """The coder's context: task, one skill card, file tree, numbered files, under a budget."""
-    return build_coder_context(repo, task)
+    return build_coder_context(repo, task, budget=Budget.for_window(context_tokens))
 
 
 class Orchestrator:
@@ -174,6 +174,7 @@ class Orchestrator:
         self.swap = swap
         # Where checks run. lanes.yaml `sandbox:` decides unless the caller picks one.
         self.sandbox = sandbox or make_sandbox(settings.sandbox, self.repo)
+        self.baselines = Baselines()  # checks on the unedited repo, run once per repo state
         self.router = Router(settings, backend)
         self.traces = TraceStore(settings.traces_dir)
         self.runs: dict[str, Run] = {}
@@ -341,8 +342,15 @@ class Orchestrator:
         system = (CODER_BLOCKS_PROMPT if blocks else CODER_PROMPT) if wants_diff else ANSWER_PROMPT
         messages: list[Message] = [
             {"role": "system", "content": system},
-            {"role": "user", "content": repo_context(self.repo, run.task)},
+            {"role": "user", "content": repo_context(self.repo, run.task, lane.context_tokens)},
         ]
+        budget = Budget.for_window(lane.context_tokens)
+        self._emit(
+            "context",
+            run,
+            files=context_files(self.repo, run.task, budget),
+            budget_tokens=budget.total,
+        )
         reply = self._during_swap(
             run,
             run.lane,
@@ -361,7 +369,9 @@ class Orchestrator:
         verdict: Verdict | None = None
         if run.diff:
             self._emit("status", run, text=f"{run.lane} · running checks")
-            verdict = verify_diff(self.repo, run.diff, self.checks, sandbox=self.sandbox)
+            verdict = verify_diff(
+                self.repo, run.diff, self.checks, sandbox=self.sandbox, baselines=self.baselines
+            )
 
         # Local models slip on exact text. Give the coder one chance to fix its own edits,
         # with the precise error, before anything is judged.
@@ -394,12 +404,20 @@ class Orchestrator:
                 run.explanation = explanation or run.explanation
                 run.diff = repaired
                 run.repaired = True
-                verdict = verify_diff(self.repo, run.diff, self.checks, sandbox=self.sandbox)
+                verdict = verify_diff(
+                    self.repo, run.diff, self.checks, sandbox=self.sandbox, baselines=self.baselines
+                )
 
         if run.diff and verdict is not None:
             checked = verdict
             run.verdict = checked.to_dict()
-            self._emit("evidence", run, summary=checked.summary(), passed=checked.passed)
+            self._emit(
+                "evidence",
+                run,
+                summary=checked.summary(),
+                passed=checked.passed,
+                clean=checked.clean,
+            )
 
             judge_model = self.settings.lane("judge").model
             judgement = self._during_swap(
@@ -413,7 +431,7 @@ class Orchestrator:
             run.judge_summary = judgement.summary
             run.question = judgement.question
             ready = (
-                verdict.passed and judgement.certainty >= self.settings.thresholds.judge_needs_you
+                verdict.clean and judgement.certainty >= self.settings.thresholds.judge_needs_you
             )
             run.state = "ready" if ready else "needs_you"
             self._emit("judged", run, certainty=judgement.certainty, state=run.state)
@@ -467,8 +485,10 @@ class Orchestrator:
             if keep != set(every):
                 patch = select_hunks(run.diff, keep)
                 decision = "approved_partial"
-                verdict = verify_diff(self.repo, patch, self.checks, sandbox=self.sandbox)
-                if not verdict.passed and not force:
+                verdict = verify_diff(
+                    self.repo, patch, self.checks, sandbox=self.sandbox, baselines=self.baselines
+                )
+                if not verdict.clean and not force:
                     raise PartialChecksFailed(verdict)
                 run.applied_hunks = [h for h in every if h in keep]
         if patch:

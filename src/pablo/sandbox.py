@@ -218,9 +218,7 @@ class ContainerSandbox:
         env["PABLO_RUNSC_AS_KIB"] = str(address_kib(self.cfg.memory))
         started = time.perf_counter()
         try:
-            proc = self._runner(
-                argv, text=True, capture_output=True, timeout=timeout_s, env=env
-            )
+            proc = self._runner(argv, text=True, capture_output=True, timeout=timeout_s, env=env)
             code, out = proc.returncode, (proc.stdout or "") + (proc.stderr or "")
         except subprocess.TimeoutExpired:
             # Killing the client doesn't stop the container, so remove it by name.

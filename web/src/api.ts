@@ -18,11 +18,18 @@ export interface Check {
   exit_code: number;
   duration_s: number;
   output_tail: string;
+  /** passed · regressed · already failing · still failing · failed */
+  status?: string;
+  before?: "" | "passed" | "failed";
+  before_failures?: number | null;
+  failures?: number | null;
 }
 
 export interface Verdict {
   applied: boolean;
   passed: boolean;
+  /** Applied, and no check worse than on the unedited copy. */
+  clean?: boolean;
   checks: Check[];
   added: number;
   removed: number;

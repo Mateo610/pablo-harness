@@ -63,6 +63,7 @@ lanes:
     writes_code: true            # overnight refactors come back as verified diffs
     max_tokens: 32768            # reasoning tokens count against this
     timeout_s: 3600
+    context_tokens: 24000        # 65536 window - 32768 reply, with room for ~4 chars/token being optimistic on code
     temperature: 1.0             # gpt-oss card; other lanes stay at 0.2
     top_p: 1.0
 

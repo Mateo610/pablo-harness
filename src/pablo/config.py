@@ -29,6 +29,9 @@ class Lane(BaseModel):
     # Reasoning models spend max_tokens on thinking too, so slow lanes get more of both.
     max_tokens: int = 4096
     timeout_s: float = 600.0
+    # Prompt budget in tokens. The coder's 16k window leaves ~10.5k for context;
+    # a lane with a bigger window (deep: 64k) gets more of the repo.
+    context_tokens: int = 10_500
     # Sampling. Most lanes stay at 0.2. A lane sets top_p only when its model card requires it.
     temperature: float = 0.2
     top_p: float | None = None
