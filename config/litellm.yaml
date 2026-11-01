@@ -1,33 +1,32 @@
 # LiteLLM gateway: one OpenAI-compatible door for every lane.
 # Start on Pablo:  litellm --config config/litellm.yaml --host 127.0.0.1 --port 4000
 #
-# Each alias points at a local engine on its own port. Engines are set up in the
-# Cursor milestones (docs/cursor-prompts). 24 GB VRAM cannot hold every lane at once;
-# Milestone 4 puts a swapper (e.g. llama-swap) in front of 8001-8004 so lanes load on demand.
+# Router, coder, and judge go through llama-swap on 127.0.0.1:8100. The model
+# name in the request (router, coder, judge) picks the lane. The swapper keeps
+# the router resident on CPU and swaps coder and judge on the GPU.
+# Deep stays on 8004 until a model that fits is chosen. Nothing listens there yet.
 #
-#   8001  coder   Qwen3.6 35B-A3B (GGUF, llama.cpp)          M1
-#   8002  router  Qwen3.5-4B Q4 (CPU, always loaded)        M1
-#   8003  judge   Mistral-Small-3.2-24B heretic Q5 (llama.cpp) M3
-#   8004  deep    GLM-5.2 (colibrì or KTransformers)         M3
-#   8005  media   media dispatcher (Qwen-Image, TRELLIS.2)   M9
+#   8100  swapper llama-swap (router, coder, judge)          M4
+#   8004  deep    not served                                     M3
+#   8005  media   media dispatcher (Qwen-Image, TRELLIS.2)       M9
 
 model_list:
   - model_name: pablo/router
     litellm_params:
       model: openai/router
-      api_base: http://127.0.0.1:8002/v1
+      api_base: http://127.0.0.1:8100/v1
       api_key: "none"
 
   - model_name: pablo/coder
     litellm_params:
       model: openai/coder
-      api_base: http://127.0.0.1:8001/v1
+      api_base: http://127.0.0.1:8100/v1
       api_key: "none"
 
   - model_name: pablo/judge
     litellm_params:
       model: openai/judge
-      api_base: http://127.0.0.1:8003/v1
+      api_base: http://127.0.0.1:8100/v1
       api_key: "none"
 
   - model_name: pablo/deep

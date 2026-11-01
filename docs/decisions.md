@@ -19,6 +19,9 @@ One entry per choice the prompts left open: date, decision, why, alternatives.
 | 2026-11-01 | Bench llama.cpp `b12031` and colibrì v2.1.0. Do not build KTransformers 0.7.2 on this box | `b12031` already has `mistral3` and `deepseek4`. colibrì v2.1.0 (Apache-2.0, 2026-10-31) reads a `deepseek4` GGUF in place; its CUDA path does not run GGUF tensors, so that number is the CPU comparison. KTransformers 0.7.2 is Apache-2.0 and wants AMX plus resident experts. This Ryzen 7 5700X is AVX2 only, and the weights that fit are GGUF. |
 | 2026-11-01 | Deep lane stays math-only until the judge is committed. Smallest GLM-5.2 GGUF is about 217 GB | Disk has 1.6 TB free, so the file would fit on the NVMe. RAM cannot hold it. It only runs by streaming. |
 | 2026-11-01 | The judge is Mistral-Small-3.2-24B heretic Q5_K_M on llama.cpp at 127.0.0.1:8003, with `-ngl 0` until M4 | `eval-judge` scored 15/15 after the prompt in `judge.py`. The coder baseline was 9/10. On the GPU the same file loaded in 6.0 s, decoded at about 46 tok/s, and peaked at 18439 MiB. The coder already holds about 20 GB, so the service stays on CPU (2.42 tok/s on run `350523f862`) until the swapper exists. colibrì does not serve `mistral3`. KTransformers stays unbuilt. |
+| 2026-11-01 | llama-swap v269 (MIT) on 127.0.0.1:8100. The router is a persistent CPU group (`-ngl 0`). Coder and judge share one GPU group (`swap: true`, `exclusive: false`). The judge now uses `-ngl 99` | `cmd` starts `llama-server`, so the harness does not manage processes. `exclusive: true` unloads other groups and would evict the router. A 20-run soak kept the router ready through every GPU swap. Swaps were 3.7–5.3 s, under the 15 s line, so `--mlock` and `--no-mmap` were not tried. The binary lives in `~/pablo-data/engines/llama-swap`. |
+| 2026-11-01 | Deep stays out of the swap group. Picking a deep model that fits is a separate decision, not part of M4 | GLM-5.2 was not downloaded and does not fit in RAM. When a model is chosen, it joins the same GPU group as coder and judge. |
+| 2026-11-01 | The overnight queue still runs one job at a time | The M4 prompt allows batching every coder step, then every judge step. That would hide the swap cost this milestone measured. |
 
 ### Installing CUDA 13.0 on Pablo
 ```bash
@@ -84,4 +87,4 @@ right. SEARCH matching is exact, then trailing-whitespace tolerant, then indenta
 replacement is re-indented). A SEARCH that is missing or matches twice gets one repair pass with
 the exact error and the closest lines in the file; if that fails the run lands in "Needs you".
 Diff replies are still accepted in either mode, and `edit_format: diff` restores the old prompt.
-Measure on Pablo: rerun the three M1 sandbox tasks and compare repair rate and pass rate.
+The M4 soak reran those three sandbox tasks 20 times: 0 needed a repair pass, and all 20 were ready.

@@ -30,6 +30,7 @@ from pablo.overnight import (
 )
 from pablo.plan import Plan, Status
 from pablo.resources import snapshot
+from pablo.swap import read_running
 
 
 class TaskIn(BaseModel):
@@ -185,7 +186,7 @@ def create_app(orch: Orchestrator) -> FastAPI:
 
     @app.get("/api/resources")
     async def resources() -> dict[str, Any]:
-        snap = await run_in_threadpool(snapshot)
+        snap = await run_in_threadpool(lambda: snapshot(running=read_running))
         return snap.to_dict()
 
     # ---- overnight queue and morning brief ------------------------------------

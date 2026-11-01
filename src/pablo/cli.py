@@ -17,6 +17,7 @@ from pablo.demo import demo_backend, load_checks
 from pablo.gateway import ChatBackend, LiteLLMBackend
 from pablo.orchestrator import Orchestrator, Run
 from pablo.plan import Plan, starter_plan
+from pablo.swap import SwapView
 from pablo.traces import TraceStore
 
 app = typer.Typer(
@@ -36,7 +37,13 @@ def _backend(settings: Settings, fake: bool) -> ChatBackend:
 
 def _orch(repo: Path, fake: bool) -> Orchestrator:
     settings = load_settings()
-    return Orchestrator(settings, _backend(settings, fake), repo=repo, checks=load_checks(repo))
+    return Orchestrator(
+        settings,
+        _backend(settings, fake),
+        repo=repo,
+        checks=load_checks(repo),
+        swap=None if fake else SwapView(),
+    )
 
 
 def _show(run: Run) -> None:

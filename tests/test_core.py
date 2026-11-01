@@ -193,6 +193,44 @@ def make_orch(settings: Settings, repo: Path, coder: str, certainty: float) -> O
     return Orchestrator(settings, backend, repo=repo, checks=CHECKS)
 
 
+def _status_texts(orch: Orchestrator, run_id: str) -> list[str]:
+    return [
+        str(event.data.get("text", ""))
+        for event in orch.bus.history(run_id)
+        if event.kind == "status"
+    ]
+
+
+def test_judge_loading_when_not_resident(settings: Settings, repo: Path) -> None:
+    from pablo.swap import SwapView
+
+    orch = make_orch(settings, repo, coder_reply(GOOD_DIFF), 0.94)
+    orch.swap = SwapView(lambda: {"running": [{"model": "coder", "state": "ready"}]})
+    run = orch.start("add a sub function to calc.py", lane="coder")
+    texts = _status_texts(orch, run.id)
+    assert texts.index("judge · loading") < texts.index("judge · reviewing")
+
+
+def test_no_loading_event_when_judge_is_ready(settings: Settings, repo: Path) -> None:
+    from pablo.swap import SwapView
+
+    orch = make_orch(settings, repo, coder_reply(GOOD_DIFF), 0.94)
+    orch.swap = SwapView(lambda: {"running": ["coder", "judge"]})
+    run = orch.start("add a sub function to calc.py", lane="coder")
+    texts = _status_texts(orch, run.id)
+    assert "judge · loading" not in texts and "judge · reviewing" in texts
+
+
+def test_coder_loading_when_not_resident(settings: Settings, repo: Path) -> None:
+    from pablo.swap import SwapView
+
+    orch = make_orch(settings, repo, coder_reply(GOOD_DIFF), 0.94)
+    orch.swap = SwapView(lambda: {"running": ["judge"]})
+    run = orch.start("add a sub function to calc.py", lane="coder")
+    texts = _status_texts(orch, run.id)
+    assert texts.index("coder · loading") < texts.index("coder · thinking")
+
+
 def test_run_ready_then_approve(settings: Settings, repo: Path) -> None:
     orch = make_orch(settings, repo, coder_reply(GOOD_DIFF), 0.94)
     run = orch.start("add a sub function to calc.py", lane="coder")

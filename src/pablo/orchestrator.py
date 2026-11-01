@@ -10,6 +10,7 @@ import json
 import re
 import threading
 import uuid
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,6 +25,7 @@ from pablo.hunks import all_ids
 from pablo.hunks import select as select_hunks
 from pablo.judge import judge
 from pablo.router import Router
+from pablo.swap import SwapView, model_id
 from pablo.traces import Trace, TraceStore
 from pablo.verify import Verdict, _recount_hunks, apply_diff, verify_diff
 
@@ -160,12 +162,14 @@ class Orchestrator:
         repo: Path,
         bus: EventBus | None = None,
         checks: dict[str, list[str]] | None = None,
+        swap: SwapView | None = None,
     ) -> None:
         self.settings = settings
         self.backend = backend
         self.repo = repo.resolve()
         self.bus = bus or EventBus()
         self.checks = checks
+        self.swap = swap
         self.router = Router(settings, backend)
         self.traces = TraceStore(settings.traces_dir)
         self.runs: dict[str, Run] = {}
@@ -179,6 +183,55 @@ class Orchestrator:
         folder.mkdir(parents=True, exist_ok=True)
         with (folder / f"{run.id}.events.jsonl").open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(event.to_dict()) + "\n")
+
+    def _swapping(self, model: str) -> bool:
+        if self.swap is None:
+            return False
+        return self.swap.state(model_id(model)) not in ("ready", "unknown")
+
+    def _during_swap(
+        self,
+        run: Run,
+        lane_name: str,
+        model: str,
+        settled: str,
+        call: Callable[[], Any],
+        *,
+        announce: bool = True,
+    ) -> Any:
+        """Run `call`. Emit '{lane} · loading' first when the swapper must load `model`."""
+        if not self._swapping(model):
+            if announce:
+                self._emit("status", run, text=settled)
+            return call()
+
+        self._emit("status", run, text=f"{lane_name} · loading")
+        box: dict[str, Any] = {}
+
+        def run_call() -> None:
+            try:
+                box["value"] = call()
+            except Exception as exc:
+                box["error"] = exc
+
+        thread = threading.Thread(target=run_call, daemon=True)
+        thread.start()
+        announced = False
+        while thread.is_alive():
+            if (
+                not announced
+                and self.swap is not None
+                and self.swap.state(model_id(model)) == "ready"
+            ):
+                self._emit("status", run, text=settled)
+                announced = True
+            thread.join(0.2)
+        if not announced:
+            self._emit("status", run, text=settled)
+        error = box.get("error")
+        if isinstance(error, BaseException):
+            raise error
+        return box["value"]
 
     def events(self, run_id: str) -> list[dict[str, Any]]:
         """Everything that happened in a run, in order: what replay plays back."""
@@ -285,8 +338,13 @@ class Orchestrator:
             {"role": "system", "content": system},
             {"role": "user", "content": repo_context(self.repo, run.task)},
         ]
-        self._emit("status", run, text=f"{run.lane} · thinking")
-        reply = self.backend.complete(run.model, messages)
+        reply = self._during_swap(
+            run,
+            run.lane,
+            run.model,
+            f"{run.lane} · thinking",
+            lambda: self.backend.complete(run.model, messages),
+        )
         run.explanation, run.diff, edit_error = self._extract(reply.text)
         verdict: Verdict | None = None
         if run.diff:
@@ -304,7 +362,14 @@ class Orchestrator:
                 {"role": "assistant", "content": reply.text},
                 {"role": "user", "content": repair.format(error=problem)},
             ]
-            reply = self.backend.complete(run.model, messages)
+            reply = self._during_swap(
+                run,
+                run.lane,
+                run.model,
+                f"{run.lane} · thinking",
+                lambda: self.backend.complete(run.model, messages),
+                announce=False,
+            )
             explanation, repaired, edit_error = self._extract(reply.text)
             if repaired:
                 run.explanation = explanation or run.explanation
@@ -313,12 +378,17 @@ class Orchestrator:
                 verdict = verify_diff(self.repo, run.diff, self.checks)
 
         if run.diff and verdict is not None:
-            run.verdict = verdict.to_dict()
-            self._emit("evidence", run, summary=verdict.summary(), passed=verdict.passed)
+            checked = verdict
+            run.verdict = checked.to_dict()
+            self._emit("evidence", run, summary=checked.summary(), passed=checked.passed)
 
-            self._emit("status", run, text="judge · reviewing")
-            judgement = judge(
-                self.backend, self.settings.lane("judge").model, run.task, run.diff, verdict
+            judge_model = self.settings.lane("judge").model
+            judgement = self._during_swap(
+                run,
+                "judge",
+                judge_model,
+                "judge · reviewing",
+                lambda: judge(self.backend, judge_model, run.task, run.diff, checked),
             )
             run.certainty = judgement.certainty
             run.judge_summary = judgement.summary

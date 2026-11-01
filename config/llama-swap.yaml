@@ -1,0 +1,73 @@
+# llama-swap on 127.0.0.1:8100. The router stays on CPU. Coder and judge share the GPU.
+# Deep is not here: no model that fits has been chosen. See docs/decisions.md.
+#
+# `exclusive: false` on the GPU group is deliberate. exclusive unloads every other
+# group, which would evict the router. Coder and judge still cannot run together
+# because `swap: true` allows only one member of `gpu`.
+
+healthCheckTimeout: 180
+startPort: 8010
+
+hooks:
+  on_startup:
+    preload:
+      - router
+      - coder
+
+models:
+  router:
+    ttl: 0
+    proxy: http://127.0.0.1:${PORT}
+    cmd: >-
+      /home/mateo610/pablo-data/engines/llama.cpp/build/bin/llama-server
+      -m /home/mateo610/pablo-data/models/qwen3.5-4b/Qwen3.5-4B-Q4_K_M.gguf
+      --host 127.0.0.1 --port ${PORT}
+      -c 16384 -ngl 0
+      --jinja
+      --reasoning off
+      --alias router
+
+  coder:
+    ttl: 0
+    proxy: http://127.0.0.1:${PORT}
+    cmd: >-
+      /home/mateo610/pablo-data/engines/llama.cpp/build/bin/llama-server
+      -m /home/mateo610/pablo-data/models/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-UD-Q4_K_S.gguf
+      --host 127.0.0.1 --port ${PORT}
+      -c 16384 -ngl 99
+      -ctk q8_0 -ctv q8_0
+      --n-cpu-moe 2
+      --flash-attn on
+      --jinja
+      --reasoning off
+      --alias coder
+
+  judge:
+    ttl: 0
+    proxy: http://127.0.0.1:${PORT}
+    cmd: >-
+      /home/mateo610/pablo-data/engines/llama.cpp/build/bin/llama-server
+      -m /home/mateo610/pablo-data/models/mistral-small-3.2-24b-heretic/Mistral-Small-3.2-24B-Instruct-2506-ultra-uncensored-heretic-Q5_K_M.gguf
+      --host 127.0.0.1 --port ${PORT}
+      -c 16384 -ngl 99
+      --flash-attn on
+      --jinja
+      --alias judge
+
+routing:
+  router:
+    use: group
+    settings:
+      groups:
+        cpu:
+          persistent: true
+          swap: false
+          exclusive: false
+          members:
+            - router
+        gpu:
+          swap: true
+          exclusive: false
+          members:
+            - coder
+            - judge

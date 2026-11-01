@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Install and start the router, coder, and LiteLLM gateway as systemd user units.
+# Install and start llama-swap and the LiteLLM gateway as systemd user units.
+# The old per-lane units are stopped so they cannot share the GPU with the swapper.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -12,9 +13,12 @@ if [[ ! -f "$env_file" ]]; then
 fi
 
 mkdir -p "$unit_dir"
-for unit in pablo-coder.service pablo-router.service pablo-gateway.service; do
+for unit in pablo-swap.service pablo-gateway.service; do
   cp "$root/scripts/systemd/$unit" "$unit_dir/$unit"
 done
 systemctl --user daemon-reload
-systemctl --user enable --now pablo-router.service pablo-coder.service pablo-gateway.service
-systemctl --user --no-pager --lines=0 status pablo-router.service pablo-coder.service pablo-gateway.service
+for old in pablo-coder.service pablo-judge.service pablo-router.service; do
+  systemctl --user disable --now "$old" >/dev/null 2>&1 || true
+done
+systemctl --user enable --now pablo-swap.service pablo-gateway.service
+systemctl --user --no-pager --lines=0 status pablo-swap.service pablo-gateway.service

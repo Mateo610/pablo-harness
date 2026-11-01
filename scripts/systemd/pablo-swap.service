@@ -1,0 +1,16 @@
+[Unit]
+Description=Pablo lane swapper (llama-swap, router resident, coder and judge swap)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/mateo610/pablo-data/engines/llama.cpp/build/bin
+Environment=PATH=/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=LD_LIBRARY_PATH=/usr/local/cuda/lib64:/home/mateo610/pablo-data/engines/llama.cpp/build/bin
+ExecStart=/home/mateo610/pablo-data/engines/llama-swap/llama-swap --listen 127.0.0.1:8100 --config /home/mateo610/Desktop/pablo-harness/pablo-harness-main/config/llama-swap.yaml
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=90
+
+[Install]
+WantedBy=default.target

@@ -1,5 +1,6 @@
 [Unit]
-Description=Pablo judge lane (llama.cpp, Mistral-Small-3.2-24B heretic Q5, CPU until M4)
+Description=Pablo judge lane (retired in M4; llama-swap starts this model on the GPU)
+# Do not enable this next to pablo-swap.service. The judge now uses -ngl 99 inside llama-swap.
 After=network-online.target
 
 [Service]

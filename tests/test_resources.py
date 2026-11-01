@@ -29,3 +29,26 @@ def test_snapshot_survives_missing_gpu() -> None:
 
     res = snapshot(no_gpu, lambda: MEMINFO)
     assert res.gpus == [] and "nvidia-smi" in res.error and res.ram_total_mb == 64300
+
+
+def test_snapshot_loaded_from_swapper() -> None:
+    res = snapshot(
+        lambda: SMI,
+        lambda: MEMINFO,
+        running=lambda: {
+            "running": [
+                {"model": "coder", "state": "ready"},
+                {"model": "judge", "state": "starting"},
+                "router",
+            ]
+        },
+    )
+    assert res.gpus and res.loaded == ["coder", "router"] and res.error == ""
+
+
+def test_snapshot_keeps_gpu_when_swapper_is_down() -> None:
+    def down() -> dict[str, str]:
+        raise OSError("connection refused")
+
+    res = snapshot(lambda: SMI, lambda: MEMINFO, running=down)
+    assert res.gpus and res.loaded == [] and res.error.startswith("swap:")

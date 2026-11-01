@@ -168,6 +168,21 @@ Accuracy 100% at threshold 0.75 · mean certainty good 0.96, bad 0.28
 | bad-m1-unindented | bad | fail | 0.30 | yes |
 | bad-m1-asserts-sum | bad | pass | 0.20 | yes |
 
+## 2026-11-01 · M4 lane swaps
+
+llama-swap v269 on 127.0.0.1:8100. Router resident on CPU. Coder and judge swap on the GPU; the judge uses `-ngl 99`. `scripts/soak.py` ran 20 coder runs on `~/pablo-sandbox/hello`, cycling add `mul`, fix `mul` (it returned a sum), and add `sub`. Each task was staged to the file state it had in M1, then the original `hello.py` and `test_hello.py` were restored. Nothing was approved.
+
+0 OOM, 0 engine crashes, 0 of 20 runs needed a repair pass. All 20 finished `ready`. After runs 5, 10, 15, and 20 a short `pablo/router` completion answered `ok` and `/running` still listed the router as ready. Coder and judge were never ready at the same time.
+
+| Direction | Swaps | Min | Median | Max |
+|---|---|---|---|---|
+| coder → judge | 20 | 3.7 s | 3.7 s | 4.0 s |
+| judge → coder | 19 | 5.0 s | 5.1 s | 5.3 s |
+
+The soak ends on the judge, so the return swap is one short of 20. Both directions are under 15 s, so `--mlock` and `--no-mmap` were not tried. Wall clock for the 20 runs was 240 s.
+
+`curl 127.0.0.1:8710/api/resources` after the soak, judge resident: RTX 3090, VRAM 19591/24576 MiB, RAM 9643/64227 MiB, loaded `judge, router`.
+
 ## 2026-11-01 · DeepSeek V4 Flash REAP K128 does not load
 
 llama.cpp `b12031` with `--cpu-moe -ngl 99` and colibrì v2.1.0 (`704a3f6`) both refuse the 46.98 GiB GGUF. Layer 3's router is 128 experts wide while both engines expect 256. No tokens were produced. The larger quants do not fit the spare-RAM rule, so they were not downloaded.

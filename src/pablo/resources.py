@@ -1,7 +1,8 @@
-"""What Pablo's hardware is doing right now: GPU, VRAM, RAM.
+"""What Pablo's hardware is doing right now: GPU, VRAM, RAM, loaded lanes.
 
-Reads `nvidia-smi` and /proc/meminfo, nothing heavier. `loaded` (which lanes are
-resident) is filled in by the lane swapper in M4; until then it's empty.
+Reads `nvidia-smi` and /proc/meminfo, nothing heavier. `loaded` comes from
+llama-swap's `/running` when the caller passes a reader. A reader that fails
+leaves `loaded` empty and does not blank the GPU or RAM numbers.
 """
 
 from __future__ import annotations
@@ -89,6 +90,7 @@ def read_nvidia_smi() -> str:
 def snapshot(
     smi: Callable[[], str] = read_nvidia_smi,
     meminfo: Callable[[], str] = lambda: Path("/proc/meminfo").read_text(),
+    running: Callable[[], Any] | None = None,
 ) -> Resources:
     res = Resources()
     try:
@@ -99,4 +101,11 @@ def snapshot(
         res.ram_used_mb, res.ram_total_mb = parse_meminfo(meminfo())
     except OSError as exc:
         res.error = (res.error + "; " if res.error else "") + f"ram: {exc}"
+    if running is not None:
+        try:
+            from pablo.swap import loaded_ids
+
+            res.loaded = loaded_ids(running())
+        except (OSError, ValueError, TypeError) as exc:
+            res.error = (res.error + "; " if res.error else "") + f"swap: {exc}"
     return res

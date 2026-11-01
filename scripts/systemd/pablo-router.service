@@ -1,5 +1,6 @@
 [Unit]
-Description=Pablo router lane (llama.cpp, Qwen3.5-4B Q4, CPU)
+Description=Pablo router lane (retired in M4; llama-swap keeps it resident on CPU)
+# Fallback only: if a GPU swap evicts the router, enable this unit and point pablo/router at :8002.
 After=network-online.target
 
 [Service]

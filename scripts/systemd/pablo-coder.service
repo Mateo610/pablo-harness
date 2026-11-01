@@ -1,5 +1,6 @@
 [Unit]
-Description=Pablo coder lane (llama.cpp, Qwen3.6-35B-A3B Q4)
+Description=Pablo coder lane (retired in M4; llama-swap starts this model)
+# Do not enable this next to pablo-swap.service. Both would load the coder onto the GPU.
 After=network-online.target
 
 [Service]
