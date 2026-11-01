@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, subscribe, type Brief, type HarnessEvent, type Job, type Lane, type Plan, type PlanTask, type Run } from "./api";
-import { BriefCard, LaneBadge, LaneRibbon, TonightList, laneColor, stateLabel, todayLocal } from "./components";
+import { api, subscribe, type Brief, type HarnessEvent, type Job, type Lane, type Plan, type PlanTask, type Resources, type Run } from "./api";
+import {
+  BriefCard,
+  LaneBadge,
+  LaneRibbon,
+  ResourcesPanel,
+  TonightList,
+  laneColor,
+  resourcesLine,
+  stateLabel,
+  todayLocal,
+} from "./components";
 import { Palette } from "./Palette";
 import { Phone } from "./Phone";
 import { RunView } from "./RunView";
@@ -19,6 +29,22 @@ export function App() {
   const [error, setError] = useState("");
   const [jobs, setJobs] = useState<Job[]>([]);
   const [brief, setBrief] = useState<Brief | null>(null);
+  const [res, setRes] = useState<Resources | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    const tick = () =>
+      api
+        .resources()
+        .then((r) => alive && setRes(r))
+        .catch(() => undefined);
+    tick();
+    const id = window.setInterval(tick, 5000);
+    return () => {
+      alive = false;
+      window.clearInterval(id);
+    };
+  }, []);
   const [briefDismissed, setBriefDismissed] = useState(() => readDismissed());
   const composer = useRef<HTMLTextAreaElement>(null);
   const narrow = useNarrow();
@@ -191,7 +217,7 @@ export function App() {
           <span className="grow">Search or run a command</span>
           <kbd>Ctrl K</kbd>
         </button>
-        <span className="mono muted tabular">{lanes.length} lanes</span>
+        <span className="mono muted tabular">{resourcesLine(res) || `${lanes.length} lanes`}</span>
       </header>
 
       {error && (
@@ -366,6 +392,10 @@ export function App() {
                 </span>
               </div>
             ))}
+          </section>
+          <section className="panel">
+            <h2 className="label">Pablo</h2>
+            <ResourcesPanel res={res} />
           </section>
         </aside>
       </div>

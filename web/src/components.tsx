@@ -1,5 +1,5 @@
 // Pablo design-system components: LaneBadge, CertaintyGauge, EvidenceCards, LaneRibbon, DiffView.
-import type { Brief, Job, Lane, Run, Verdict } from "./api";
+import type { Brief, Job, Lane, Resources, Run, Verdict } from "./api";
 
 const LANE_VAR: Record<string, string> = {
   router: "var(--lane-router)",
@@ -225,4 +225,62 @@ export function BriefCard({ brief, onDismiss }: { brief: Brief; onDismiss: () =>
 export function todayLocal(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+const gb = (mb: number) => (mb / 1024).toFixed(1);
+
+function Meter({ label, used, total, unit, warnAt = 0.9 }: { label: string; used: number; total: number; unit: string; warnAt?: number }) {
+  const frac = total > 0 ? Math.min(1, used / total) : 0;
+  return (
+    <div className="meter">
+      <div className="row-between small">
+        <span className="muted">{label}</span>
+        <span className="mono tabular">
+          {used} / {total} {unit}
+        </span>
+      </div>
+      <div className="meter-track" role="meter" aria-label={label} aria-valuemin={0} aria-valuemax={total} aria-valuenow={used}>
+        <span className={`meter-fill ${frac >= warnAt ? "hot" : ""}`} style={{ width: `${frac * 100}%` }} />
+      </div>
+    </div>
+  );
+}
+
+/** Pablo's hardware, live. Polled every few seconds by the app. */
+export function ResourcesPanel({ res }: { res: Resources | null }) {
+  if (!res) return <p className="muted small">Reading Pablo…</p>;
+  const gpu = res.gpus[0];
+  return (
+    <div className="resources">
+      {gpu ? (
+        <>
+          <Meter label={gpu.name.replace("NVIDIA GeForce ", "")} used={Number(gb(gpu.vram_used_mb))} total={Number(gb(gpu.vram_total_mb))} unit="GB" />
+          <div className="row-between small">
+            <span className="muted">GPU load</span>
+            <span className="mono tabular">
+              {gpu.util_pct}% · {gpu.temp_c}°C · {Math.round(gpu.power_w)} W
+            </span>
+          </div>
+        </>
+      ) : (
+        <p className="muted small">No GPU reading{res.error ? `: ${res.error}` : ""}</p>
+      )}
+      {res.ram_total_mb > 0 && (
+        <Meter label="RAM" used={Number(gb(res.ram_used_mb))} total={Number(gb(res.ram_total_mb))} unit="GB" />
+      )}
+      <div className="row-between small">
+        <span className="muted">Loaded</span>
+        <span className="mono">{res.loaded.length ? res.loaded.join(", ") : "not tracked until M4"}</span>
+      </div>
+    </div>
+  );
+}
+
+export function resourcesLine(res: Resources | null): string {
+  if (!res) return "";
+  const gpu = res.gpus[0];
+  const parts = [];
+  if (gpu) parts.push(`VRAM ${gb(gpu.vram_used_mb)}/${gb(gpu.vram_total_mb)}`);
+  if (res.ram_total_mb) parts.push(`RAM ${Math.round(res.ram_used_mb / 1024)}/${Math.round(res.ram_total_mb / 1024)}`);
+  return parts.join(" · ");
 }

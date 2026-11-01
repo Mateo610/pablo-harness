@@ -82,6 +82,23 @@ export interface HarnessEvent {
   at: string;
 }
 
+export interface Gpu {
+  name: string;
+  vram_used_mb: number;
+  vram_total_mb: number;
+  util_pct: number;
+  temp_c: number;
+  power_w: number;
+}
+
+export interface Resources {
+  gpus: Gpu[];
+  ram_used_mb: number;
+  ram_total_mb: number;
+  loaded: string[];
+  error: string;
+}
+
 export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 
 export interface Job {
@@ -164,6 +181,7 @@ export const api = {
     call<Run[]>("/api/compare", { method: "POST", body: JSON.stringify({ task, lanes, task_id: taskId ?? null }) }),
   reject: (id: string) => call<Run>(`/api/runs/${id}/reject`, { method: "POST" }),
   escalate: (id: string) => call<Run>(`/api/runs/${id}/escalate`, { method: "POST" }),
+  resources: () => call<Resources>("/api/resources"),
   queue: () => call<Job[]>("/api/queue"),
   addJob: (task: string, lane?: string, taskId?: string) =>
     call<Job>("/api/queue", {

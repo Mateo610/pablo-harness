@@ -183,3 +183,11 @@ kbd { font: 500 11.5px/1 var(--font-mono); color: var(--ink-muted); border: 1px 
 .replay-steps li { display: flex; align-items: center; gap: 10px; font-size: 13px; }
 .replay-steps .mono { width: 44px; text-align: right; }
 .actions .link-btn { align-self: center; }
+
+/* Resources */
+.resources { display: flex; flex-direction: column; gap: 10px; }
+.meter { display: flex; flex-direction: column; gap: 4px; }
+.meter-track { height: 6px; border-radius: 3px; background: var(--surface-300); overflow: hidden; }
+.meter-fill { display: block; height: 100%; background: var(--lane-router); transition: width .6s ease; }
+.meter-fill.hot { background: var(--status-fail); }
+@media (prefers-reduced-motion: reduce) { .meter-fill { transition: none; } }

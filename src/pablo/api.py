@@ -29,6 +29,7 @@ from pablo.overnight import (
     now_local,
 )
 from pablo.plan import Plan, Status
+from pablo.resources import snapshot
 
 
 class TaskIn(BaseModel):
@@ -181,6 +182,11 @@ def create_app(orch: Orchestrator) -> FastAPI:
     @app.post("/api/runs/{run_id}/escalate")
     async def escalate(run_id: str) -> dict[str, Any]:
         return await run_in_threadpool(_decide, "escalate", run_id)
+
+    @app.get("/api/resources")
+    async def resources() -> dict[str, Any]:
+        snap = await run_in_threadpool(snapshot)
+        return snap.to_dict()
 
     # ---- overnight queue and morning brief ------------------------------------
     @app.get("/api/queue")
