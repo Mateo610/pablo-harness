@@ -19,7 +19,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from pablo import __version__
-from pablo.orchestrator import Orchestrator
+from pablo.orchestrator import Orchestrator, PartialChecksFailed
 from pablo.overnight import (
     BriefStore,
     JobQueue,
@@ -39,6 +39,17 @@ class TaskIn(BaseModel):
 
 class StatusIn(BaseModel):
     status: Status
+
+
+class ApproveIn(BaseModel):
+    hunks: list[str] | None = None
+    force: bool = False
+
+
+class CompareIn(BaseModel):
+    task: str
+    lanes: list[str] = ["coder", "deep"]
+    task_id: str | None = None
 
 
 class JobIn(BaseModel):
@@ -128,8 +139,40 @@ def create_app(orch: Orchestrator) -> FastAPI:
             raise HTTPException(409, str(exc)) from exc
 
     @app.post("/api/runs/{run_id}/approve")
-    async def approve(run_id: str) -> dict[str, Any]:
-        return await run_in_threadpool(_decide, "approve", run_id)
+    async def approve(run_id: str, body: ApproveIn | None = None) -> dict[str, Any]:
+        body = body or ApproveIn()
+
+        def go() -> dict[str, Any]:
+            try:
+                return orch.approve(run_id, body.hunks, force=body.force).to_dict()
+            except KeyError as exc:
+                raise HTTPException(404, f"no run {run_id}") from exc
+            except PartialChecksFailed as exc:
+                detail = {"message": str(exc), "verdict": exc.verdict.to_dict()}
+                raise HTTPException(409, detail) from exc
+            except (ValueError, RuntimeError) as exc:
+                raise HTTPException(409, str(exc)) from exc
+
+        return await run_in_threadpool(go)
+
+    @app.get("/api/runs/{run_id}/events")
+    def run_events(run_id: str) -> list[dict[str, Any]]:
+        try:
+            return orch.events(run_id)
+        except KeyError as exc:
+            raise HTTPException(404, f"no run {run_id}") from exc
+
+    @app.post("/api/compare")
+    async def compare(body: CompareIn) -> list[dict[str, Any]]:
+        try:
+            runs = await run_in_threadpool(
+                orch.compare, body.task, body.lanes, task_id=body.task_id
+            )
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return [r.to_dict() for r in runs]
 
     @app.post("/api/runs/{run_id}/reject")
     async def reject(run_id: str) -> dict[str, Any]:

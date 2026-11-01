@@ -15,7 +15,8 @@ and leaves the merge decision to the human. Claude is an escalation lane, never 
   - `api.py` HTTP + SSE for the cockpit · `cli.py` the `pablo` command
   - `client.py` HTTP client · `tui.py` terminal cockpit (Textual)
   - `overnight.py` overnight queue, scheduler (runs inside `pablo serve`), morning brief
-- `web/` cockpit (React + Vite + cmdk); desktop `App.tsx`, phone `Phone.tsx` (PWA), styled only with tokens in `web/src/tokens.css`
+  - `hunks.py` split diffs into hunks for partial approval (mirrored in `web/src/hunks.ts`)
+- `web/` cockpit (React + Vite + cmdk); desktop `App.tsx` + `RunView.tsx`, phone `Phone.tsx` (PWA), styled only with tokens in `web/src/tokens.css`
 - `config/` lanes and the LiteLLM gateway · `scripts/` Pablo bootstrap and model archiving
 - `docs/cursor-prompts/` one prompt per milestone, each with acceptance checks
 
@@ -32,6 +33,7 @@ cd web && npm install && npm run dev   # cockpit dev server on :5173
 1. **Never train on Claude.** Traces from the `claude` lane are never `train_ok`. Do not weaken
    `Lane._remote_never_trains`, `Settings._name_lanes`, or `Trace.train_ok`. Tests guard this.
 2. **The human is the merge button.** Nothing writes to the working tree except `Orchestrator.approve`.
+   Partial approvals (`approved_partial`) are re-checked first and are never training data.
 3. **Never auto-escalate.** The router must not choose `claude`; only `escalate` may.
 4. **Bind locally.** Serve on 127.0.0.1 or the Tailscale IP. Never 0.0.0.0, never a public port.
 5. **Licenses.** MIT/Apache/BSD code may be copied with its notice (add it to THIRD_PARTY.md).

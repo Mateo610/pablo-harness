@@ -1,21 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, subscribe, type Brief, type HarnessEvent, type Job, type Lane, type Plan, type PlanTask, type Run } from "./api";
-import {
-  BriefCard,
-  CertaintyGauge,
-  DiffView,
-  EvidenceCards,
-  LaneBadge,
-  LaneRibbon,
-  TonightList,
-  laneColor,
-  stateLabel,
-  todayLocal,
-} from "./components";
+import { BriefCard, LaneBadge, LaneRibbon, TonightList, laneColor, stateLabel, todayLocal } from "./components";
 import { Palette } from "./Palette";
 import { Phone } from "./Phone";
+import { RunView } from "./RunView";
 
-type Mode = "plan" | "build" | "quick";
+type Mode = "plan" | "build" | "quick" | "compare";
 
 export function App() {
   const [lanes, setLanes] = useState<Lane[]>([]);
@@ -113,6 +103,17 @@ export function App() {
     if (!task.trim()) return;
     const lane = mode === "plan" ? "deep" : undefined;
     setDraft("");
+    if (mode === "compare") {
+      setError("");
+      api
+        .compare(task, ["coder", "deep"], taskId)
+        .then((rs) => {
+          setRuns((prev) => rs.reduce(upsert, prev));
+          return refresh();
+        })
+        .catch((e: Error) => setError(e.message));
+      return;
+    }
     act(() => api.start(task, lane, taskId));
   };
 
@@ -268,14 +269,26 @@ export function App() {
                 <p className="muted">Describe a task below, or press Ctrl K.</p>
               </div>
             )}
-            {runs.map((r) => (
-              <RunView
-                key={r.id}
-                run={r}
-                onApprove={() => act(() => api.approve(r.id))}
-                onReject={() => act(() => api.reject(r.id))}
-                onEscalate={() => act(() => api.escalate(r.id))}
-              />
+            {groupRuns(runs).map((group) => (
+              <div key={group[0].id} className="turn">
+                <div className="user-msg">{group[0].task}</div>
+                <div className={group.length > 1 ? "compare" : undefined}>
+                  {group.map((r) => (
+                    <RunView
+                      key={r.id}
+                      run={r}
+                      compact={group.length > 1}
+                      onApproved={(run) => {
+                        setRuns((prev) => upsert(prev, run));
+                        refresh().catch(() => undefined);
+                      }}
+                      onReject={() => act(() => api.reject(r.id))}
+                      onEscalate={() => act(() => api.escalate(r.id))}
+                      onError={setError}
+                    />
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
 
@@ -311,7 +324,7 @@ export function App() {
                 }}
               />
               <div className="modes" role="group" aria-label="Mode">
-                {(["plan", "build", "quick"] as Mode[]).map((m) => (
+                {(["plan", "build", "quick", "compare"] as Mode[]).map((m) => (
                   <button key={m} type="button" aria-pressed={mode === m} onClick={() => setMode(m)}>
                     {m[0].toUpperCase() + m.slice(1)}
                   </button>
@@ -381,51 +394,25 @@ export function App() {
   );
 }
 
-function RunView({
-  run,
-  onApprove,
-  onReject,
-  onEscalate,
-}: {
-  run: Run;
-  onApprove: () => void;
-  onReject: () => void;
-  onEscalate: () => void;
-}) {
-  const open = run.state === "ready" || run.state === "needs_you";
-  return (
-    <>
-      <div className="user-msg">{run.task}</div>
-      <article id={`run-${run.id}`} className={`run ${run.state === "needs_you" ? "waiting" : ""}`}>
-        <div className="run-head">
-          <LaneBadge lane={run.lane} model={run.model} />
-          <span className="grow" />
-          {run.certainty !== null && <CertaintyGauge value={run.certainty} />}
-        </div>
-        {run.explanation && <p className="run-text">{run.explanation}</p>}
-        {run.verdict && <EvidenceCards verdict={run.verdict} />}
-        {run.diff && <DiffView diff={run.diff} />}
-        {run.question && run.state === "needs_you" && <p className="question">{run.question}</p>}
-        {open ? (
-          <div className="actions">
-            <button type="button" className="btn primary" onClick={onApprove}>
-              Approve and apply
-            </button>
-            <button type="button" className="btn" onClick={onReject}>
-              Reject
-            </button>
-            {run.lane !== "claude" && (
-              <button type="button" className="btn escalate" onClick={onEscalate}>
-                Escalate to Claude
-              </button>
-            )}
-          </div>
-        ) : (
-          <p className="muted small">{stateLabel(run)}</p>
-        )}
-      </article>
-    </>
-  );
+/** Runs started together by compare share a group and render side by side. */
+function groupRuns(runs: Run[]): Run[][] {
+  const out: Run[][] = [];
+  const byGroup = new Map<string, Run[]>();
+  for (const r of runs) {
+    if (r.group) {
+      const existing = byGroup.get(r.group);
+      if (existing) {
+        existing.push(r);
+        continue;
+      }
+      const fresh = [r];
+      byGroup.set(r.group, fresh);
+      out.push(fresh);
+    } else {
+      out.push([r]);
+    }
+  }
+  return out;
 }
 
 function readDismissed(): string {

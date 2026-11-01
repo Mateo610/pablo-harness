@@ -19,6 +19,8 @@ from typing import Any, Literal
 from pablo.config import ESCALATION_LANE, Settings
 from pablo.events import Event, EventBus
 from pablo.gateway import ChatBackend, Message
+from pablo.hunks import all_ids
+from pablo.hunks import select as select_hunks
 from pablo.judge import judge
 from pablo.router import Router
 from pablo.traces import Trace, TraceStore
@@ -34,6 +36,12 @@ ANSWER_PROMPT = """You are a specialist on a small local team. Answer directly a
 
 MAX_TREE = 200
 MAX_FILE_CHARS = 12_000
+
+
+class PartialChecksFailed(RuntimeError):
+    def __init__(self, verdict: Verdict) -> None:
+        super().__init__(f"checks failed on the hunks you kept: {verdict.summary()}")
+        self.verdict = verdict
 
 
 @dataclass
@@ -53,6 +61,8 @@ class Run:
     question: str = ""
     task_id: str | None = None
     escalated_from: str | None = None
+    group: str | None = None  # runs started together by compare()
+    applied_hunks: list[str] | None = None  # set when you approve only part of the diff
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
 
     def to_dict(self) -> dict[str, Any]:
@@ -117,7 +127,20 @@ class Orchestrator:
 
     # ---- helpers -------------------------------------------------------------
     def _emit(self, kind: str, run: Run, **data: Any) -> None:
-        self.bus.publish(Event(kind, run.id, {"lane": run.lane, **data}))
+        event = Event(kind, run.id, {"lane": run.lane, **data})
+        self.bus.publish(event)
+        folder = self.settings.home / "runs"
+        folder.mkdir(parents=True, exist_ok=True)
+        with (folder / f"{run.id}.events.jsonl").open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(event.to_dict()) + "\n")
+
+    def events(self, run_id: str) -> list[dict[str, Any]]:
+        """Everything that happened in a run, in order: what replay plays back."""
+        path = self.settings.home / "runs" / f"{run_id}.events.jsonl"
+        if not path.is_file():
+            self.get(run_id)  # raises KeyError for unknown runs
+            return []
+        return [json.loads(line) for line in path.read_text("utf-8").splitlines() if line]
 
     def _save(self, run: Run) -> None:
         with self._lock:
@@ -167,6 +190,7 @@ class Orchestrator:
         task_id: str | None = None,
         escalate: bool = False,
         escalated_from: str | None = None,
+        group: str | None = None,
     ) -> Run:
         decision = self.router.route(task, lane=ESCALATION_LANE if escalate else lane)
         lane_cfg = self.settings.lane(decision.lane)
@@ -182,6 +206,7 @@ class Orchestrator:
             complexity=decision.complexity,
             task_id=task_id,
             escalated_from=escalated_from,
+            group=group,
         )
         self._save(run)
         self._emit("route", run, reason=decision.reason, confidence=decision.confidence)
@@ -249,18 +274,50 @@ class Orchestrator:
         self._emit("finished", run, state=run.state)
 
     # ---- your decisions -----------------------------------------------------
-    def approve(self, run_id: str) -> Run:
+    def approve(self, run_id: str, hunks: list[str] | None = None, *, force: bool = False) -> Run:
+        """Apply the diff, or only the hunks you kept.
+
+        A partial diff is re-checked first, because dropping a hunk can break the rest.
+        If those checks fail you get PartialChecksFailed; `force` applies it anyway.
+        Partial approvals are not training data: the model's output wasn't what you kept.
+        """
         run = self.get(run_id)
         if run.state not in ("ready", "needs_you"):
             raise ValueError(f"run {run_id} is {run.state}")
-        if run.diff:
-            ok, err = apply_diff(self.repo, run.diff)
+        patch = run.diff
+        decision = "approved"
+        if run.diff and hunks is not None:
+            every = all_ids(run.diff)
+            keep = set(hunks)
+            if not keep:
+                raise ValueError("no hunks selected; reject the run instead")
+            if keep != set(every):
+                patch = select_hunks(run.diff, keep)
+                decision = "approved_partial"
+                verdict = verify_diff(self.repo, patch, self.checks)
+                if not verdict.passed and not force:
+                    raise PartialChecksFailed(verdict)
+                run.applied_hunks = [h for h in every if h in keep]
+        if patch:
+            ok, err = apply_diff(self.repo, patch)
             if not ok:
                 raise RuntimeError(f"diff no longer applies: {err}")
         run.state = "approved"
-        self.traces.record_decision(run.id, "approved")
+        self.traces.record_decision(run.id, decision)
         self._save(run)
-        self._emit("decided", run, decision="approved")
+        self._emit("decided", run, decision=decision)
+        if run.group:
+            for other in self.recent(200):
+                if (
+                    other.group == run.group
+                    and other.id != run.id
+                    and other.state
+                    in (
+                        "ready",
+                        "needs_you",
+                    )
+                ):
+                    self.reject(other.id)
         return run
 
     def reject(self, run_id: str) -> Run:
@@ -270,6 +327,20 @@ class Orchestrator:
         self._save(run)
         self._emit("decided", run, decision="rejected")
         return run
+
+    def compare(self, task: str, lanes: list[str], *, task_id: str | None = None) -> list[Run]:
+        """Run the same task on several lanes. Approving one rejects the others."""
+        if len(set(lanes)) < 2:
+            raise ValueError("compare needs at least two different lanes")
+        for name in lanes:
+            if self.settings.lane(name).requires_approval:
+                raise PermissionError(f"lane '{name}' only runs when you escalate")
+        group = uuid.uuid4().hex[:8]
+        runs = []
+        for name in lanes:
+            run = self.start(task, lane=name, task_id=task_id, group=group)
+            runs.append(run)
+        return runs
 
     def escalate(self, run_id: str) -> Run:
         """Send the same task to Claude. Its trace is never trainable."""

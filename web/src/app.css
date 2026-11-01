@@ -158,3 +158,28 @@ kbd { font: 500 11.5px/1 var(--font-mono); color: var(--ink-muted); border: 1px 
 .btn.tonight-btn { height: 40px; padding: 0 12px; font-size: 12.5px; }
 .phone-actions-row { display: flex; gap: 8px; }
 .phone-actions-row .btn { flex: 1 1 0; height: 44px; }
+
+/* Hunk review, replay, compare */
+.turn { display: flex; flex-direction: column; gap: 16px; }
+.compare { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; align-items: start; }
+.compare > .run { background: var(--surface-100); border-radius: var(--radius-lg); padding: 16px; }
+.compare > .run.waiting { background: var(--accent-wash); }
+.hunk { display: flex; flex-direction: column; gap: 0; border-radius: var(--radius-md); overflow: hidden; background: var(--ground-000); }
+.hunk-head { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: var(--surface-100); }
+.hunk .diff { border-radius: 0; }
+.hunk.dropped .hunk-head { opacity: .7; }
+.hunk.dropped .hunk-head .mono:first-child { text-decoration: line-through; }
+.hunk-toggle { min-height: 28px; padding: 0 10px; border-radius: var(--radius-sm); border: 1px solid var(--line); background: var(--surface-300); font-size: 12px; }
+.hunk-toggle[aria-pressed="true"] { color: var(--status-pass); }
+.hunk-toggle[aria-pressed="false"] { color: var(--ink-muted); background: transparent; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.blocked { display: flex; flex-direction: column; gap: 10px; padding: 12px; border-radius: var(--radius-md); background: var(--fail-wash); }
+.blocked p { margin: 0; color: var(--status-fail); }
+.blocked .btn { align-self: flex-start; }
+.replay { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: var(--radius-md); background: var(--surface-100); }
+.replay input[type="range"] { width: 100%; accent-color: var(--lane-router); }
+.replay-controls { display: flex; gap: 12px; }
+.replay-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.replay-steps li { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.replay-steps .mono { width: 44px; text-align: right; }
+.actions .link-btn { align-self: center; }

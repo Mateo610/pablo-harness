@@ -68,3 +68,22 @@ def test_inbox_survives_restart(settings: Settings, repo: Path) -> None:
     run = client_for(settings, repo).post("/api/runs", json={"task": "x", "lane": "coder"}).json()
     fresh = client_for(settings, repo)  # new orchestrator, same ~/.pablo
     assert [r["id"] for r in fresh.get("/api/inbox").json()] == [run["id"]]
+
+
+def test_compare_events_and_hunk_approve_api(settings: Settings, repo: Path) -> None:
+    client = client_for(settings, repo)
+    a, b = client.post(
+        "/api/compare", json={"task": "add a demo note", "lanes": ["coder", "deep"]}
+    ).json()
+    assert a["group"] == b["group"]
+    kinds = [e["kind"] for e in client.get(f"/api/runs/{a['id']}/events").json()]
+    assert kinds[0] == "route" and kinds[-1] == "finished"
+    assert client.post(f"/api/runs/{a['id']}/approve", json={"hunks": ["7:7"]}).status_code == 409
+    approved = client.post(f"/api/runs/{a['id']}/approve", json={"hunks": ["0:0"]}).json()
+    assert approved["state"] == "approved"
+    assert client.get(f"/api/runs/{b['id']}").json()["state"] == "rejected"
+    assert (
+        client.post("/api/compare", json={"task": "x", "lanes": ["coder", "claude"]}).status_code
+        == 403
+    )
+    assert client.get("/api/runs/nope/events").status_code == 404

@@ -48,6 +48,8 @@ export interface Run {
   question: string;
   task_id: string | null;
   escalated_from: string | null;
+  group: string | null;
+  applied_hunks: string[] | null;
   created_at: string;
 }
 
@@ -118,14 +120,26 @@ export interface Brief {
   created_at: string;
 }
 
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly verdict?: Verdict,
+  ) {
+    super(message);
+  }
+}
+
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
   });
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error((body as { detail?: string }).detail ?? `${res.status} ${res.statusText}`);
+    const body = (await res.json().catch(() => ({}))) as { detail?: string | { message: string; verdict?: Verdict } };
+    const detail = body.detail;
+    if (detail && typeof detail === "object") throw new ApiError(detail.message, res.status, detail.verdict);
+    throw new ApiError(detail ?? `${res.status} ${res.statusText}`, res.status);
   }
   return (await res.json()) as T;
 }
@@ -140,7 +154,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ task, lane: lane ?? null, task_id: taskId ?? null }),
     }),
-  approve: (id: string) => call<Run>(`/api/runs/${id}/approve`, { method: "POST" }),
+  approve: (id: string, hunks?: string[], force = false) =>
+    call<Run>(`/api/runs/${id}/approve`, {
+      method: "POST",
+      body: JSON.stringify({ hunks: hunks ?? null, force }),
+    }),
+  events: (id: string) => call<HarnessEvent[]>(`/api/runs/${id}/events`),
+  compare: (task: string, lanes: string[], taskId?: string) =>
+    call<Run[]>("/api/compare", { method: "POST", body: JSON.stringify({ task, lanes, task_id: taskId ?? null }) }),
   reject: (id: string) => call<Run>(`/api/runs/${id}/reject`, { method: "POST" }),
   escalate: (id: string) => call<Run>(`/api/runs/${id}/escalate`, { method: "POST" }),
   queue: () => call<Job[]>("/api/queue"),

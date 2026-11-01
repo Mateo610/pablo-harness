@@ -125,9 +125,24 @@ def run(
 
 
 @app.command()
-def approve(run_id: str, repo: RepoOpt = Path("."), fake: FakeOpt = False) -> None:
-    """Apply a run's diff to your repo and mark it trainable."""
-    result = _orch(repo.resolve(), fake).approve(run_id)
+def approve(
+    run_id: str,
+    repo: RepoOpt = Path("."),
+    fake: FakeOpt = False,
+    hunks: Annotated[
+        str | None, typer.Option(help="Keep only these hunks, e.g. 0:0,1:2 (see `pablo hunks`)")
+    ] = None,
+    force: Annotated[bool, typer.Option(help="Apply kept hunks even if their checks fail")] = False,
+) -> None:
+    """Apply a run's diff (or some of its hunks) to your repo."""
+    from pablo.orchestrator import PartialChecksFailed
+
+    keep = [h.strip() for h in hunks.split(",")] if hunks else None
+    try:
+        result = _orch(repo.resolve(), fake).approve(run_id, keep, force=force)
+    except PartialChecksFailed as exc:
+        console.print(f"[red]{exc}[/]  (use --force to apply anyway)")
+        raise typer.Exit(1) from exc
     if result.task_id:
         try:
             current = Plan.load(repo.resolve())
@@ -136,6 +151,51 @@ def approve(run_id: str, repo: RepoOpt = Path("."), fake: FakeOpt = False) -> No
         except (FileNotFoundError, KeyError):
             pass
     console.print(f"[green]approved[/] {run_id}")
+
+
+@app.command("hunks")
+def show_hunks(run_id: str, repo: RepoOpt = Path("."), fake: FakeOpt = False) -> None:
+    """List a run's hunks with their ids, for `pablo approve --hunks`."""
+    from rich.syntax import Syntax
+
+    from pablo.hunks import parse
+
+    run_ = _orch(repo.resolve(), fake).get(run_id)
+    for f in parse(run_.diff):
+        for h in f.hunks:
+            console.print(f"[bold cyan]{h.id}[/]  {f.path}  +{h.added} −{h.removed}")
+            console.print(Syntax("\n".join([h.header, *h.lines]), "diff", theme="ansi_dark"))
+
+
+@app.command()
+def compare(
+    task: str,
+    lanes: Annotated[str, typer.Option(help="Comma-separated lanes")] = "coder,deep",
+    repo: RepoOpt = Path("."),
+    fake: FakeOpt = False,
+) -> None:
+    """Run one task on several lanes side by side. Approving one rejects the rest."""
+    for result in _orch(repo.resolve(), fake).compare(task, [x.strip() for x in lanes.split(",")]):
+        _show(result)
+        console.print()
+
+
+@app.command()
+def replay(run_id: str, repo: RepoOpt = Path("."), fake: FakeOpt = False) -> None:
+    """Show everything that happened in a run, in order."""
+    from datetime import datetime as dt
+
+    events = _orch(repo.resolve(), fake).events(run_id)
+    if not events:
+        console.print("No events recorded for this run.")
+        return
+    t0 = dt.fromisoformat(events[0]["at"])
+    for e in events:
+        offset = (dt.fromisoformat(e["at"]) - t0).total_seconds()
+        data = {k: v for k, v in e["data"].items() if k != "lane"}
+        detail = data.get("text") or data.get("summary") or data.get("reason") or data
+        lane = e["data"].get("lane", "")
+        console.print(f"[dim]+{offset:>5.0f}s[/] [bold]{e['kind']:<9}[/] {lane}  {detail}")
 
 
 @app.command()

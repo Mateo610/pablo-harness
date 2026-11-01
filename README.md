@@ -40,6 +40,9 @@ Or from the terminal: `uv run pablo run "add a demo note" --fake -C /tmp/hello`,
 | `pablo plan` | show the plan and the next task |
 | `pablo run "<task>"` or `pablo run 1.2` | route → work → verify → judge |
 | `pablo approve / reject / escalate <run>` | your decision; only approve touches your repo |
+| `pablo hunks <run>` · `pablo approve <run> --hunks 0:0,1:0` | keep only some hunks (re-checked before applying; never training data) |
+| `pablo compare "<task>" --lanes coder,deep` | same task on two lanes; approving one rejects the other |
+| `pablo replay <run>` | every step of a run, in order |
 | `pablo serve` | API + cockpit on 127.0.0.1 (put `tailscale serve` in front for HTTPS) |
 | `pablo tui [--url …]` | the cockpit in your terminal, local or over Tailscale |
 | `pablo queue add "<task>"` / `list` / `cancel` / `run` | overnight queue: slow work runs 01:00–06:30 |

@@ -197,3 +197,99 @@ def test_answer_only_run_emits_finished(settings: Settings, repo: Path) -> None:
     run = orch.start("sketch an architecture", lane="deep")
     kinds = [e.kind for e in orch.bus.history(run.id)]
     assert run.state == "ready" and kinds[-1] == "finished"
+
+
+TWO_HUNK_DIFF = """diff --git a/calc.py b/calc.py
+--- a/calc.py
++++ b/calc.py
+@@ -1,2 +1,3 @@
++# calc module
+ def add(a, b):
+     return a + b
+diff --git a/notes.md b/notes.md
+new file mode 100644
+--- /dev/null
++++ b/notes.md
+@@ -0,0 +1 @@
++notes
+"""
+
+
+def test_hunk_parse_and_select() -> None:
+    from pablo.hunks import all_ids, parse, select
+
+    files = parse(TWO_HUNK_DIFF)
+    assert [f.path for f in files] == ["calc.py", "notes.md"]
+    assert all_ids(TWO_HUNK_DIFF) == ["0:0", "1:0"]
+    only_notes = select(TWO_HUNK_DIFF, {"1:0"})
+    assert "calc.py" not in only_notes and "+notes" in only_notes
+    with pytest.raises(ValueError):
+        select(TWO_HUNK_DIFF, {"9:9"})
+
+
+def test_partial_approve_applies_kept_hunks_and_never_trains(
+    settings: Settings, repo: Path
+) -> None:
+    orch = make_orch(settings, repo, coder_reply(TWO_HUNK_DIFF), 0.9)
+    run = orch.start("add a note", lane="coder")
+    orch.approve(run.id, ["1:0"])
+    assert (repo / "notes.md").is_file()
+    assert "# calc module" not in (repo / "calc.py").read_text()
+    assert orch.get(run.id).applied_hunks == ["1:0"]
+    assert TraceStore(settings.traces_dir).export_training(settings.home / "t.jsonl") == 0
+
+
+def git_diff_of(repo: Path, edits: dict[str, str]) -> str:
+    """Make edits, capture `git diff`, then restore the files."""
+    import subprocess
+
+    for rel, text in edits.items():
+        (repo / rel).write_text(text)
+    diff = subprocess.run(
+        ["git", "diff"], cwd=repo, text=True, capture_output=True, check=True
+    ).stdout
+    subprocess.run(["git", "checkout", "--", "."], cwd=repo, check=True)
+    return diff
+
+
+def test_partial_approve_blocked_when_checks_fail(settings: Settings, repo: Path) -> None:
+    from pablo.orchestrator import PartialChecksFailed
+
+    calc = (repo / "calc.py").read_text() + "\n\ndef sub(a, b):\n    return a - b\n"
+    tests = (repo / "test_calc.py").read_text() + (
+        "\n\ndef test_sub():\n    from calc import sub\n\n    assert sub(3, 2) == 1\n"
+    )
+    diff = git_diff_of(repo, {"calc.py": calc, "test_calc.py": tests})
+    orch = make_orch(settings, repo, coder_reply(diff), 0.9)
+    run = orch.start("add sub with a test", lane="coder")
+    assert run.state == "ready"
+    with pytest.raises(PartialChecksFailed):
+        orch.approve(run.id, ["1:0"])  # keep the test, drop the function: tests fail
+    assert "test_sub" not in (repo / "test_calc.py").read_text()
+    orch.approve(run.id, ["1:0"], force=True)
+    assert "test_sub" in (repo / "test_calc.py").read_text()
+
+
+def test_events_are_persisted_for_replay(settings: Settings, repo: Path) -> None:
+    orch = make_orch(settings, repo, coder_reply(GOOD_DIFF), 0.9)
+    run = orch.start("add sub", lane="coder")
+    fresh = Orchestrator(settings, FakeBackend(), repo=repo, checks=CHECKS)
+    kinds = [e["kind"] for e in fresh.events(run.id)]
+    assert kinds[0] == "route" and "evidence" in kinds and kinds[-1] == "finished"
+
+
+def test_compare_runs_both_and_approving_one_rejects_other(settings: Settings, repo: Path) -> None:
+    backend = FakeBackend(
+        scripts={
+            "pablo/coder": [coder_reply(GOOD_DIFF)],
+            "pablo/deep": ["A different approach, explained."],
+            "pablo/judge": [judge_reply(0.9)],
+        }
+    )
+    orch = Orchestrator(settings, backend, repo=repo, checks=CHECKS)
+    a, b = orch.compare("add sub", ["coder", "deep"])
+    assert a.group == b.group and a.group is not None
+    orch.approve(a.id)
+    assert orch.get(b.id).state == "rejected"
+    with pytest.raises(PermissionError):
+        orch.compare("x", ["coder", "claude"])

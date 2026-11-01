@@ -19,6 +19,13 @@ new file mode 100644
 +# Hello from the fake coder
 +
 +Approve this run and this file lands in your repo. Reject it and nothing changes.
+diff --git a/pablo-demo/hello.txt b/pablo-demo/hello.txt
+new file mode 100644
+--- /dev/null
++++ b/pablo-demo/hello.txt
+@@ -0,0 +1,2 @@
++A second hunk, so you can try keeping one and dropping the other.
++Toggle "Keep" off on either hunk, then apply the rest.
 """
 
 

@@ -30,7 +30,7 @@ Status: `todo` · `doing` · `done`. Update this table when a gate passes.
 | C1 | Terminal client (Textual) | `pablo tui` shows inbox, plan, live status; approve/reject by key | done |
 | C2 | Phone remote (PWA) | Installable on phone over Tailscale; approve, reject, hold to talk | done (voice waits on the voice lane) |
 | C3 | Overnight queue + morning brief | Tasks queued for the deep lane run overnight; brief summarizes results at 7:30 | done (runs inside `pablo serve`; real overnight test after M3) |
-| C4 | Hunk review, replay, compare | Accept per hunk; replay a run step by step; same task on two lanes side by side | todo |
+| C4 | Hunk review, replay, compare | Accept per hunk; replay a run step by step; same task on two lanes side by side | done |
 | C5 | v0.1 public release | README with demo GIF, architecture diagram, install guide; repo flipped public | todo |
 
 ## Order that works

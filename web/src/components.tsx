@@ -34,12 +34,21 @@ export function LaneBadge({ lane, model }: { lane: string; model?: string }) {
 }
 
 /** 270° arc. At or above the threshold it draws in the judge color; below, amber: needs you. */
-export function CertaintyGauge({ value, threshold = 0.75 }: { value: number; threshold?: number }) {
-  const high = value >= threshold;
-  const color = high ? "var(--lane-judge)" : "var(--accent)";
+export function CertaintyGauge({
+  value,
+  threshold = 0.75,
+  settled = false,
+}: {
+  value: number;
+  threshold?: number;
+  /** After you decide, the gauge stops asking for attention. */
+  settled?: boolean;
+}) {
+  const high = value >= threshold || settled;
+  const color = settled ? "var(--ink-faint)" : high ? "var(--lane-judge)" : "var(--accent)";
   const arc = "M7.6 20.4A9 9 0 1 1 20.4 20.4";
   return (
-    <span className="gauge" style={{ color: high ? "var(--ink)" : "var(--accent)" }}>
+    <span className="gauge" style={{ color: settled ? "var(--ink-muted)" : high ? "var(--ink)" : "var(--accent)" }}>
       <svg width="20" height="20" viewBox="0 0 28 28" role="img" aria-label={`Judge certainty ${value.toFixed(2)}`}>
         <path d={arc} fill="none" stroke="var(--surface-300)" strokeWidth="3" strokeLinecap="round" />
         <path
