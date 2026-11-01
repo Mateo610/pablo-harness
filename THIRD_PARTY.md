@@ -28,7 +28,7 @@ and how it is used. Add a row before adding a dependency or copying code.
 | llama.cpp | MIT | process (engine) | M1 |
 | llama-swap | MIT | process (lane swapper) | M4 |
 | KTransformers | Apache-2.0 | process (MoE engine) | M3 |
-| colibrì | check LICENSE | process (expert streaming) | M3 |
+| colibrì v2.1.0 | Apache-2.0 | process (expert streaming) | M3 |
 | Serena | MIT | process (LSP tools over MCP) | M6 |
 | Langfuse (core) | MIT | process (trace UI) | M7 |
 | Promptfoo | MIT | dev tool (evals) | M7 |
