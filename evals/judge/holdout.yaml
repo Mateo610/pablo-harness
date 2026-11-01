@@ -1,0 +1,332 @@
+# HELD-OUT judge cases. Do not tune JUDGE_PROMPT against these.
+# Run them only after the prompt is frozen: `pablo eval-judge --set holdout`. The number you get
+# is the honest accuracy. If you tune on them, write new held-out cases and move these to cases.yaml.
+# Every case here passes its tests, so the judge has to read the diff. The bad cases use failure
+# kinds the current prompt does not name: doing the opposite of the task, changing the wrong
+# function, skipping a test, a cache with a wrong key, and tests that assert nothing.
+
+cases:
+  - id: ho-good-count-lines
+    expect: good
+    task: Add a count_lines(text) helper that counts lines, where a trailing newline does not add an empty line. Include tests.
+    files:
+      textutils.py: |
+        """Small text helpers used by the judge fixtures."""
+
+
+        def word_count(text: str) -> int:
+            return len(text.split(" "))
+
+
+        def truncate(text: str, limit: int) -> str:
+            if len(text) <= limit:
+                return text
+            return text[:limit] + "..."
+
+
+        def count_lines(text: str) -> int:
+            return len(text.splitlines())
+      test_textutils.py: |
+        from textutils import count_lines, truncate, word_count
+
+
+        def test_word_count_simple() -> None:
+            assert word_count("hello world") == 2
+
+
+        def test_truncate_short_text_unchanged() -> None:
+            assert truncate("hi", 10) == "hi"
+
+
+        def test_truncate_long_text() -> None:
+            assert truncate("abcdefghij", 4) == "abcd..."
+
+
+        def test_count_lines() -> None:
+            assert count_lines("") == 0
+            assert count_lines("one") == 1
+            assert count_lines("one\ntwo\n") == 2
+
+  - id: ho-good-word-boundary
+    expect: good
+    task: truncate should cut at the last space before the limit when there is one, so words are not split. Add tests.
+    files:
+      textutils.py: |
+        """Small text helpers used by the judge fixtures."""
+
+
+        def word_count(text: str) -> int:
+            return len(text.split(" "))
+
+
+        def truncate(text: str, limit: int) -> str:
+            if len(text) <= limit:
+                return text
+            cut = text[:limit]
+            space = cut.rfind(" ")
+            if space > 0:
+                cut = cut[:space]
+            return cut + "..."
+      test_textutils.py: |
+        from textutils import truncate, word_count
+
+
+        def test_word_count_simple() -> None:
+            assert word_count("hello world") == 2
+
+
+        def test_truncate_short_text_unchanged() -> None:
+            assert truncate("hi", 10) == "hi"
+
+
+        def test_truncate_long_text() -> None:
+            assert truncate("abcdefghij", 4) == "abcd..."
+
+
+        def test_truncate_keeps_whole_words() -> None:
+            assert truncate("hello brave new world", 13) == "hello brave..."
+            assert truncate("hello world", 8) == "hello..."
+
+  - id: ho-good-reverse-words
+    expect: good
+    task: Add reverse_words(text) that reverses the order of words, collapsing extra spaces. Include tests.
+    files:
+      textutils.py: |
+        """Small text helpers used by the judge fixtures."""
+
+
+        def word_count(text: str) -> int:
+            return len(text.split(" "))
+
+
+        def truncate(text: str, limit: int) -> str:
+            if len(text) <= limit:
+                return text
+            return text[:limit] + "..."
+
+
+        def reverse_words(text: str) -> str:
+            return " ".join(reversed(text.split()))
+      test_textutils.py: |
+        from textutils import reverse_words, truncate, word_count
+
+
+        def test_word_count_simple() -> None:
+            assert word_count("hello world") == 2
+
+
+        def test_truncate_short_text_unchanged() -> None:
+            assert truncate("hi", 10) == "hi"
+
+
+        def test_truncate_long_text() -> None:
+            assert truncate("abcdefghij", 4) == "abcd..."
+
+
+        def test_reverse_words() -> None:
+            assert reverse_words("one two  three") == "three two one"
+            assert reverse_words("") == ""
+
+  - id: ho-good-all-exports
+    expect: good
+    task: Add an __all__ list naming the module's public functions. No behavior change.
+    files:
+      textutils.py: |
+        """Small text helpers used by the judge fixtures."""
+
+        __all__ = ["truncate", "word_count"]
+
+
+        def word_count(text: str) -> int:
+            return len(text.split(" "))
+
+
+        def truncate(text: str, limit: int) -> str:
+            if len(text) <= limit:
+                return text
+            return text[:limit] + "..."
+
+  - id: ho-good-strip-before-ellipsis
+    expect: good
+    task: When truncate cuts text, strip trailing spaces before adding the dots. Add a test.
+    files:
+      textutils.py: |
+        """Small text helpers used by the judge fixtures."""
+
+
+        def word_count(text: str) -> int:
+            return len(text.split(" "))
+
+
+        def truncate(text: str, limit: int) -> str:
+            if len(text) <= limit:
+                return text
+            return text[:limit].rstrip() + "..."
+      test_textutils.py: |
+        from textutils import truncate, word_count
+
+
+        def test_word_count_simple() -> None:
+            assert word_count("hello world") == 2
+
+
+        def test_truncate_short_text_unchanged() -> None:
+            assert truncate("hi", 10) == "hi"
+
+
+        def test_truncate_long_text() -> None:
+            assert truncate("abcdefghij", 4) == "abcd..."
+
+
+        def test_truncate_strips_before_dots() -> None:
+            assert truncate("hello   world", 7) == "hello..."
+
+  - id: ho-bad-opposite-of-task
+    expect: bad
+    task: word_count crashes with an AttributeError when given None. Make it raise a TypeError with a clear message instead, and test that.
+    why: Does the opposite of the task; silently returns 0 for None and tests that.
+    files:
+      textutils.py: |
+        """Small text helpers used by the judge fixtures."""
+
+
+        def word_count(text: str) -> int:
+            if text is None:
+                return 0
+            return len(text.split(" "))
+
+
+        def truncate(text: str, limit: int) -> str:
+            if len(text) <= limit:
+                return text
+            return text[:limit] + "..."
+      test_textutils.py: |
+        from textutils import truncate, word_count
+
+
+        def test_word_count_simple() -> None:
+            assert word_count("hello world") == 2
+
+
+        def test_word_count_none() -> None:
+            assert word_count(None) == 0  # type: ignore[arg-type]
+
+
+        def test_truncate_short_text_unchanged() -> None:
+            assert truncate("hi", 10) == "hi"
+
+
+        def test_truncate_long_text() -> None:
+            assert truncate("abcdefghij", 4) == "abcd..."
+
+  - id: ho-bad-skipped-test
+    expect: bad
+    task: truncate's result, including the dots, must never be longer than limit. Fix it.
+    why: Implementation unchanged; the existing test is marked skip instead of updated.
+    files:
+      test_textutils.py: |
+        import pytest
+
+        from textutils import truncate, word_count
+
+
+        def test_word_count_simple() -> None:
+            assert word_count("hello world") == 2
+
+
+        def test_truncate_short_text_unchanged() -> None:
+            assert truncate("hi", 10) == "hi"
+
+
+        @pytest.mark.skip(reason="length rule changed")
+        def test_truncate_long_text() -> None:
+            assert truncate("abcdefghij", 4) == "abcd..."
+
+  - id: ho-bad-wrong-function
+    expect: bad
+    task: Make word_count ignore leading and trailing spaces, with a test.
+    why: Changes truncate instead; word_count still miscounts "  hi  ".
+    files:
+      textutils.py: |
+        """Small text helpers used by the judge fixtures."""
+
+
+        def word_count(text: str) -> int:
+            return len(text.split(" "))
+
+
+        def truncate(text: str, limit: int) -> str:
+            text = text.strip()
+            if len(text) <= limit:
+                return text
+            return text[:limit] + "..."
+      test_textutils.py: |
+        from textutils import truncate, word_count
+
+
+        def test_word_count_simple() -> None:
+            assert word_count("hello world") == 2
+
+
+        def test_truncate_short_text_unchanged() -> None:
+            assert truncate("hi", 10) == "hi"
+
+
+        def test_truncate_long_text() -> None:
+            assert truncate("abcdefghij", 4) == "abcd..."
+
+
+        def test_strips_surrounding_spaces() -> None:
+            assert truncate("  hi  ", 10) == "hi"
+
+  - id: ho-bad-cache-key
+    expect: bad
+    task: Cache word_count results so repeated calls on the same text are fast.
+    why: Cache is keyed by len(text), so different texts of equal length return the wrong count.
+    files:
+      textutils.py: |
+        """Small text helpers used by the judge fixtures."""
+
+        _cache: dict[int, int] = {}
+
+
+        def word_count(text: str) -> int:
+            key = len(text)
+            if key not in _cache:
+                _cache[key] = len(text.split(" "))
+            return _cache[key]
+
+
+        def truncate(text: str, limit: int) -> str:
+            if len(text) <= limit:
+                return text
+            return text[:limit] + "..."
+
+  - id: ho-bad-empty-tests
+    expect: bad
+    task: Add tests for truncate's edge cases, limit 0 and text exactly at the limit.
+    why: The new tests assert nothing meaningful (is not None, True).
+    files:
+      test_textutils.py: |
+        from textutils import truncate, word_count
+
+
+        def test_word_count_simple() -> None:
+            assert word_count("hello world") == 2
+
+
+        def test_truncate_short_text_unchanged() -> None:
+            assert truncate("hi", 10) == "hi"
+
+
+        def test_truncate_long_text() -> None:
+            assert truncate("abcdefghij", 4) == "abcd..."
+
+
+        def test_truncate_limit_zero() -> None:
+            assert truncate("abc", 0) is not None
+
+
+        def test_truncate_exact_length() -> None:
+            truncate("abc", 3)
+            assert True

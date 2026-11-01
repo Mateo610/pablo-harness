@@ -39,6 +39,7 @@ class CaseResult:
 class JudgeReport:
     results: list[CaseResult]
     threshold: float
+    case_set: str = "main"
 
     @property
     def accuracy(self) -> float:
@@ -54,7 +55,8 @@ class JudgeReport:
 
     def to_markdown(self, model: str) -> str:
         lines = [
-            f"### Judge eval · {model}",
+            f"### Judge eval · {model}"
+            + (f" · {self.case_set}" if self.case_set != "main" else ""),
             "",
             f"Accuracy {self.accuracy:.0%} at threshold {self.threshold} · mean certainty "
             f"good {self.mean_certainty('good'):.2f}, bad {self.mean_certainty('bad'):.2f}",
@@ -70,8 +72,12 @@ class JudgeReport:
         return "\n".join(lines) + "\n"
 
 
-def load_cases(root: Path = FIXTURES) -> list[dict[str, Any]]:
-    data = yaml.safe_load((root / "cases.yaml").read_text("utf-8"))
+CASE_SETS = {"main": "cases.yaml", "holdout": "holdout.yaml"}
+
+
+def load_cases(root: Path = FIXTURES, case_set: str = "main") -> list[dict[str, Any]]:
+    """`main` is for tuning the judge prompt; `holdout` is scored only once it is frozen."""
+    data = yaml.safe_load((root / CASE_SETS[case_set]).read_text("utf-8"))
     return list(data["cases"])
 
 
@@ -102,10 +108,11 @@ def run_judge_eval(
     threshold: float = 0.75,
     root: Path = FIXTURES,
     only: set[str] | None = None,
+    case_set: str = "main",
 ) -> JudgeReport:
     results = []
     with tempfile.TemporaryDirectory(prefix="pablo-judge-eval-") as tmp:
-        for case in load_cases(root):
+        for case in load_cases(root, case_set):
             if only and case["id"] not in only:
                 continue
             repo, diff = build_case(case, Path(tmp), root)
@@ -122,4 +129,4 @@ def run_judge_eval(
                     summary=judgement.summary,
                 )
             )
-    return JudgeReport(results, threshold)
+    return JudgeReport(results, threshold, case_set)

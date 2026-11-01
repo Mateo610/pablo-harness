@@ -377,14 +377,20 @@ def eval_judge(
         str | None, typer.Option(help="Gateway alias (default: the judge lane)")
     ] = None,
     write: Annotated[bool, typer.Option(help="Append the table to docs/benchmarks.md")] = False,
+    case_set: Annotated[
+        str, typer.Option("--set", help="main (tune on these) or holdout (score only, never tune)")
+    ] = "main",
 ) -> None:
-    """Score the judge on 10 fixed good/bad diffs (evals/judge). Used in M3 to tune it."""
+    """Score the judge on fixed good/bad diffs (evals/judge)."""
     from pablo.judge_eval import run_judge_eval
 
     settings = load_settings()
     alias = model or settings.lane("judge").model
     report = run_judge_eval(
-        _backend(settings, fake), alias, threshold=settings.thresholds.judge_needs_you
+        _backend(settings, fake),
+        alias,
+        threshold=settings.thresholds.judge_needs_you,
+        case_set=case_set,
     )
     table = report.to_markdown(alias)
     console.print(table)

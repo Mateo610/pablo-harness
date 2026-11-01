@@ -53,3 +53,23 @@ def test_perfect_judge_scores_full_marks() -> None:
     assert cases  # fixtures loaded
     report = run_judge_eval(FakeBackend(scripts={"pablo/judge": oracle}), "pablo/judge")
     assert report.accuracy == 1.0, report.to_markdown("oracle")
+
+
+def test_holdout_fixtures_all_pass_their_tests(tmp_path: Path) -> None:
+    """Every held-out case passes its checks, so only reading the diff catches the bad ones."""
+    cases = load_cases(case_set="holdout")
+    assert len(cases) == 10 and sum(c["expect"] == "good" for c in cases) == 5
+    main_ids = {c["id"] for c in load_cases()}
+    for case in cases:
+        assert case["id"] not in main_ids
+        repo, diff = build_case(case, tmp_path)
+        verdict = verify_diff(repo, diff, CHECKS)
+        assert verdict.applied and verdict.passed, case["id"]
+
+
+def test_rubber_stamp_judge_gets_half_the_holdout() -> None:
+    always_yes = FakeBackend(
+        scripts={"pablo/judge": lambda m, msgs: json.dumps({"certainty": 0.9, "summary": "ok"})}
+    )
+    report = run_judge_eval(always_yes, "pablo/judge", case_set="holdout")
+    assert report.accuracy == 0.5 and "· holdout" in report.to_markdown("fake")
