@@ -31,7 +31,7 @@ else
 fi
 if command -v nvcc >/dev/null; then ok "nvcc $(nvcc --version | grep -o 'release [0-9.]*')"
 else warn "CUDA toolkit (nvcc) missing; needed to build llama.cpp / KTransformers"
-  fix "install the CUDA toolkit matching your driver from developer.nvidia.com (or: sudo apt install nvidia-cuda-toolkit)"
+  fix "CUDA 13.0 from NVIDIA's apt repo (needs driver 580+): see docs/decisions.md. Not Ubuntu's nvidia-cuda-toolkit (12.0, too old)"
 fi
 
 echo "Disk"
