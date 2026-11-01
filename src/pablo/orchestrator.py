@@ -69,8 +69,8 @@ class Run:
     task_id: str | None = None
     escalated_from: str | None = None
     group: str | None = None  # runs started together by compare()
-    applied_hunks: list[str] | None = None
-    repaired: bool = False  # the coder fixed its own diff after git apply failed  # set when you approve only part of the diff
+    applied_hunks: list[str] | None = None  # set when you approve only part of the diff
+    repaired: bool = False  # the coder fixed its own diff after git apply failed
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
 
     def to_dict(self) -> dict[str, Any]:
