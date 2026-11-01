@@ -25,6 +25,7 @@ from pablo.hunks import all_ids
 from pablo.hunks import select as select_hunks
 from pablo.judge import judge
 from pablo.router import Router
+from pablo.sandbox import Sandbox, make_sandbox
 from pablo.swap import SwapView, model_id
 from pablo.traces import Trace, TraceStore
 from pablo.verify import Verdict, _recount_hunks, apply_diff, verify_diff
@@ -163,6 +164,7 @@ class Orchestrator:
         bus: EventBus | None = None,
         checks: dict[str, list[str]] | None = None,
         swap: SwapView | None = None,
+        sandbox: Sandbox | None = None,
     ) -> None:
         self.settings = settings
         self.backend = backend
@@ -170,6 +172,8 @@ class Orchestrator:
         self.bus = bus or EventBus()
         self.checks = checks
         self.swap = swap
+        # Where checks run. lanes.yaml `sandbox:` decides unless the caller picks one.
+        self.sandbox = sandbox or make_sandbox(settings.sandbox, self.repo)
         self.router = Router(settings, backend)
         self.traces = TraceStore(settings.traces_dir)
         self.runs: dict[str, Run] = {}
@@ -331,8 +335,9 @@ class Orchestrator:
         return explanation, diff, ""
 
     def _work(self, run: Run) -> None:
-        wants_diff = run.lane in ("coder", ESCALATION_LANE)
-        blocks = self.settings.lane(run.lane).edit_format == "blocks"
+        lane = self.settings.lane(run.lane)
+        wants_diff = lane.writes_code or run.lane in ("coder", ESCALATION_LANE)
+        blocks = lane.edit_format == "blocks"
         system = (CODER_BLOCKS_PROMPT if blocks else CODER_PROMPT) if wants_diff else ANSWER_PROMPT
         messages: list[Message] = [
             {"role": "system", "content": system},
@@ -343,13 +348,15 @@ class Orchestrator:
             run.lane,
             run.model,
             f"{run.lane} · thinking",
-            lambda: self.backend.complete(run.model, messages),
+            lambda: self.backend.complete(
+                run.model, messages, max_tokens=lane.max_tokens, timeout_s=lane.timeout_s
+            ),
         )
         run.explanation, run.diff, edit_error = self._extract(reply.text)
         verdict: Verdict | None = None
         if run.diff:
             self._emit("status", run, text=f"{run.lane} · running checks")
-            verdict = verify_diff(self.repo, run.diff, self.checks)
+            verdict = verify_diff(self.repo, run.diff, self.checks, sandbox=self.sandbox)
 
         # Local models slip on exact text. Give the coder one chance to fix its own edits,
         # with the precise error, before anything is judged.
@@ -367,7 +374,9 @@ class Orchestrator:
                 run.lane,
                 run.model,
                 f"{run.lane} · thinking",
-                lambda: self.backend.complete(run.model, messages),
+                lambda: self.backend.complete(
+                    run.model, messages, max_tokens=lane.max_tokens, timeout_s=lane.timeout_s
+                ),
                 announce=False,
             )
             explanation, repaired, edit_error = self._extract(reply.text)
@@ -375,7 +384,7 @@ class Orchestrator:
                 run.explanation = explanation or run.explanation
                 run.diff = repaired
                 run.repaired = True
-                verdict = verify_diff(self.repo, run.diff, self.checks)
+                verdict = verify_diff(self.repo, run.diff, self.checks, sandbox=self.sandbox)
 
         if run.diff and verdict is not None:
             checked = verdict
@@ -448,7 +457,7 @@ class Orchestrator:
             if keep != set(every):
                 patch = select_hunks(run.diff, keep)
                 decision = "approved_partial"
-                verdict = verify_diff(self.repo, patch, self.checks)
+                verdict = verify_diff(self.repo, patch, self.checks, sandbox=self.sandbox)
                 if not verdict.passed and not force:
                     raise PartialChecksFailed(verdict)
                 run.applied_hunks = [h for h in every if h in keep]

@@ -10,7 +10,7 @@ and leaves the merge decision to the human. Claude is an escalation lane, never 
 ## Layout
 - `src/pablo/` harness core (Python 3.11+, FastAPI, Typer)
   - `config.py` lanes from `config/lanes.yaml` · `router.py` lane choice · `gateway.py` LiteLLM + FakeBackend
-  - `verify.py` diff → scratch copy → checks · `judge.py` certainty · `orchestrator.py` the run
+  - `verify.py` diff → scratch copy → checks in a `sandbox.py` Sandbox (rootless Podman + gVisor on Pablo, local in tests) · `judge.py` certainty · `orchestrator.py` the run
   - `traces.py` JSONL traces + training export · `plan.py` GSD-style `.pablo/plan.yaml`
   - `api.py` HTTP + SSE for the cockpit · `cli.py` the `pablo` command
   - `client.py` HTTP client · `tui.py` terminal cockpit (Textual)

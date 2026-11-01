@@ -17,6 +17,16 @@ overnight:                # Pablo's local time
   default_lane: deep      # lane for queued tasks that don't name one
   max_jobs: 8
 
+sandbox:                  # where checks run (model-written code runs here)
+  kind: container         # container on Pablo; tests, CI, and --fake use local
+  engine: podman          # rootless podman: no root daemon, no docker group
+  runtime: runsc          # gVisor; "" falls back to the engine's default runtime
+  image: pablo-check:py311
+  memory: 4g
+  cpus: 4
+  pids: 256
+  tmpfs_mb: 512
+
 lanes:
   router:
     role: Classifies each task and picks a lane
@@ -33,6 +43,7 @@ lanes:
     train_ok: true
     keywords: [code, bug, test, refactor, function, api, diff, fix, implement, python, typescript]
     edit_format: blocks          # find-and-replace blocks; git writes the diff (or: diff)
+    writes_code: true
 
   judge:
     role: Reviews diffs and scores certainty
@@ -43,11 +54,14 @@ lanes:
 
   deep:
     role: Long, hard reasoning; overnight sweeps
-    model: pablo/deep            # GLM-5.2 744B via expert streaming
+    model: pablo/deep            # gpt-oss-120b MXFP4 (challenger: Qwen3.5-122B-A10B), see M4b
     color: "#f28fa8"
     kind: local
     train_ok: true
     keywords: [architecture, design doc, prove, strategy, research, plan]
+    writes_code: true            # overnight refactors come back as verified diffs
+    max_tokens: 32768            # reasoning tokens count against this
+    timeout_s: 3600
 
   media:
     role: Images, 3D, motion, video
@@ -60,6 +74,7 @@ lanes:
   claude:
     role: Escalation only, never automatic
     model: pablo/escalate        # Anthropic API through the gateway
+    writes_code: true
     color: "#d9cfc2"
     kind: remote
     train_ok: false              # hard rule, enforced in code too

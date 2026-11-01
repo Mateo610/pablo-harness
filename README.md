@@ -9,10 +9,10 @@ escalation lane you call on purpose, and its outputs are never used for training
 
 ```
  you ── cockpit (web · terminal · phone) ── harness API ── router ─┬─ coder   (Qwen3.6 35B-A3B)
-                                                │                  ├─ deep    (GLM-5.2, overnight)
+                                                │                  ├─ deep    (gpt-oss-120b, overnight)
                                                 │                  ├─ media   (image · 3D · video)
                                                 │                  └─ claude  (escalate only)
-                                                ├─ verifier: diff → sandbox → tests, types
+                                                ├─ verifier: diff → no-network container → tests, types
                                                 ├─ judge: certainty ≥ 0.75 → ready, else "needs you"
                                                 └─ traces → approved only → LoRA → eval gate
 ```

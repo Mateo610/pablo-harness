@@ -32,8 +32,9 @@ model_list:
   - model_name: pablo/deep
     litellm_params:
       model: openai/deep
-      api_base: http://127.0.0.1:8004/v1
+      api_base: http://127.0.0.1:8004/v1   # M4b: move to the swapper on :8100
       api_key: "none"
+      timeout: 3600                        # deep thinks for a long time; lanes.yaml matches
 
   - model_name: pablo/media
     litellm_params:

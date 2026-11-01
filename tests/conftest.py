@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from pablo.config import Settings, load_settings
+from pablo.config import SandboxConfig, Settings, load_settings
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def settings(tmp_path: Path) -> Settings:
     s = load_settings(ROOT / "config" / "lanes.yaml")
     s.home = tmp_path / "home"
+    s.sandbox = SandboxConfig()  # local: CI has no container engine
     return s
 
 

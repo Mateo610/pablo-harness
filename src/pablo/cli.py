@@ -17,6 +17,7 @@ from pablo.demo import demo_backend, load_checks
 from pablo.gateway import ChatBackend, LiteLLMBackend
 from pablo.orchestrator import Orchestrator, Run
 from pablo.plan import Plan, starter_plan
+from pablo.sandbox import LocalSandbox, make_sandbox
 from pablo.swap import SwapView
 from pablo.traces import TraceStore
 
@@ -43,6 +44,8 @@ def _orch(repo: Path, fake: bool) -> Orchestrator:
         repo=repo,
         checks=load_checks(repo),
         swap=None if fake else SwapView(),
+        # Scripted models write only our own demo diffs, so --fake checks run locally.
+        sandbox=LocalSandbox() if fake else None,
     )
 
 
@@ -349,8 +352,8 @@ def tui(
 
 
 @app.command()
-def doctor() -> None:
-    """Check the gateway, GPU, and disk."""
+def doctor(repo: RepoOpt = Path(".")) -> None:
+    """Check the gateway, GPU, disk, and check sandbox."""
     settings = load_settings()
     ok = LiteLLMBackend(settings.gateway.base_url, settings.gateway.api_key).health()
     console.print(
@@ -368,6 +371,11 @@ def doctor() -> None:
         console.print("gpu: [yellow]nvidia-smi not found[/]")
     usage = shutil.disk_usage(settings.home if settings.home.exists() else Path.home())
     console.print(f"disk free: {usage.free / 1e9:.0f} GB")
+    box = make_sandbox(settings.sandbox, repo.resolve())
+    ready, why = box.ready()
+    console.print(
+        f"sandbox {box.label}: " + ("[green]ready[/]" if ready else f"[red]not ready[/] ({why})")
+    )
 
 
 @app.command("export-training")
@@ -420,3 +428,41 @@ def export_traces(out: Path = Path("traces-toon")) -> None:
 
     files = export_toon(TraceStore(load_settings().traces_dir), out)
     console.print(f"wrote {len(files)} TOON file(s) to {out}")
+
+
+sandbox_app = typer.Typer(help="The container checks run in: no network, read-only, limited.")
+app.add_typer(sandbox_app, name="sandbox")
+
+
+@sandbox_app.command("build")
+def sandbox_build(
+    repo: RepoOpt = Path("."),
+    base: Annotated[bool, typer.Option("--base", help="Build the base image instead")] = False,
+) -> None:
+    """Build the check image (needs network; checks never do). Rebuild when deps change."""
+    from pablo.config import find_config
+    from pablo.sandbox import build_base, build_project, project_image
+
+    settings = load_settings()
+    cfg = settings.sandbox
+    if base:
+        dockerfile = find_config().parent.parent / "scripts" / "sandbox" / "Dockerfile"
+        code = build_base(cfg, dockerfile).returncode
+        tag = cfg.image
+    else:
+        code = build_project(cfg, repo.resolve()).returncode
+        tag = project_image(cfg.image, repo.resolve())
+    if code != 0:
+        console.print(f"[red]build failed[/] ({code})")
+        raise typer.Exit(code)
+    console.print(f"built [bold]{tag}[/]")
+
+
+@sandbox_app.command("status")
+def sandbox_status(repo: RepoOpt = Path(".")) -> None:
+    """Which sandbox checks use for this repo, and whether it can run."""
+    box = make_sandbox(load_settings().sandbox, repo.resolve())
+    ready, why = box.ready()
+    console.print(f"{box.label}: " + ("[green]ready[/]" if ready else f"[red]not ready[/] ({why})"))
+    if not ready:
+        raise typer.Exit(1)

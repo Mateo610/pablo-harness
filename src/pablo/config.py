@@ -23,6 +23,11 @@ class Lane(BaseModel):
     keywords: list[str] = Field(default_factory=list)
     # How code lanes write changes: find-and-replace blocks (default) or a unified diff.
     edit_format: Literal["blocks", "diff"] = "blocks"
+    # Whether this lane is asked for code changes (verified and judged) or just an answer.
+    writes_code: bool = False
+    # Reasoning models spend max_tokens on thinking too, so slow lanes get more of both.
+    max_tokens: int = 4096
+    timeout_s: float = 600.0
 
     @model_validator(mode="after")
     def _remote_never_trains(self) -> Lane:
@@ -66,10 +71,29 @@ class Overnight(BaseModel):
         return self
 
 
+class SandboxConfig(BaseModel):
+    """Where checks run. `local` is a plain subprocess (tests, CI, --fake).
+
+    `container` runs each check in a throwaway container: no network, read-only image,
+    tmpfs /tmp, no capabilities, CPU/memory/process limits, only the scratch copy mounted.
+    """
+
+    kind: Literal["local", "container"] = "local"
+    engine: str = "podman"  # container CLI: podman (rootless) or docker
+    runtime: str = "runsc"  # OCI runtime: runsc is gVisor; "" uses the engine's default
+    image: str = "pablo-check:py311"  # base image from scripts/sandbox/Dockerfile
+    user: Literal["auto", "host", "root"] = "auto"  # auto: podman keep-id, docker your uid
+    memory: str = "4g"
+    cpus: float = 4.0
+    pids: int = 256
+    tmpfs_mb: int = 512
+
+
 class Settings(BaseModel):
     gateway: Gateway = Field(default_factory=Gateway)
     thresholds: Thresholds = Field(default_factory=Thresholds)
     overnight: Overnight = Field(default_factory=Overnight)
+    sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
     lanes: dict[str, Lane]
     home: Path = Field(default_factory=lambda: default_home())
 

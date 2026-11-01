@@ -36,6 +36,7 @@ class ChatBackend(Protocol):
         *,
         temperature: float = 0.2,
         max_tokens: int = 4096,
+        timeout_s: float | None = None,
     ) -> Completion: ...
 
 
@@ -58,6 +59,7 @@ class LiteLLMBackend:
         *,
         temperature: float = 0.2,
         max_tokens: int = 4096,
+        timeout_s: float | None = None,
     ) -> Completion:
         started = time.perf_counter()
         try:
@@ -69,6 +71,7 @@ class LiteLLMBackend:
                     "temperature": temperature,
                     "max_tokens": max_tokens,
                 },
+                timeout=timeout_s if timeout_s else httpx.USE_CLIENT_DEFAULT,
             )
             resp.raise_for_status()
         except httpx.HTTPError as exc:
@@ -111,6 +114,7 @@ class FakeBackend:
         *,
         temperature: float = 0.2,
         max_tokens: int = 4096,
+        timeout_s: float | None = None,
     ) -> Completion:
         self.calls.append((model, list(messages)))
         script = self.scripts.get(model)

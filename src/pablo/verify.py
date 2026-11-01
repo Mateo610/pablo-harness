@@ -1,7 +1,8 @@
 """Proof beside claim: apply a diff to a scratch copy and run the checks.
 
-Nothing touches your working tree until you approve. The scratch copy is a plain
-directory today; Milestone 4 swaps it for an AerolVM sandbox with no network.
+Nothing touches your working tree until you approve. The diff is applied on the host
+(git apply refuses paths outside the copy); the checks run in a `Sandbox`, which on
+Pablo is a container with no network (see sandbox.py).
 """
 
 from __future__ import annotations
@@ -10,10 +11,11 @@ import re
 import shutil
 import subprocess
 import tempfile
-import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
+
+from pablo.sandbox import LocalSandbox, Sandbox, touches_deps
 
 DEFAULT_CHECKS: dict[str, list[str]] = {
     "tests": ["python", "-m", "pytest", "-q"],
@@ -40,6 +42,8 @@ class Verdict:
     removed: int = 0
     files: list[str] = field(default_factory=list)
     error: str = ""
+    sandbox: str = "local"
+    notes: list[str] = field(default_factory=list)
 
     @property
     def passed(self) -> bool:
@@ -168,32 +172,39 @@ def _drop_phantom_blank_context(diff: str) -> str:
     return text
 
 
-def run_check(name: str, command: list[str], cwd: Path, timeout_s: float = 300) -> Check:
-    started = time.perf_counter()
-    try:
-        proc = subprocess.run(
-            command, cwd=cwd, text=True, capture_output=True, timeout=timeout_s, check=False
-        )
-        code, out = proc.returncode, (proc.stdout + proc.stderr)
-    except subprocess.TimeoutExpired:
-        code, out = 124, f"timed out after {timeout_s:.0f}s"
-    except FileNotFoundError as exc:
-        code, out = 127, str(exc)
+def run_check(
+    name: str,
+    command: list[str],
+    cwd: Path,
+    timeout_s: float = 300,
+    sandbox: Sandbox | None = None,
+) -> Check:
+    result = (sandbox or LocalSandbox()).run(command, cwd, timeout_s)
     return Check(
         name=name,
         command=command,
-        passed=code == 0,
-        exit_code=code,
-        duration_s=round(time.perf_counter() - started, 2),
-        output_tail="\n".join(out.strip().splitlines()[-30:]),
+        passed=result.exit_code == 0,
+        exit_code=result.exit_code,
+        duration_s=result.duration_s,
+        output_tail="\n".join(result.output.strip().splitlines()[-30:]),
     )
 
 
 def verify_diff(
-    repo: Path, diff: str, checks: dict[str, list[str]] | None = None, timeout_s: float = 300
+    repo: Path,
+    diff: str,
+    checks: dict[str, list[str]] | None = None,
+    timeout_s: float = 300,
+    sandbox: Sandbox | None = None,
 ) -> Verdict:
+    box = sandbox or LocalSandbox()
     added, removed, files = diff_stats(diff)
-    verdict = Verdict(applied=False, added=added, removed=removed, files=files)
+    verdict = Verdict(applied=False, added=added, removed=removed, files=files, sandbox=box.label)
+    if touches_deps(files) and box.label != "local":
+        verdict.notes.append(
+            "This diff changes dependencies. Checks ran against the image built from the "
+            "current files; rebuild it (pablo sandbox build) after approving."
+        )
     with tempfile.TemporaryDirectory(prefix="pablo-verify-") as tmp:
         scratch = Path(tmp) / "work"
         shutil.copytree(repo, scratch, ignore=IGNORE)
@@ -203,5 +214,5 @@ def verify_diff(
             return verdict
         verdict.applied = True
         for name, command in (checks if checks is not None else DEFAULT_CHECKS).items():
-            verdict.checks.append(run_check(name, command, scratch, timeout_s))
+            verdict.checks.append(run_check(name, command, scratch, timeout_s, box))
     return verdict
