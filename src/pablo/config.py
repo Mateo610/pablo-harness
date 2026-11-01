@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Literal
 
@@ -88,8 +89,17 @@ class SandboxConfig(BaseModel):
     user: Literal["auto", "host", "root"] = "auto"  # auto: podman keep-id, docker your uid
     memory: str = "4g"
     cpus: float = 4.0
+    # Host logical CPUs the check is pinned to. Empty means no pin.
+    # 12-15 leaves physical cores 0-3 (threads 0-3 and 8-11) for llama.cpp.
+    cpu_set: str = "12-15"
     pids: int = 256
     tmpfs_mb: int = 512
+
+    @model_validator(mode="after")
+    def _cpu_set_is_a_list(self) -> SandboxConfig:
+        if self.cpu_set and re.fullmatch(r"[0-9]+(?:[,-][0-9]+)*", self.cpu_set) is None:
+            raise ValueError(f"sandbox cpu_set must be a taskset list, got {self.cpu_set!r}")
+        return self
 
 
 class Settings(BaseModel):

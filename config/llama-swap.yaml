@@ -1,6 +1,8 @@
 # llama-swap on 127.0.0.1:8100. The router stays on CPU. Coder, judge, and deep
 # share the GPU. The coder is the default resident (preloaded). Deep is gpt-oss-120b
 # MXFP4: --n-cpu-moe 25 and -c 65536. N=24 cannot allocate the 64k KV cache.
+# The M4b bake-off did not keep the lane. The model stays so an explicit deep
+# run still loads.
 #
 # `exclusive: false` on the GPU group is deliberate. exclusive unloads every other
 # group, which would evict the router. Only one member of `gpu` is resident

@@ -24,6 +24,7 @@ sandbox:                  # where checks run (model-written code runs here)
   image: pablo-check:py311
   memory: 4g
   cpus: 4
+  cpu_set: "12-15"        # one thread each of cores 4-7; cores 0-3 stay free for llama.cpp
   pids: 256
   tmpfs_mb: 512
 
@@ -54,7 +55,7 @@ lanes:
 
   deep:
     role: Long, hard reasoning; overnight sweeps
-    model: pablo/deep            # gpt-oss-120b MXFP4, --n-cpu-moe 25, ctx 65536; Qwen only if the bake-off says so
+    model: pablo/deep            # gpt-oss-120b MXFP4, --n-cpu-moe 25, ctx 65536. Bake-off did not keep the lane.
     color: "#f28fa8"
     kind: local
     train_ok: true

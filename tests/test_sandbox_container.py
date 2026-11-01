@@ -95,6 +95,32 @@ def test_memory_limit(bare: Path) -> None:
     assert not ok, out
 
 
+def test_pids_limit(bare: Path) -> None:
+    """400 sleeps must not all start under --pids-limit 256."""
+    ok, out = check(
+        bare,
+        "import subprocess\n"
+        "procs = []\n"
+        "for _ in range(400):\n"
+        "    procs.append(subprocess.Popen(['sleep', '30']))\n"
+        "assert len(procs) == 400",
+        timeout_s=30,
+    )
+    assert not ok, out
+
+
+def test_cpu_limit(bare: Path) -> None:
+    """Affinity or cpu_count inside the guest must be the configured cap."""
+    ok, out = check(
+        bare,
+        "import os\n"
+        "n = len(os.sched_getaffinity(0))\n"
+        "print('affinity', n, 'count', os.cpu_count())\n"
+        "assert n <= 4",
+    )
+    assert ok, out
+
+
 def test_uv_run_pytest_is_offline_on_the_base_image(tmp_path: Path) -> None:
     """The command hello actually runs, against a project with no third-party deps."""
     repo = tmp_path / "bare"

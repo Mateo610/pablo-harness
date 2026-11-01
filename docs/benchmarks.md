@@ -230,4 +230,60 @@ Three coder runs (`--lane coder`), nothing approved. Each verdict is `podman/run
 
 `uv run pablo eval-judge --set main` scored 15/15 again. Accuracy 100% at 0.75, mean certainty good 0.96 and bad 0.28, and every case matched the table already recorded above.
 
-`--memory 4g` is set and is not enforced inside the guest. `test_memory_limit` fails: an 8 GB allocation succeeds. That is the `--ignore-cgroups` cost in `docs/decisions.md`. The other seven container tests pass. Removing the `pablo-check:py311` tag makes the next check fail with `sandbox unavailable` and nothing runs on the host. The tag was restored.
+`--memory 4g` is set and is not enforced inside the guest. `test_memory_limit` fails: an 8 GB allocation succeeds. Before the process and CPU pins, all three limits were lost: the 8 GB allocation succeeded, 400 `sleep` processes started, and `sched_getaffinity` reported 16 CPUs.
+
+`runsc flags` has no total-memory option. Podman 4.9.3 rejects `--ulimit as` (`invalid ulimit type: as`). `--systemd-cgroup` on the system bus returns "Interactive authentication required." The same flag with the session bus on `DBUS_SYSTEM_BUS_ADDRESS` then fails with `open /sys/fs/cgroup/cgroup.subtree_control: permission denied`. The user slice already lists controllers `cpu memory pids`.
+
+`--ulimit nproc=256` stops the 256th child (`BlockingIOError`, 255 started). `taskset -c 12-15` makes the guest report affinity `[0, 1, 2, 3]` and `cpu_count` 4.
+
+The sentry shares that address space. `ulimit -v` of 4 GiB kills `uv run pytest` (it cannot write its cache). 7 GiB, which is the 4 GiB guest cap plus 3 GiB for runsc 20261026.0, lets `uv run pytest` and a 3 GiB bytearray through. A 4 GiB bytearray and an 8 GiB bytearray are both killed (exit 139). `test_memory_limit`, `test_pids_limit`, and `test_cpu_limit` pass. Removing the `pablo-check:py311` tag makes the next check fail with `sandbox unavailable` and nothing runs on the host. The tag was restored.
+
+## 2026-11-01 · M4b gpt-oss-120b vs coder
+
+`pablo compare --lanes coder,deep` on the six tasks in `evals/deep/tasks.yaml`. Deep was gpt-oss-120b MXFP4. Nothing was approved. Wall-clock is the pair, not a score. Harness checks (`pytest` and `mypy` inside runsc) fail at the baseline for both lanes, so the two design pairs are scored on the note. Ledger checks are `uv run pytest -q` and the ledger image is green, so those checks count when they exercise the real code.
+
+| Task | Coder | Deep | Deep vs coder | Wall |
+|---|---|---|---|---|
+| design-check-limits | `df3cf98812` | `a40d2b608a` | same | 186.6 s |
+| design-deep-vs-coder | `87ce5bd27c` | `dbf803a2a3` | better | 201.7 s |
+| refactor-format | `136d8811de` | `0d73a95d29` | same | 408.3 s |
+| refactor-dates | `6507380fea` | `ad37fe87a9` | same | 198.9 s |
+| bug-monthly-amount | `b2fc663765` | `f8e91c5ece` | same | 165.7 s |
+| bug-load-line | `a1ced0854a` | `f1138054e4` | worse | 837.7 s |
+
+Total wall 1999 s. Score: 1 better, 1 worse, 4 same. That is not a keep.
+
+design-check-limits: both notes invent a mechanism this machine does not use (systemd-run, cpulimit, a 2 GB cap). The real caps are `nproc`, `taskset -c 12-15`, and `RLIMIT_AS`. design-deep-vs-coder: both notes stay inside `config/lanes.yaml`. Deep lists both keyword lists plus `max_tokens` 32768 and `timeout_s` 3600; coder omits the coder keywords. refactor-format: both moved `format_cents` and re-exported it from `money.py`, so the existing tests passed, and neither updated `tests/test_ledger.py`. refactor-dates and bug-monthly-amount: neither lane produced a diff. bug-load-line: coder's search missed `ledger/entries.py`. Deep added `sitecustomize.py` that patches `ledger.load_line` and a test that imports that patch. `ledger.entries.load_line` is unchanged, so the green check does not count.
+
+## 2026-11-01 · M4b Qwen3.5-122B-A10B fit
+
+Unsloth `Qwen3.5-122B-A10B-UD-Q3_K_XL`, revision `51eab4d59d53f573fb9206cb3ce613f1d0aa392b`, three shards, 53.06 GiB. SHA256 matches the LFS oids. The first download of shard 3 had the right length and the wrong hash; it was deleted and fetched again. Router stayed on CPU. Coder was unloaded first (VRAM 807 MiB).
+
+48 layers, 256 experts, 8 active. `--n-cpu-moe 25` asks CUDA for 28648 MiB and fails. N=32 loads the weights and then fails on the 1536 MiB 64k KV cache. N=34 with `--parallel 1` and `-c 65536` loads. `--reasoning on` puts the trace in `reasoning_content` and the answer in `content`.
+
+| | |
+|---|---|
+| VRAM at load and after 48 decoded tokens | 23423 / 24576 MiB (702 MiB free) |
+| Process RSS | 39.5 GiB |
+| MemAvailable, router up | 55.7 GiB |
+| Decode, 48 tokens, short prompt | 21.5 tok/s |
+| Decode, 168 tokens, reasoning on | 21.0 tok/s |
+
+GGUF metadata sampling is temperature 0.6, top_p 0.95, top_k 20. The lane sent 0.6 / 0.95 for this bake-off. `--top-k 20` was on the server because the harness does not send top_k. After the score below, the lane and the swapper went back to gpt-oss at temperature 1.0 and top_p 1.0.
+
+## 2026-11-01 · M4b Qwen3.5-122B-A10B vs coder
+
+Same six tasks, nothing approved. Deep was the Qwen fit above. Harness checks are still red for both lanes, so the design pairs are scored on the note. Ledger checks count when they hit the real code.
+
+| Task | Coder | Deep | Deep vs coder | Wall |
+|---|---|---|---|---|
+| design-check-limits | `fe2ee93c5f` | `b3529e431d` | same | 136.4 s |
+| design-deep-vs-coder | `734240db69` | `bedc1d478b` | better | 132.0 s |
+| refactor-format | `5b872d34a1` | `c4d72801ae` | worse | 110.7 s |
+| refactor-dates | `f0b61c4df4` | `6a14c89d68` | same | 99.3 s |
+| bug-monthly-amount | `81471af796` | `4d72807e1f` | same | 159.8 s |
+| bug-load-line | `601ce49c40` | `bd756d1922` | same | 181.5 s |
+
+Total wall 820 s. Score: 1 better, 1 worse, 4 same. Not a keep. Deep stays off.
+
+design-check-limits: both notes still invent a 2 GB systemd cap. design-deep-vs-coder: Qwen lists both keyword lists from `config/lanes.yaml`; the coder invents a reason about block diffs. refactor-format: the coder moved `format_cents` and re-exported it, so the tests passed; Qwen removed it from `money.py` without updating the test import, and the tests failed. refactor-dates and bug-load-line: neither lane produced a diff. bug-monthly-amount: the coder added a new root `ledger.py` and left `ledger/report.py` alone; Qwen produced no diff.

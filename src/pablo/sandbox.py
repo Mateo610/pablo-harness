@@ -35,6 +35,13 @@ DEP_FILES = ("pyproject.toml", "uv.lock", "requirements.txt", "requirements-dev.
 
 ENGINE_FAILED = 125  # what podman and docker return when the container itself can't run
 
+# The sentry and the guest share one address space. On runsc 20261026.0 a 4 GiB
+# cap kills `uv`; 7 GiB (this 3 GiB plus a 4 GiB guest) lets 3 GiB through and
+# kills a 4 GiB allocation. The wrapper reads PABLO_RUNSC_AS_KIB.
+SENTRY_AS_OVERHEAD = 3 * 1024**3
+_MEMORY = re.compile(r"^(\d+)([kmgt])?$", re.IGNORECASE)
+_MEMORY_UNITS = {"": 1, "k": 1024, "m": 1024**2, "g": 1024**3, "t": 1024**4}
+
 PROJECT_CONTAINERFILE = """\
 FROM {base}
 COPY . /deps/
@@ -153,6 +160,9 @@ class ContainerSandbox:
             "no-new-privileges",
             "--pids-limit",
             str(cfg.pids),
+            # gVisor with --ignore-cgroups does not apply --pids-limit. RLIMIT_NPROC does.
+            "--ulimit",
+            f"nproc={cfg.pids}:{cfg.pids}",
             "--memory",
             cfg.memory,
             "--memory-swap",
@@ -199,10 +209,17 @@ class ContainerSandbox:
                 ENGINE_FAILED, f"sandbox unavailable: {why}. Checks never fall back to the host.", 0
             )
         name = f"pablo-check-{uuid.uuid4().hex[:12]}"
+        argv = self.argv(command, cwd, name)
+        # Affinity reaches the guest through conmon. --cpus does not, under --ignore-cgroups.
+        if self.cfg.cpu_set:
+            argv = ["taskset", "-c", self.cfg.cpu_set, *argv]
+        # create is the invocation that spawns the sentry, and it inherits this.
+        env = os.environ.copy()
+        env["PABLO_RUNSC_AS_KIB"] = str(address_kib(self.cfg.memory))
         started = time.perf_counter()
         try:
             proc = self._runner(
-                self.argv(command, cwd, name), text=True, capture_output=True, timeout=timeout_s
+                argv, text=True, capture_output=True, timeout=timeout_s, env=env
             )
             code, out = proc.returncode, (proc.stdout or "") + (proc.stderr or "")
         except subprocess.TimeoutExpired:
@@ -214,6 +231,20 @@ class ContainerSandbox:
         except FileNotFoundError as exc:
             code, out = 127, str(exc)
         return Result(code, out, round(time.perf_counter() - started, 2))
+
+
+def memory_bytes(spec: str) -> int:
+    """Docker-style size (`4g`, `512m`) as bytes."""
+    match = _MEMORY.fullmatch(spec.strip())
+    if match is None:
+        raise ValueError(f"sandbox memory must be an integer with optional k/m/g/t, got {spec!r}")
+    unit = match.group(2).lower() if match.group(2) else ""
+    return int(match.group(1)) * _MEMORY_UNITS[unit]
+
+
+def address_kib(spec: str) -> int:
+    """RLIMIT_AS for the sentry, in KiB: the configured guest cap plus its own share."""
+    return (memory_bytes(spec) + SENTRY_AS_OVERHEAD) // 1024
 
 
 def make_sandbox(cfg: SandboxConfig, repo: Path | None = None) -> Sandbox:

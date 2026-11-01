@@ -13,6 +13,7 @@ from pablo.orchestrator import Orchestrator
 from pablo.sandbox import (
     ContainerSandbox,
     LocalSandbox,
+    address_kib,
     build_project,
     make_sandbox,
     project_image,
@@ -28,13 +29,16 @@ class FakeRunner:
 
     def __init__(self, inspect: int = 0, run: int = 0, timeout: bool = False) -> None:
         self.calls: list[list[str]] = []
+        self.envs: list[dict[str, str]] = []
         self.inspect, self.run_code, self.timeout = inspect, run, timeout
 
     def __call__(self, argv: list[str], **kw: Any) -> subprocess.CompletedProcess[str]:
         self.calls.append(argv)
-        if argv[1:3] == ["image", "inspect"]:
+        self.envs.append(kw.get("env") or {})
+        cmd = argv[3:] if argv[:1] == ["taskset"] else argv
+        if cmd[1:3] == ["image", "inspect"]:
             return subprocess.CompletedProcess(argv, self.inspect, "", "")
-        if argv[1] == "run" and self.timeout:
+        if cmd[1] == "run" and self.timeout:
             raise subprocess.TimeoutExpired(argv, kw.get("timeout", 0))
         return subprocess.CompletedProcess(argv, self.run_code, "1 passed\n", "")
 
@@ -53,6 +57,7 @@ def test_argv_locks_the_container_down(tmp_path: Path) -> None:
         "--cap-drop ALL",
         "--security-opt no-new-privileges",
         "--pids-limit 256",
+        "--ulimit nproc=256:256",
         "--memory 4g --memory-swap 4g",
         "--runtime runsc",
         "--userns=keep-id",
@@ -92,6 +97,18 @@ def test_fails_closed_without_engine_or_image(tmp_path: Path) -> None:
     result = box(runner).run(["python", "-m", "pytest"], tmp_path, 10)
     assert result.exit_code == 125 and "sandbox build --base" in result.output
     assert all(call[1] != "run" for call in runner.calls)
+
+
+def test_address_cap_is_the_guest_limit_plus_the_sentry() -> None:
+    assert address_kib("4g") == (7 * 1024**3) // 1024
+    assert address_kib("512m") == (512 * 1024**2 + 3 * 1024**3) // 1024
+
+
+def test_run_pins_the_configured_cpus(tmp_path: Path) -> None:
+    runner = FakeRunner()
+    box(runner).run(["true"], tmp_path, 10)
+    assert runner.calls[1][:4] == ["taskset", "-c", "12-15", "podman"]
+    assert runner.envs[1]["PABLO_RUNSC_AS_KIB"] == str(address_kib("4g"))
 
 
 def test_timeout_removes_the_container(tmp_path: Path) -> None:
@@ -145,7 +162,7 @@ def test_verify_records_sandbox_and_flags_dependency_changes(repo: Path) -> None
     verdict = verify_diff(repo, diff, {"tests": ["python", "-m", "pytest"]}, sandbox=box(runner))
     assert verdict.passed and verdict.sandbox.startswith("podman/runsc")
     assert verdict.notes and "rebuild" in verdict.notes[0]
-    run_call = next(c for c in runner.calls if c[1] == "run")
+    run_call = next(c for c in runner.calls if "run" in c[:5])
     assert run_call[-3:] == ["python", "-m", "pytest"]
 
     local = verify_diff(repo, diff, {"tests": [sys.executable, "-c", "pass"]})

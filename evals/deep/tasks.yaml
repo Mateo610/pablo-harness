@@ -1,0 +1,54 @@
+# Deep-lane bake-off. Score each pair by hand: better, same, or worse for deep
+# versus the coder. Wall-clock is recorded and is not part of the score.
+# Design tasks ask for a short note under docs/. Code tasks run on
+# ~/pablo-sandbox/ledger, whose checks are `uv run pytest -q`.
+tasks:
+  - id: design-check-limits
+    repo: harness
+    task: >
+      Add a short design note under docs/design-check-limits.md.
+      Explain how a check is limited (memory, processes, CPUs) and why those
+      limits are applied outside the guest cgroup on this machine.
+      Keep it under 40 lines. Do not change Python.
+
+  - id: design-deep-vs-coder
+    repo: harness
+    task: >
+      Add a short design note under docs/design-deep-vs-coder.md.
+      Say when a task should go to the deep lane instead of the coder, using
+      only the roles and limits already in config/lanes.yaml.
+      Keep it under 40 lines. Do not change Python.
+
+  - id: refactor-format
+    repo: ledger
+    task: >
+      Move format_cents from ledger/money.py into a new ledger/format.py.
+      Update every import, including tests. Behavior stays the same and the
+      existing tests must pass.
+
+  - id: refactor-dates
+    repo: ledger
+    task: >
+      entries.in_month and report.monthly both slice YYYY-MM-DD strings.
+      Move that slicing into ledger/dates.py as month_key(day) -> the YYYY-MM
+      prefix, and call it from both modules. Existing tests must pass.
+      Do not change the current results of in_month or monthly.
+
+  - id: bug-monthly-amount
+    repo: ledger
+    task: >
+      report.monthly prints an amount about 100 times too small.
+      total() returns cents and format_cents expects cents, but monthly
+      divides by 100 first. Fix the bug. in_month currently expects a
+      two-digit month while monthly's docstring says YYYY-MM; a correct
+      monthly("2026-11") must include November entries. Add a test that
+      fails on the old behavior. Existing tests must still pass.
+
+  - id: bug-load-line
+    repo: ledger
+    task: >
+      load_line splits on every comma, so a payee that contains a comma
+      (for example "Cafe, Main St") is parsed wrong and the amount is lost.
+      Fix load_line so the day is the first field, the dollars are the last
+      field, and the payee is everything in between. Add a test for
+      "2026-11-02, Cafe, Main St, $1.50". Existing tests must still pass.
