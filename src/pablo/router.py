@@ -79,7 +79,14 @@ class Router:
             },
             {"role": "user", "content": task},
         ]
-        reply = self.backend.complete(self.settings.lane("router").model, messages, max_tokens=64)
+        router = self.settings.lane("router")
+        reply = self.backend.complete(
+            router.model,
+            messages,
+            temperature=router.temperature,
+            top_p=router.top_p,
+            max_tokens=64,
+        )
         try:
             data = json.loads(_first_json(reply.text))
             lane = str(data["lane"])

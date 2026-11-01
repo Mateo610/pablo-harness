@@ -349,7 +349,12 @@ class Orchestrator:
             run.model,
             f"{run.lane} · thinking",
             lambda: self.backend.complete(
-                run.model, messages, max_tokens=lane.max_tokens, timeout_s=lane.timeout_s
+                run.model,
+                messages,
+                temperature=lane.temperature,
+                top_p=lane.top_p,
+                max_tokens=lane.max_tokens,
+                timeout_s=lane.timeout_s,
             ),
         )
         run.explanation, run.diff, edit_error = self._extract(reply.text)
@@ -375,7 +380,12 @@ class Orchestrator:
                 run.model,
                 f"{run.lane} · thinking",
                 lambda: self.backend.complete(
-                    run.model, messages, max_tokens=lane.max_tokens, timeout_s=lane.timeout_s
+                    run.model,
+                    messages,
+                    temperature=lane.temperature,
+                    top_p=lane.top_p,
+                    max_tokens=lane.max_tokens,
+                    timeout_s=lane.timeout_s,
                 ),
                 announce=False,
             )

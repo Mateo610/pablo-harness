@@ -35,6 +35,7 @@ class ChatBackend(Protocol):
         messages: Sequence[Message],
         *,
         temperature: float = 0.2,
+        top_p: float | None = None,
         max_tokens: int = 4096,
         timeout_s: float | None = None,
     ) -> Completion: ...
@@ -58,19 +59,23 @@ class LiteLLMBackend:
         messages: Sequence[Message],
         *,
         temperature: float = 0.2,
+        top_p: float | None = None,
         max_tokens: int = 4096,
         timeout_s: float | None = None,
     ) -> Completion:
         started = time.perf_counter()
+        payload: dict[str, object] = {
+            "model": model,
+            "messages": list(messages),
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        if top_p is not None:
+            payload["top_p"] = top_p
         try:
             resp = self._client.post(
                 "/chat/completions",
-                json={
-                    "model": model,
-                    "messages": list(messages),
-                    "temperature": temperature,
-                    "max_tokens": max_tokens,
-                },
+                json=payload,
                 timeout=timeout_s if timeout_s else httpx.USE_CLIENT_DEFAULT,
             )
             resp.raise_for_status()
@@ -113,9 +118,11 @@ class FakeBackend:
         messages: Sequence[Message],
         *,
         temperature: float = 0.2,
+        top_p: float | None = None,
         max_tokens: int = 4096,
         timeout_s: float | None = None,
     ) -> Completion:
+        del temperature, top_p
         self.calls.append((model, list(messages)))
         script = self.scripts.get(model)
         if callable(script):

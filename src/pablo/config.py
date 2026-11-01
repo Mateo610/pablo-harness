@@ -28,6 +28,9 @@ class Lane(BaseModel):
     # Reasoning models spend max_tokens on thinking too, so slow lanes get more of both.
     max_tokens: int = 4096
     timeout_s: float = 600.0
+    # Sampling. Most lanes stay at 0.2. A lane sets top_p only when its model card requires it.
+    temperature: float = 0.2
+    top_p: float | None = None
 
     @model_validator(mode="after")
     def _remote_never_trains(self) -> Lane:

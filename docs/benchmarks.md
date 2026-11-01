@@ -186,3 +186,30 @@ The soak ends on the judge, so the return swap is one short of 20. Both directio
 ## 2026-11-01 · DeepSeek V4 Flash REAP K128 does not load
 
 llama.cpp `b12031` with `--cpu-moe -ngl 99` and colibrì v2.1.0 (`704a3f6`) both refuse the 46.98 GiB GGUF. Layer 3's router is 128 experts wide while both engines expect 256. No tokens were produced. The larger quants do not fit the spare-RAM rule, so they were not downloaded.
+
+## 2026-11-01 · M4b gpt-oss-120b fit
+
+llama.cpp `b12031` (commit `060b2fe`). Weights `gpt-oss-120b-MXFP4.gguf`, 59.0 GiB, ggml-org rev `b5c939de8f754692c1647ca79fbf85e8c1e70f8a`. Router resident on CPU. Coder and judge unloaded first: VRAM fell to 822 MiB and the router still answered. The Eagle3 drafts in that directory were not loaded.
+
+Serving flags: `-ngl 99 --n-cpu-moe 25 -c 65536 --flash-attn on --jinja --reasoning on --reasoning-effort high`. Temperature 1.0, top_p 1.0.
+
+N=24 peaked at 22111 MiB and then failed: the 64k KV cache is 2304 MiB and `cudaMalloc` returned out of memory. N=26 loads at 21944 MiB. N=25 is the one in the swapper.
+
+Cold load 26.5 s, warm load 23.6 s, both to HTTP 200. The cold start followed a full read of the archive copy so the weights were not sitting in the page cache; there is no passwordless sudo to drop caches. Both are far under llama-swap's 180 s `healthCheckTimeout`, so that timeout stayed. Process RSS was about 38 GiB, almost all of it the mmap'd file. `MemAvailable` stayed at 55–56 GiB through the 24k bench. With deep resident, `/api/resources` reported VRAM 23553/24576 MiB, RAM 6444/64227 MiB, loaded `deep, router`.
+
+| prompt | prompt tokens | ttft s | decode tok/s |
+|---|---|---|---|
+| ~0 | 74 | 2.11 | 25.3 |
+| 8k | 8259 | 10.60 | 25.7 |
+| 24k | 25168 | 21.48 | 25.8 |
+
+48 decoded tokens, `cache_prompt` false. Decode stays near 25 tok/s out to 24k. VRAM peak across this bench was 23570 MiB, 565 MiB free.
+
+A short question through the gateway (`pablo/deep` on the swapper) returned `content` `391` and a separate `reasoning_content` (116 characters). Harmony channel text did not land in `content`, so `--reasoning-format` was left at its default.
+
+| Direction | Time |
+|---|---|
+| coder → deep | 27.4 s |
+| deep → judge | 9.8 s |
+
+One sample each: from the moment the previous GPU model left `ready` until the next was `ready`. The router stayed `ready`. No two GPU lanes were ready together. The coder was loaded again afterward and is the resident model (20316 MiB, 3809 MiB free).

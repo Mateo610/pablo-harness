@@ -1,7 +1,7 @@
 """What llama-swap has resident.
 
 Pablo does not start or stop models. llama-swap on 127.0.0.1:8100 does that
-when a request names `router`, `coder`, or `judge`.
+when a request names a lane (`router`, `coder`, `judge`, `deep`).
 """
 
 from __future__ import annotations

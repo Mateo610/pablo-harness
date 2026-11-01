@@ -44,5 +44,5 @@ Record each model's name, source URL, license, and revision in its archive SOURC
 |---|---|---|
 | Qwen3.6-35B-A3B UD-Q4_K_S (Unsloth GGUF of `Qwen/Qwen3.6-35B-A3B`, rev `a483e9e6cbd595906af30beda3187c2663a1118c`) | Apache-2.0 | coder |
 | Mistral-Small-3.2-24B-Instruct-2506 heretic Q5_K_M (`llmfan46` GGUF, Heretic abliteration of `mistralai/Mistral-Small-3.2-24B-Instruct-2506`) | Apache-2.0 | judge |
-| gpt-oss-120b MXFP4 (`ggml-org/gpt-oss-120b-GGUF`, rev TBD at download) — planned | Apache-2.0 | deep (M4b) |
+| gpt-oss-120b MXFP4 (`ggml-org/gpt-oss-120b-GGUF` of `openai/gpt-oss-120b`, rev `b5c939de8f754692c1647ca79fbf85e8c1e70f8a`) | Apache-2.0 | deep |
 | Qwen3.5-4B Q4_K_M (Unsloth GGUF of `Qwen/Qwen3.5-4B`, rev `e87f176479d0855a907a41277aca2f8ee7a09523`) | Apache-2.0 | router (CPU) |
