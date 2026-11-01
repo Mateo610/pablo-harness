@@ -1,0 +1,8 @@
+# The visible check. The eval's hidden tests run separately.
+tests:
+  - python
+  - -m
+  - pytest
+  - -q
+  - -p
+  - no:cacheprovider

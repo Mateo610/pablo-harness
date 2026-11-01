@@ -1,0 +1,296 @@
+"""`pablo eval`: run a lane on the fixed coder suite and score it against hidden tests.
+
+Each task in `evals/suite/tasks.yaml` starts from a fresh copy of one seed repo. The lane works
+on it like any run (context, edits, checks, judge). Then the diff is applied to another fresh
+copy, the task's hidden test is written next to it, and only that test decides pass or fail.
+It runs with `python -I -m pytest --noconftest`, so nothing the diff adds (a conftest.py, a
+sitecustomize.py, a module that patches the code under test) can make it pass.
+
+Runs happen in a throwaway home: their traces never reach `~/.pablo/traces`, so eval tasks can
+never become training data. Results append to `evals/results.jsonl`.
+"""
+
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+import tempfile
+import time
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+from pablo.config import Settings
+from pablo.gateway import ChatBackend
+from pablo.orchestrator import Orchestrator
+from pablo.sandbox import Sandbox, make_sandbox
+from pablo.swap import SwapView
+from pablo.verify import IGNORE, apply_diff, run_check
+
+SUITE = Path(__file__).resolve().parents[2] / "evals" / "suite"
+RESULTS = SUITE.parent / "results.jsonl"
+REFS = ("file", "symbol", "none")
+
+
+@dataclass(frozen=True)
+class SuiteTask:
+    id: str
+    repo: str
+    refs: str  # file | symbol | none: how the task points at the code
+    kind: str
+    task: str
+    hidden: str
+    solution: dict[str, str]
+
+    @property
+    def hidden_name(self) -> str:
+        return f"test_hidden_{self.id.replace('-', '_')}.py"
+
+
+def load_suite(root: Path = SUITE) -> list[SuiteTask]:
+    data = yaml.safe_load((root / "tasks.yaml").read_text("utf-8"))
+    return [SuiteTask(**t) for t in data["tasks"]]
+
+
+def _git(cwd: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
+
+
+def materialize(task: SuiteTask, workdir: Path, root: Path = SUITE) -> Path:
+    """A fresh git repo holding the task's seed repo, committed, ready for a run."""
+    repo = workdir / task.id
+    shutil.copytree(root / "repos" / task.repo, repo)
+    _git(repo, "init", "-q")
+    _git(repo, "add", ".")
+    _git(repo, "-c", "user.name=pablo", "-c", "user.email=pablo@localhost", "commit", "-qm", "seed")
+    return repo
+
+
+def with_python(command: list[str], python: str) -> list[str]:
+    return [python, *command[1:]] if command and command[0] == "python" else list(command)
+
+
+def hidden_command(task: SuiteTask, python: str = "python") -> list[str]:
+    # -I: no PYTHONPATH, no cwd, no sitecustomize from the repo. --noconftest: no conftest.py.
+    # -o addopts=: a pytest.ini or pyproject the diff edits can't add options. Anything that
+    # stops the hidden test from being collected exits 5, which counts as a fail.
+    return [python, "-I", "-m", "pytest", "-q", "-p", "no:cacheprovider", "--noconftest",
+            "-o", "addopts=", task.hidden_name]  # fmt: skip
+
+
+def hidden_check(
+    task: SuiteTask,
+    repo: Path,
+    diff: str,
+    sandbox: Sandbox,
+    *,
+    files: dict[str, str] | None = None,
+    python: str = "python",
+    timeout_s: float = 300,
+) -> tuple[bool, str]:
+    """Apply `diff` (or write `files`) to a fresh copy, add the hidden test, run only that."""
+    with tempfile.TemporaryDirectory(prefix="pablo-hidden-") as tmp:
+        scratch = Path(tmp) / "work"
+        shutil.copytree(repo, scratch, ignore=IGNORE)
+        if diff:
+            ok, err = apply_diff(scratch, diff)
+            if not ok:
+                return False, f"diff did not apply: {err}"
+        for rel, text in (files or {}).items():
+            (scratch / rel).parent.mkdir(parents=True, exist_ok=True)
+            (scratch / rel).write_text(text, encoding="utf-8")
+        (scratch / task.hidden_name).write_text(task.hidden, encoding="utf-8")
+        check = run_check("hidden", hidden_command(task, python), scratch, timeout_s, sandbox)
+        return check.passed, check.output_tail
+
+
+@dataclass
+class TaskResult:
+    id: str
+    refs: str
+    kind: str
+    state: str
+    has_diff: bool
+    clean: bool  # visible checks no worse than the seed
+    hidden_passed: bool
+    certainty: float | None
+    wall_s: float
+    context_files: list[str] = field(default_factory=list)
+    repaired: bool = False
+    run_id: str = ""
+    hidden_tail: str = ""
+
+    @property
+    def ready(self) -> bool:
+        return self.state == "ready"
+
+
+@dataclass
+class SuiteReport:
+    lane: str
+    model: str
+    results: list[TaskResult]
+    started_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
+    commit: str = ""
+
+    def pass_rate(self, refs: str | None = None) -> float:
+        rows = [r for r in self.results if refs is None or r.refs == refs]
+        return sum(r.hidden_passed for r in rows) / len(rows) if rows else 0.0
+
+    @property
+    def false_ready(self) -> list[TaskResult]:
+        """Marked ready, but the hidden test fails: the number that should stay at zero."""
+        return [r for r in self.results if r.ready and not r.hidden_passed]
+
+    @property
+    def missed(self) -> list[TaskResult]:
+        """The hidden test passes, but the run landed in Needs you."""
+        return [r for r in self.results if r.hidden_passed and not r.ready]
+
+    def mean_certainty(self, passed: bool) -> float | None:
+        values = [
+            r.certainty
+            for r in self.results
+            if r.certainty is not None and r.hidden_passed == passed
+        ]
+        return round(sum(values) / len(values), 2) if values else None
+
+    def summary(self) -> dict[str, Any]:
+        ready = [r for r in self.results if r.ready]
+        return {
+            "at": self.started_at,
+            "commit": self.commit,
+            "lane": self.lane,
+            "model": self.model,
+            "tasks": len(self.results),
+            "pass_rate": round(self.pass_rate(), 3),
+            "pass_rate_by_refs": {k: round(self.pass_rate(k), 3) for k in REFS},
+            "no_diff": sum(not r.has_diff for r in self.results),
+            "ready": len(ready),
+            "ready_precision": round(sum(r.hidden_passed for r in ready) / len(ready), 3)
+            if ready
+            else None,
+            "false_ready": [r.id for r in self.false_ready],
+            "missed": len(self.missed),
+            "certainty_when_passed": self.mean_certainty(True),
+            "certainty_when_failed": self.mean_certainty(False),
+            "wall_s": round(sum(r.wall_s for r in self.results), 1),
+        }
+
+    def to_json(self) -> str:
+        return json.dumps({**self.summary(), "results": [asdict(r) for r in self.results]})
+
+    def to_markdown(self) -> str:
+        s = self.summary()
+        by = " · ".join(f"{k} {v:.0%}" for k, v in s["pass_rate_by_refs"].items())
+        lines = [
+            f"### Coder suite · {self.lane} ({self.model}) · {s['at']} · `{self.commit or '?'}`",
+            "",
+            f"Hidden-test pass rate {s['pass_rate']:.0%} ({by}) · no diff {s['no_diff']} · "
+            f"ready {s['ready']}, of which passed {s['ready_precision'] if s['ready'] else '—'} · "
+            f"false ready {len(s['false_ready'])} · missed {s['missed']} · "
+            f"certainty passed {s['certainty_when_passed']} "
+            f"/ failed {s['certainty_when_failed']} · "
+            f"wall {s['wall_s']} s",
+            "",
+            "| task | refs | state | diff | visible | hidden | certainty | wall s |",
+            "|---|---|---|---|---|---|---|---|",
+        ]
+        for r in self.results:
+            cert = "—" if r.certainty is None else f"{r.certainty:.2f}"
+            lines.append(
+                f"| {r.id} | {r.refs} | {r.state} | {'yes' if r.has_diff else 'no'} | "
+                f"{'clean' if r.clean else 'worse'} | {'pass' if r.hidden_passed else 'FAIL'} | "
+                f"{cert} | {r.wall_s:.0f} |"
+            )
+        return "\n".join(lines)
+
+
+def current_commit(cwd: Path) -> str:
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"], cwd=cwd, capture_output=True, text=True
+        )
+        return out.stdout.strip()
+    except FileNotFoundError:
+        return ""
+
+
+def run_suite(
+    settings: Settings,
+    backend: ChatBackend,
+    *,
+    lane: str = "coder",
+    only: set[str] | None = None,
+    root: Path = SUITE,
+    python: str = "python",
+    sandbox: Sandbox | None = None,
+    swap: SwapView | None = None,
+    on_task: Callable[[TaskResult], None] | None = None,
+) -> SuiteReport:
+    """Run `lane` on every task (or `only` those ids) and score each against its hidden test."""
+    results: list[TaskResult] = []
+    with tempfile.TemporaryDirectory(prefix="pablo-eval-") as tmp:
+        work = Path(tmp)
+        # A throwaway home: eval runs and their traces disappear with this directory.
+        isolated = settings.model_copy(update={"home": work / "home"})
+        for task in load_suite(root):
+            if only and task.id not in only:
+                continue
+            repo = materialize(task, work, root)
+            box = sandbox or make_sandbox(settings.sandbox, repo)
+            checks = {name: with_python(cmd, python) for name, cmd in _repo_checks(repo).items()}
+            orch = Orchestrator(isolated, backend, repo=repo, checks=checks, sandbox=box, swap=swap)
+            started = time.perf_counter()
+            run = orch.start(task.task, lane=lane)
+            wall = time.perf_counter() - started
+            passed, tail = (
+                hidden_check(task, repo, run.diff, box, python=python)
+                if run.diff
+                else (False, "no diff")
+            )
+            context: list[str] = next(
+                (e["data"].get("files", []) for e in orch.events(run.id) if e["kind"] == "context"),
+                [],
+            )
+            result = TaskResult(
+                id=task.id,
+                refs=task.refs,
+                kind=task.kind,
+                state=run.state,
+                has_diff=bool(run.diff),
+                clean=bool(run.verdict and run.verdict.get("clean")),
+                hidden_passed=passed,
+                certainty=run.certainty,
+                wall_s=round(wall, 1),
+                context_files=list(context),
+                repaired=run.repaired,
+                run_id=run.id,
+                hidden_tail="" if passed else tail[-600:],
+            )
+            results.append(result)
+            if on_task:
+                on_task(result)
+    return SuiteReport(
+        lane=lane,
+        model=settings.lane(lane).model,
+        results=results,
+        commit=current_commit(root),
+    )
+
+
+def _repo_checks(repo: Path) -> dict[str, list[str]]:
+    from pablo.demo import load_checks
+
+    return load_checks(repo)
+
+
+def append_result(report: SuiteReport, path: Path = RESULTS) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(report.to_json() + "\n")

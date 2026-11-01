@@ -19,6 +19,7 @@ and leaves the merge decision to the human. Claude is an escalation lane, never 
   - `resources.py` GPU/VRAM/RAM snapshot · `swap.py` which lanes llama-swap has resident · `judge_eval.py` judge accuracy on `evals/judge` fixtures
   - `tasks.py` task type + quick/build/deep · `context.py` budgeted prompt (files picked by the symbols a task names, per-lane `context_tokens`) + skill cards (`skills/*.md`)
   - `edits.py` find-and-replace edit blocks → git-made diff (the coder's default edit format)
+  - `evals.py` `pablo eval`: the 30-task suite in `evals/suite`, scored by hidden tests the model never sees
 - `web/` cockpit (React + Vite + cmdk); desktop `App.tsx` + `RunView.tsx`, phone `Phone.tsx` (PWA), styled only with tokens in `web/src/tokens.css`
 - `config/` lanes and the LiteLLM gateway · `scripts/` Pablo bootstrap and model archiving
 - `docs/cursor-prompts/` one prompt per milestone, each with acceptance checks
@@ -43,7 +44,10 @@ cd web && npm install && npm run dev   # cockpit dev server on :5173
    AGPL/GPL tools run as separate processes over a network or CLI boundary, never imported.
    Non-commercial or unlicensed code is not copied. Model weights are never committed.
 6. **No phoning home.** No telemetry, no analytics, no CDN fonts. Check new dependencies for this.
-7. **No legacy data.** Never import anything from the old ai-coding-team `data/` folder into traces or
+7. **Evals never train.** `evals/suite` tasks, their hidden tests, and reference solutions never go
+   into prompts, traces, or training data. `pablo eval` runs in a throwaway home. Don't show a model
+   `solution` or `hidden`, and don't tune a prompt on the suite's hidden tests.
+8. **No legacy data.** Never import anything from the old ai-coding-team `data/` folder into traces or
    training; some of it came from automatic Claude routing.
 
 ## Style

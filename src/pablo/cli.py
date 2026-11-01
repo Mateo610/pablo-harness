@@ -5,7 +5,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 from rich.console import Console
@@ -392,6 +392,50 @@ def export_training(out: Path = Path("training/approved.jsonl")) -> None:
     """Export approved, trainable traces. Escalation traces are always excluded."""
     count = TraceStore(load_settings().traces_dir).export_training(out)
     console.print(f"wrote {count} examples to {out}")
+
+
+@app.command("eval")
+def eval_suite(
+    lane: Annotated[str, typer.Option(help="Lane to score")] = "coder",
+    only: Annotated[str, typer.Option(help="Comma-separated task ids")] = "",
+    fake: FakeOpt = False,
+    write: Annotated[
+        bool, typer.Option(help="Append to evals/results.jsonl and docs/benchmarks.md")
+    ] = False,
+) -> None:
+    """Score a lane on the 30-task coder suite against hidden tests (evals/suite)."""
+    from pablo.evals import append_result, run_suite
+    from pablo.sandbox import LocalSandbox
+
+    settings = load_settings()
+    backend = _backend(settings, fake)
+
+    def show(r: Any) -> None:
+        mark = "[green]pass[/]" if r.hidden_passed else "[red]FAIL[/]"
+        cert = "—" if r.certainty is None else f"{r.certainty:.2f}"
+        console.print(f"  {r.id:<32} {r.refs:<6} {r.state:<9} {mark}  {cert}  {r.wall_s:.0f}s")
+
+    report = run_suite(
+        settings,
+        backend,
+        lane=lane,
+        only={x.strip() for x in only.split(",") if x.strip()} or None,
+        sandbox=LocalSandbox() if fake else None,
+        swap=None if fake else SwapView(),
+        on_task=show,
+    )
+    s = report.summary()
+    console.print(
+        f"pass {s['pass_rate']:.0%} {s['pass_rate_by_refs']} · ready {s['ready']} "
+        f"(precision {s['ready_precision']}) · false ready {s['false_ready']} · wall {s['wall_s']}s"
+    )
+    if write and not fake:
+        append_result(report)
+        docs = Path("docs/benchmarks.md")
+        if docs.is_file():
+            with docs.open("a", encoding="utf-8") as fh:
+                fh.write("\n" + report.to_markdown() + "\n")
+        console.print("appended to evals/results.jsonl and docs/benchmarks.md")
 
 
 @app.command("eval-judge")

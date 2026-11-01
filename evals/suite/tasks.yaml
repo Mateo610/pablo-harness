@@ -1,0 +1,1147 @@
+# The M7 coder eval suite: 30 tasks on three small repos (evals/suite/repos).
+#
+# The model sees only `task` and the repo. `hidden` is a test it never sees: after the run, the
+# diff is applied to a fresh copy, the hidden test is written next to it, and it runs with
+# `python -I -m pytest --noconftest`, so a conftest.py, sitecustomize.py, or patched import the
+# diff adds cannot make it pass. A task passes when the hidden test passes.
+#
+# `refs` says how the task points at the code: `file` names a path, `symbol` names a function or
+# class, `none` only describes behavior. That split is what M6's context work should move.
+# `solution` is one correct answer, used only by the self-test (tests/test_suite.py) to prove each
+# hidden test fails on the base repo and passes on a real fix. Never show it to a model.
+#
+# These tasks and their runs are never training data: `pablo eval` runs in a throwaway home.
+tasks:
+- id: ledger-by-payee-sums
+  repo: ledger
+  refs: file
+  kind: bugfix
+  task: In ledger/report.py, by_payee keeps only the last amount for each payee. It should add them up.
+  hidden: |
+    from ledger.entries import load
+    from ledger.report import by_payee
+
+
+    def test_by_payee_adds_up() -> None:
+        entries = load("2026-11-01, Cafe, $1.50\n2026-11-02, Cafe, $2.00\n2026-11-02, Grocer, $5.00\n")
+        assert by_payee(entries) == {"Cafe": 350, "Grocer": 500}
+  solution:
+    ledger/report.py: |
+      """Totals and summaries."""
+
+      from ledger.entries import Entry, in_month
+      from ledger.money import format_cents
+
+
+      def total(entries: list[Entry]) -> int:
+          return sum(e.cents for e in entries)
+
+
+      def monthly(entries: list[Entry], month: str) -> str:
+          chosen = [e for e in entries if in_month(e, month)]
+          return f"{month} {format_cents(total(chosen))}"
+
+
+      def by_payee(entries: list[Entry]) -> dict[str, int]:
+          out: dict[str, int] = {}
+          for e in entries:
+              out[e.payee] = out.get(e.payee, 0) + e.cents
+          return out
+- id: ledger-load-line-commas
+  repo: ledger
+  refs: symbol
+  kind: bugfix
+  task: load_line breaks when the payee contains a comma, for example '2026-11-02, Cafe, Main St, $1.50'.
+    The day is the first field, the amount is the last, and the payee is everything in between.
+  hidden: |
+    from ledger.entries import Entry, load_line
+
+
+    def test_payee_with_commas() -> None:
+        assert load_line("2026-11-02, Cafe, Main St, $1.50") == Entry("2026-11-02", "Cafe, Main St", 150)
+        assert load_line("2026-11-02, Cafe, $1.50") == Entry("2026-11-02", "Cafe", 150)
+  solution:
+    ledger/entries.py: |
+      """One entry per line: 'YYYY-MM-DD, payee, $amount'."""
+
+      from dataclasses import dataclass
+
+      from ledger.money import parse_dollars
+
+
+      @dataclass(frozen=True)
+      class Entry:
+          day: str
+          payee: str
+          cents: int
+
+
+      def load_line(line: str) -> Entry:
+          parts = line.split(",")
+          day, dollars = parts[0], parts[-1]
+          payee = ",".join(parts[1:-1])
+          return Entry(day.strip(), payee.strip(), parse_dollars(dollars))
+
+
+      def load(text: str) -> list[Entry]:
+          return [load_line(line) for line in text.splitlines() if line.strip()]
+
+
+      def in_month(entry: Entry, month: str) -> bool:
+          """month is 'YYYY-MM'."""
+          return entry.day[:7] == month
+- id: ledger-negative-format
+  repo: ledger
+  refs: none
+  kind: bugfix
+  task: 'Refunds print wrong: an amount of -150 cents shows as $-2.50. It should show -$1.50.'
+  hidden: |
+    from ledger.money import format_cents
+
+
+    def test_negative_amounts() -> None:
+        assert format_cents(-150) == "-$1.50"
+        assert format_cents(-5) == "-$0.05"
+        assert format_cents(150) == "$1.50"
+        assert format_cents(0) == "$0.00"
+  solution:
+    ledger/money.py: |
+      """Money is kept in integer cents."""
+
+
+      def parse_dollars(text: str) -> int:
+          """'$1.50' -> 150."""
+          clean = text.strip().lstrip("$")
+          dollars, _, cents = clean.partition(".")
+          return int(dollars) * 100 + int((cents + "00")[:2])
+
+
+      def format_cents(cents: int) -> str:
+          """150 -> '$1.50'."""
+          sign = "-" if cents < 0 else ""
+          cents = abs(cents)
+          return f"{sign}${cents // 100}.{cents % 100:02d}"
+- id: ledger-thousands
+  repo: ledger
+  refs: symbol
+  kind: feature
+  task: parse_dollars should accept thousands separators, like '$1,234.50'.
+  hidden: |
+    from ledger.money import parse_dollars
+
+
+    def test_thousands_separators() -> None:
+        assert parse_dollars("$1,234.50") == 123450
+        assert parse_dollars("$1,000,000") == 100000000
+        assert parse_dollars("$1.50") == 150
+  solution:
+    ledger/money.py: |
+      """Money is kept in integer cents."""
+
+
+      def parse_dollars(text: str) -> int:
+          """'$1.50' -> 150."""
+          clean = text.strip().lstrip("$").replace(",", "")
+          dollars, _, cents = clean.partition(".")
+          return int(dollars) * 100 + int((cents + "00")[:2])
+
+
+      def format_cents(cents: int) -> str:
+          """150 -> '$1.50'."""
+          return f"${cents // 100}.{cents % 100:02d}"
+- id: ledger-comments
+  repo: ledger
+  refs: none
+  kind: feature
+  task: 'Lines starting with # are comments. Loading a ledger that has one currently crashes; comment
+    lines and blank lines should be skipped.'
+  hidden: |
+    from ledger.entries import load
+
+
+    def test_comments_are_skipped() -> None:
+        text = "# November\n2026-11-01, Cafe, $1.50\n\n  # card\n2026-11-02, Grocer, $2.00\n"
+        assert [e.payee for e in load(text)] == ["Cafe", "Grocer"]
+  solution:
+    ledger/entries.py: |
+      """One entry per line: 'YYYY-MM-DD, payee, $amount'."""
+
+      from dataclasses import dataclass
+
+      from ledger.money import parse_dollars
+
+
+      @dataclass(frozen=True)
+      class Entry:
+          day: str
+          payee: str
+          cents: int
+
+
+      def load_line(line: str) -> Entry:
+          day, payee, dollars = line.split(",")
+          return Entry(day.strip(), payee.strip(), parse_dollars(dollars))
+
+
+      def load(text: str) -> list[Entry]:
+          lines = [line for line in text.splitlines() if line.strip()]
+          return [load_line(line) for line in lines if not line.strip().startswith("#")]
+
+
+      def in_month(entry: Entry, month: str) -> bool:
+          """month is 'YYYY-MM'."""
+          return entry.day[:7] == month
+- id: ledger-move-format
+  repo: ledger
+  refs: file
+  kind: refactor
+  task: Move format_cents from ledger/money.py into a new module ledger/format.py and update every import
+    to use it. Keep `from ledger.money import format_cents` working for old callers.
+  hidden: |
+    import ledger.format
+    import ledger.money
+
+
+    def test_format_lives_in_its_own_module() -> None:
+        assert ledger.format.format_cents(150) == "$1.50"
+        assert ledger.money.format_cents is ledger.format.format_cents
+        assert "def format_cents" not in open(ledger.money.__file__).read()
+  solution:
+    ledger/format.py: |
+      """Turning cents into text."""
+
+
+      def format_cents(cents: int) -> str:
+          """150 -> '$1.50'."""
+          return f"${cents // 100}.{cents % 100:02d}"
+    ledger/money.py: |
+      """Money is kept in integer cents."""
+
+
+      def parse_dollars(text: str) -> int:
+          """'$1.50' -> 150."""
+          clean = text.strip().lstrip("$")
+          dollars, _, cents = clean.partition(".")
+          return int(dollars) * 100 + int((cents + "00")[:2])
+
+
+      from ledger.format import format_cents  # noqa: E402,F401  (old import path)
+    ledger/report.py: |
+      """Totals and summaries."""
+
+      from ledger.entries import Entry, in_month
+      from ledger.format import format_cents
+
+
+      def total(entries: list[Entry]) -> int:
+          return sum(e.cents for e in entries)
+
+
+      def monthly(entries: list[Entry], month: str) -> str:
+          chosen = [e for e in entries if in_month(e, month)]
+          return f"{month} {format_cents(total(chosen))}"
+
+
+      def by_payee(entries: list[Entry]) -> dict[str, int]:
+          out: dict[str, int] = {}
+          for e in entries:
+              out[e.payee] = e.cents
+          return out
+- id: ledger-month-total
+  repo: ledger
+  refs: symbol
+  kind: feature
+  task: Add month_total(entries, month) next to monthly that returns the month's total in cents, and make
+    monthly use it.
+  hidden: |
+    from ledger.entries import load
+    from ledger.report import month_total, monthly
+
+    TEXT = "2026-10-30, Grocer, $12.00\n2026-11-02, Cafe, $1.50\n2026-11-03, Grocer, $20.25\n"
+
+
+    def test_month_total() -> None:
+        entries = load(TEXT)
+        assert month_total(entries, "2026-11") == 2175
+        assert month_total(entries, "2026-09") == 0
+        assert monthly(entries, "2026-11") == "2026-11 $21.75"
+  solution:
+    ledger/report.py: |
+      """Totals and summaries."""
+
+      from ledger.entries import Entry, in_month
+      from ledger.money import format_cents
+
+
+      def total(entries: list[Entry]) -> int:
+          return sum(e.cents for e in entries)
+
+
+      def month_total(entries: list[Entry], month: str) -> int:
+          return total([e for e in entries if in_month(e, month)])
+
+
+      def monthly(entries: list[Entry], month: str) -> str:
+          return f"{month} {format_cents(month_total(entries, month))}"
+
+
+      def by_payee(entries: list[Entry]) -> dict[str, int]:
+          out: dict[str, int] = {}
+          for e in entries:
+              out[e.payee] = e.cents
+          return out
+- id: ledger-refunds-parse
+  repo: ledger
+  refs: none
+  kind: feature
+  task: Refunds are written with a leading minus, like '-$2.00'. Loading one currently crashes. Make it
+    parse to -200 cents.
+  hidden: |
+    from ledger.entries import load_line
+    from ledger.money import parse_dollars
+
+
+    def test_refunds_parse() -> None:
+        assert parse_dollars("-$2.00") == -200
+        assert parse_dollars("-$0.25") == -25
+        assert parse_dollars("$2.00") == 200
+        assert load_line("2026-11-04, Shop, -$3.10").cents == -310
+  solution:
+    ledger/money.py: |
+      """Money is kept in integer cents."""
+
+
+      def parse_dollars(text: str) -> int:
+          """'$1.50' -> 150."""
+          clean = text.strip()
+          sign = -1 if clean.startswith("-") else 1
+          clean = clean.lstrip("-").lstrip("$")
+          dollars, _, cents = clean.partition(".")
+          return sign * (int(dollars) * 100 + int((cents + "00")[:2]))
+
+
+      def format_cents(cents: int) -> str:
+          """150 -> '$1.50'."""
+          return f"${cents // 100}.{cents % 100:02d}"
+- id: ledger-largest
+  repo: ledger
+  refs: file
+  kind: feature
+  task: In ledger/report.py add largest(entries), which returns the entry with the biggest amount, or
+    None for an empty list.
+  hidden: |
+    from ledger.entries import load
+    from ledger.report import largest
+
+
+    def test_largest() -> None:
+        entries = load("2026-11-01, A, $1.00\n2026-11-02, B, $9.00\n2026-11-03, C, $3.00\n")
+        best = largest(entries)
+        assert best is not None and best.payee == "B"
+        assert largest([]) is None
+  solution:
+    ledger/report.py: |
+      """Totals and summaries."""
+
+      from ledger.entries import Entry, in_month
+      from ledger.money import format_cents
+
+
+      def total(entries: list[Entry]) -> int:
+          return sum(e.cents for e in entries)
+
+
+      def monthly(entries: list[Entry], month: str) -> str:
+          chosen = [e for e in entries if in_month(e, month)]
+          return f"{month} {format_cents(total(chosen))}"
+
+
+      def by_payee(entries: list[Entry]) -> dict[str, int]:
+          out: dict[str, int] = {}
+          for e in entries:
+              out[e.payee] = e.cents
+          return out
+
+
+      def largest(entries: list[Entry]) -> Entry | None:
+          return max(entries, key=lambda e: e.cents, default=None)
+- id: ledger-month-number
+  repo: ledger
+  refs: symbol
+  kind: feature
+  task: in_month should also accept a bare month number like '11', meaning November of any year. Do not
+    change what it returns for a 'YYYY-MM' month.
+  hidden: |
+    from ledger.entries import Entry, in_month
+
+    NOV = Entry("2026-11-05", "Cafe", 150)
+
+
+    def test_bare_month_number() -> None:
+        assert in_month(NOV, "11")
+        assert not in_month(NOV, "10")
+
+
+    def test_year_month_unchanged() -> None:
+        assert in_month(NOV, "2026-11")
+        assert not in_month(NOV, "2025-11")
+        assert not in_month(NOV, "2026-1")
+  solution:
+    ledger/entries.py: |
+      """One entry per line: 'YYYY-MM-DD, payee, $amount'."""
+
+      from dataclasses import dataclass
+
+      from ledger.money import parse_dollars
+
+
+      @dataclass(frozen=True)
+      class Entry:
+          day: str
+          payee: str
+          cents: int
+
+
+      def load_line(line: str) -> Entry:
+          day, payee, dollars = line.split(",")
+          return Entry(day.strip(), payee.strip(), parse_dollars(dollars))
+
+
+      def load(text: str) -> list[Entry]:
+          return [load_line(line) for line in text.splitlines() if line.strip()]
+
+
+      def in_month(entry: Entry, month: str) -> bool:
+          """month is 'YYYY-MM', or 'MM' for that month in any year."""
+          if len(month) == 2:
+              return entry.day[5:7] == month
+          return entry.day[:7] == month
+- id: textkit-word-count
+  repo: textkit
+  refs: symbol
+  kind: bugfix
+  task: word_count overcounts when words are separated by more than one space, and it returns 1 for an
+    empty string.
+  hidden: |
+    from textkit.stats import word_count
+
+
+    def test_word_count() -> None:
+        assert word_count("hello  world") == 2
+        assert word_count("  hello world  ") == 2
+        assert word_count("") == 0
+        assert word_count("one") == 1
+  solution:
+    textkit/stats.py: |
+      """Counting words."""
+
+
+      def word_count(text: str) -> int:
+          return len(text.split())
+
+
+      def top_words(text: str, n: int) -> list[str]:
+          """The n most frequent words, most frequent first."""
+          counts: dict[str, int] = {}
+          for word in text.lower().split():
+              counts[word] = counts.get(word, 0) + 1
+          return sorted(counts, key=lambda w: counts[w], reverse=True)[:n]
+- id: textkit-slug-accents
+  repo: textkit
+  refs: file
+  kind: feature
+  task: 'In textkit/slug.py, slugify drops accented letters: ''Café au lait'' becomes ''caf-au-lait''.
+    Fold accents to plain letters instead, so it becomes ''cafe-au-lait''.'
+  hidden: |
+    from textkit.slug import slugify
+
+
+    def test_accents_fold() -> None:
+        assert slugify("Café au lait") == "cafe-au-lait"
+        assert slugify("Über Straße") in ("uber-strasse", "uber-strae", "uber-stra-e")
+        assert slugify("Hello, World!") == "hello-world"
+  solution:
+    textkit/slug.py: |
+      """URL slugs."""
+
+      import re
+      import unicodedata
+
+
+      def slugify(text: str) -> str:
+          """'Hello, World!' -> 'hello-world'."""
+          folded = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+          words = re.findall(r"[a-z0-9]+", folded.lower())
+          return "-".join(words)
+- id: textkit-top-words-punctuation
+  repo: textkit
+  refs: none
+  kind: bugfix
+  task: Counting the most common words treats 'Apple,' and 'apple' as different words. Ignore punctuation
+    around words when counting.
+  hidden: |
+    from textkit.stats import top_words
+
+
+    def test_punctuation_is_ignored() -> None:
+        assert top_words("Apple, apple; APPLE. pear!", 1) == ["apple"]
+        assert top_words("Apple, apple; APPLE. pear!", 2) == ["apple", "pear"]
+  solution:
+    textkit/stats.py: |
+      """Counting words."""
+
+
+      def word_count(text: str) -> int:
+          return len(text.split(" "))
+
+
+      def top_words(text: str, n: int) -> list[str]:
+          """The n most frequent words, most frequent first."""
+          counts: dict[str, int] = {}
+          for raw in text.lower().split():
+              word = raw.strip(".,;:!?\"'()[]")
+              if word:
+                  counts[word] = counts.get(word, 0) + 1
+          return sorted(counts, key=lambda w: counts[w], reverse=True)[:n]
+- id: textkit-wrap-max-lines
+  repo: textkit
+  refs: symbol
+  kind: feature
+  task: Add an optional max_lines argument to wrap. When the text needs more lines than that, keep the
+    first max_lines lines and add '...' to the end of the last one kept (it may then be longer than width).
+    Without max_lines, nothing changes.
+  hidden: |
+    from textkit.wrap import wrap
+
+
+    def test_max_lines() -> None:
+        assert wrap("a b c d e f", 3, max_lines=2) == ["a b", "c d..."]
+        assert wrap("a b c d", 3, max_lines=2) == ["a b", "c d"]
+        assert wrap("a b c d e f", 3) == ["a b", "c d", "e f"]
+  solution:
+    textkit/wrap.py: |
+      """Fitting text into a width."""
+
+
+      def wrap(text: str, width: int, max_lines: int | None = None) -> list[str]:
+          """Greedy word wrap. A word longer than width gets a line of its own."""
+          lines: list[str] = []
+          line = ""
+          for word in text.split():
+              if line and len(line) + 1 + len(word) > width:
+                  lines.append(line)
+                  line = word
+              else:
+                  line = f"{line} {word}" if line else word
+          if line:
+              lines.append(line)
+          if max_lines is not None and len(lines) > max_lines:
+              lines = lines[:max_lines]
+              lines[-1] += "..."
+          return lines
+
+
+      def truncate(text: str, limit: int) -> str:
+          """Cut to `limit` characters and add '...' when anything was cut."""
+          if len(text) <= limit:
+              return text
+          return text[:limit] + "..."
+- id: textkit-truncate-words
+  repo: textkit
+  refs: none
+  kind: feature
+  task: Shortening text should not cut a word in half. Cut at the last space before the limit when there
+    is one, then add '...'. Text that already fits stays as it is.
+  hidden: |
+    from textkit.wrap import truncate
+
+
+    def test_cuts_at_a_space() -> None:
+        assert truncate("hello big world", 10) == "hello big..."
+        assert truncate("abcdefghij", 4) == "abcd..."
+        assert truncate("short", 10) == "short"
+  solution:
+    textkit/wrap.py: |
+      """Fitting text into a width."""
+
+
+      def wrap(text: str, width: int) -> list[str]:
+          """Greedy word wrap. A word longer than width gets a line of its own."""
+          lines: list[str] = []
+          line = ""
+          for word in text.split():
+              if line and len(line) + 1 + len(word) > width:
+                  lines.append(line)
+                  line = word
+              else:
+                  line = f"{line} {word}" if line else word
+          if line:
+              lines.append(line)
+          return lines
+
+
+      def truncate(text: str, limit: int) -> str:
+          """Cut to `limit` characters and add '...' when anything was cut."""
+          if len(text) <= limit:
+              return text
+          cut = text[:limit]
+          space = cut.rfind(" ")
+          if space > 0:
+              cut = cut[:space]
+          return cut + "..."
+- id: textkit-move-truncate
+  repo: textkit
+  refs: file
+  kind: refactor
+  task: Move truncate out of textkit/wrap.py into a new module textkit/trim.py. Keep `from textkit.wrap
+    import truncate` working for old callers.
+  hidden: |
+    import textkit.trim
+    import textkit.wrap
+
+
+    def test_truncate_moved() -> None:
+        assert textkit.trim.truncate("abcdefghij", 4) == "abcd..."
+        assert textkit.wrap.truncate is textkit.trim.truncate
+        assert "def truncate" not in open(textkit.wrap.__file__).read()
+  solution:
+    textkit/trim.py: |
+      """Shortening text."""
+
+
+      def truncate(text: str, limit: int) -> str:
+          """Cut to `limit` characters and add '...' when anything was cut."""
+          if len(text) <= limit:
+              return text
+          return text[:limit] + "..."
+    textkit/wrap.py: |
+      """Fitting text into a width."""
+
+
+      def wrap(text: str, width: int) -> list[str]:
+          """Greedy word wrap. A word longer than width gets a line of its own."""
+          lines: list[str] = []
+          line = ""
+          for word in text.split():
+              if line and len(line) + 1 + len(word) > width:
+                  lines.append(line)
+                  line = word
+              else:
+                  line = f"{line} {word}" if line else word
+          if line:
+              lines.append(line)
+          return lines
+
+
+      from textkit.trim import truncate  # noqa: E402,F401  (old import path)
+- id: textkit-slug-max-length
+  repo: textkit
+  refs: symbol
+  kind: feature
+  task: slugify should take an optional max_length. Never cut in the middle of a word or leave a trailing
+    hyphen; if the first word alone is longer than max_length, cut that word at max_length.
+  hidden: |
+    from textkit.slug import slugify
+
+
+    def test_max_length() -> None:
+        assert slugify("Hello big world", max_length=10) == "hello-big"
+        assert slugify("Hello big world", max_length=9) == "hello-big"
+        assert slugify("Hello big world", max_length=8) == "hello"
+        assert slugify("abcdefghij", max_length=4) == "abcd"
+        assert slugify("Hello big world") == "hello-big-world"
+  solution:
+    textkit/slug.py: |
+      """URL slugs."""
+
+      import re
+
+
+      def slugify(text: str, max_length: int | None = None) -> str:
+          """'Hello, World!' -> 'hello-world'."""
+          words = re.findall(r"[a-z0-9]+", text.lower())
+          slug = "-".join(words)
+          if max_length is None or len(slug) <= max_length:
+              return slug
+          kept = ""
+          for word in words:
+              candidate = f"{kept}-{word}" if kept else word
+              if len(candidate) > max_length:
+                  break
+              kept = candidate
+          return kept or words[0][:max_length]
+- id: textkit-reading-time
+  repo: textkit
+  refs: symbol
+  kind: feature
+  task: 'Add reading_time(text) next to word_count: whole minutes at 200 words per minute, rounded up,
+    and 0 for empty or blank text.'
+  hidden: |
+    from textkit.stats import reading_time
+
+
+    def test_reading_time() -> None:
+        assert reading_time("") == 0
+        assert reading_time("   ") == 0
+        assert reading_time("word " * 200) == 1
+        assert reading_time("word " * 201) == 2
+        assert reading_time("a  b") == 1
+  solution:
+    textkit/stats.py: |
+      """Counting words."""
+
+
+      def word_count(text: str) -> int:
+          return len(text.split(" "))
+
+
+      def top_words(text: str, n: int) -> list[str]:
+          """The n most frequent words, most frequent first."""
+          counts: dict[str, int] = {}
+          for word in text.lower().split():
+              counts[word] = counts.get(word, 0) + 1
+          return sorted(counts, key=lambda w: counts[w], reverse=True)[:n]
+
+
+      def reading_time(text: str) -> int:
+          words = len(text.split())
+          return -(-words // 200)
+- id: textkit-top-words-ties
+  repo: textkit
+  refs: file
+  kind: bugfix
+  task: In textkit/stats.py, top_words returns words with the same count in the order they first appeared.
+    Break ties alphabetically.
+  hidden: |
+    from textkit.stats import top_words
+
+
+    def test_ties_are_alphabetical() -> None:
+        assert top_words("b a b a c", 2) == ["a", "b"]
+        assert top_words("z y x", 3) == ["x", "y", "z"]
+        assert top_words("b a b", 2) == ["b", "a"]
+  solution:
+    textkit/stats.py: |
+      """Counting words."""
+
+
+      def word_count(text: str) -> int:
+          return len(text.split(" "))
+
+
+      def top_words(text: str, n: int) -> list[str]:
+          """The n most frequent words, most frequent first."""
+          counts: dict[str, int] = {}
+          for word in text.lower().split():
+              counts[word] = counts.get(word, 0) + 1
+          return sorted(counts, key=lambda w: (-counts[w], w))[:n]
+- id: textkit-slug-separator
+  repo: textkit
+  refs: none
+  kind: feature
+  task: Slugs should be able to use underscores instead of hyphens when the caller asks for it, through
+    a sep argument. Hyphens stay the default.
+  hidden: |
+    from textkit.slug import slugify
+
+
+    def test_separator() -> None:
+        assert slugify("Hello World", sep="_") == "hello_world"
+        assert slugify("Hello World") == "hello-world"
+  solution:
+    textkit/slug.py: |
+      """URL slugs."""
+
+      import re
+
+
+      def slugify(text: str, sep: str = "-") -> str:
+          """'Hello, World!' -> 'hello-world'."""
+          words = re.findall(r"[a-z0-9]+", text.lower())
+          return sep.join(words)
+- id: inventory-value-qty
+  repo: inventory
+  refs: symbol
+  kind: bugfix
+  task: Store.value_cents ignores quantity. It should be each item's price times its quantity, summed.
+  hidden: |
+    from inventory.models import Item
+    from inventory.store import Store
+
+
+    def test_value_counts_quantity() -> None:
+        store = Store()
+        store.add(Item("B1", "Bolt", 25, 100))
+        store.add(Item("N1", "Nut", 10, 3))
+        assert store.value_cents() == 2530
+  solution:
+    inventory/store.py: |
+      from inventory.models import Item
+
+
+      class Store:
+          def __init__(self) -> None:
+              self.items: dict[str, Item] = {}
+
+          def add(self, item: Item) -> None:
+              self.items[item.sku] = item
+
+          def remove(self, sku: str, qty: int) -> None:
+              item = self.items[sku]
+              item.qty -= qty
+
+          def find(self, text: str) -> list[Item]:
+              return [i for i in self.items.values() if text in i.name]
+
+          def value_cents(self) -> int:
+              return sum(i.price_cents * i.qty for i in self.items.values())
+- id: inventory-remove-too-many
+  repo: inventory
+  refs: none
+  kind: bugfix
+  task: Taking more stock out than we have makes the quantity negative. Raise ValueError instead and leave
+    the quantity unchanged.
+  hidden: |
+    import pytest
+
+    from inventory.models import Item
+    from inventory.store import Store
+
+
+    def test_cannot_go_negative() -> None:
+        store = Store()
+        store.add(Item("B1", "Bolt", 25, 5))
+        with pytest.raises(ValueError):
+            store.remove("B1", 6)
+        assert store.items["B1"].qty == 5
+        store.remove("B1", 5)
+        assert store.items["B1"].qty == 0
+  solution:
+    inventory/store.py: |
+      from inventory.models import Item
+
+
+      class Store:
+          def __init__(self) -> None:
+              self.items: dict[str, Item] = {}
+
+          def add(self, item: Item) -> None:
+              self.items[item.sku] = item
+
+          def remove(self, sku: str, qty: int) -> None:
+              item = self.items[sku]
+              if qty > item.qty:
+                  raise ValueError(f"only {item.qty} of {sku} in stock")
+              item.qty -= qty
+
+          def find(self, text: str) -> list[Item]:
+              return [i for i in self.items.values() if text in i.name]
+
+          def value_cents(self) -> int:
+              return sum(i.price_cents for i in self.items.values())
+- id: inventory-bulk-threshold
+  repo: inventory
+  refs: file
+  kind: bugfix
+  task: In inventory/pricing.py the bulk discount starts at 11 items. It should start at 10.
+  hidden: |
+    from inventory.pricing import bulk_price
+
+
+    def test_bulk_starts_at_ten() -> None:
+        assert bulk_price(200, 9) == 1800
+        assert bulk_price(200, 10) == 1800
+        assert bulk_price(200, 11) == 1980
+  solution:
+    inventory/pricing.py: |
+      """Prices are integer cents."""
+
+
+      def discount(price_cents: int, percent: int) -> int:
+          return price_cents - price_cents * percent // 100
+
+
+      def bulk_price(price_cents: int, qty: int) -> int:
+          """10% off each item when buying 10 or more."""
+          if qty >= 10:
+              return discount(price_cents, 10) * qty
+          return price_cents * qty
+- id: inventory-find-any-case
+  repo: inventory
+  refs: none
+  kind: feature
+  task: Searching the store by name should ignore upper and lower case.
+  hidden: |
+    from inventory.models import Item
+    from inventory.store import Store
+
+
+    def test_search_ignores_case() -> None:
+        store = Store()
+        store.add(Item("B1", "Hex Bolt", 25, 1))
+        store.add(Item("N1", "Nut", 10, 1))
+        assert [i.sku for i in store.find("bolt")] == ["B1"]
+        assert [i.sku for i in store.find("NUT")] == ["N1"]
+  solution:
+    inventory/store.py: |
+      from inventory.models import Item
+
+
+      class Store:
+          def __init__(self) -> None:
+              self.items: dict[str, Item] = {}
+
+          def add(self, item: Item) -> None:
+              self.items[item.sku] = item
+
+          def remove(self, sku: str, qty: int) -> None:
+              item = self.items[sku]
+              item.qty -= qty
+
+          def find(self, text: str) -> list[Item]:
+              needle = text.lower()
+              return [i for i in self.items.values() if needle in i.name.lower()]
+
+          def value_cents(self) -> int:
+              return sum(i.price_cents for i in self.items.values())
+- id: inventory-csv-lenient
+  repo: inventory
+  refs: symbol
+  kind: feature
+  task: load_csv should treat a missing qty column as 0 and ignore spaces around values.
+  hidden: |
+    from inventory.csvio import load_csv
+    from inventory.models import Item
+
+
+    def test_lenient_csv() -> None:
+        text = "sku,name,price_cents\n A1 , Bolt , 25 \n"
+        assert load_csv(text) == [Item("A1", "Bolt", 25, 0)]
+        full = "sku,name,price_cents,qty\nA1,Bolt,25, 4\n"
+        assert load_csv(full) == [Item("A1", "Bolt", 25, 4)]
+  solution:
+    inventory/csvio.py: |
+      import csv
+      import io
+
+      from inventory.models import Item
+
+
+      def load_csv(text: str) -> list[Item]:
+          rows = csv.DictReader(io.StringIO(text))
+          items = []
+          for row in rows:
+              r = {k.strip(): (v or "").strip() for k, v in row.items() if k}
+              items.append(Item(r["sku"], r["name"], int(r["price_cents"]), int(r.get("qty") or 0)))
+          return items
+
+
+      def dump_csv(items: list[Item]) -> str:
+          out = io.StringIO()
+          writer = csv.writer(out, lineterminator="\n")
+          writer.writerow(["sku", "name", "price_cents", "qty"])
+          for i in items:
+              writer.writerow([i.sku, i.name, i.price_cents, i.qty])
+          return out.getvalue()
+- id: inventory-merge-stock
+  repo: inventory
+  refs: file
+  kind: feature
+  task: In inventory/store.py, adding an item whose sku is already stocked should add to its quantity
+    instead of replacing the item.
+  hidden: |
+    from inventory.models import Item
+    from inventory.store import Store
+
+
+    def test_add_merges_quantity() -> None:
+        store = Store()
+        store.add(Item("B1", "Bolt", 25, 10))
+        store.add(Item("B1", "Bolt", 25, 5))
+        assert store.items["B1"].qty == 15
+        assert len(store.items) == 1
+  solution:
+    inventory/store.py: |
+      from inventory.models import Item
+
+
+      class Store:
+          def __init__(self) -> None:
+              self.items: dict[str, Item] = {}
+
+          def add(self, item: Item) -> None:
+              if item.sku in self.items:
+                  self.items[item.sku].qty += item.qty
+              else:
+                  self.items[item.sku] = item
+
+          def remove(self, sku: str, qty: int) -> None:
+              item = self.items[sku]
+              item.qty -= qty
+
+          def find(self, text: str) -> list[Item]:
+              return [i for i in self.items.values() if text in i.name]
+
+          def value_cents(self) -> int:
+              return sum(i.price_cents for i in self.items.values())
+- id: inventory-low-stock
+  repo: inventory
+  refs: symbol
+  kind: feature
+  task: Add Store.low_stock(threshold), returning the items whose qty is below threshold, sorted by sku.
+  hidden: |
+    from inventory.models import Item
+    from inventory.store import Store
+
+
+    def test_low_stock() -> None:
+        store = Store()
+        store.add(Item("N1", "Nut", 10, 2))
+        store.add(Item("B1", "Bolt", 25, 1))
+        store.add(Item("W1", "Washer", 5, 50))
+        assert [i.sku for i in store.low_stock(5)] == ["B1", "N1"]
+        assert store.low_stock(1) == []
+  solution:
+    inventory/store.py: |
+      from inventory.models import Item
+
+
+      class Store:
+          def __init__(self) -> None:
+              self.items: dict[str, Item] = {}
+
+          def add(self, item: Item) -> None:
+              self.items[item.sku] = item
+
+          def remove(self, sku: str, qty: int) -> None:
+              item = self.items[sku]
+              item.qty -= qty
+
+          def find(self, text: str) -> list[Item]:
+              return [i for i in self.items.values() if text in i.name]
+
+          def value_cents(self) -> int:
+              return sum(i.price_cents for i in self.items.values())
+
+          def low_stock(self, threshold: int) -> list[Item]:
+              return sorted((i for i in self.items.values() if i.qty < threshold), key=lambda i: i.sku)
+- id: inventory-discount-range
+  repo: inventory
+  refs: none
+  kind: feature
+  task: A discount below 0% or above 100% is a mistake. Raise ValueError for those instead of returning
+    a price.
+  hidden: |
+    import pytest
+
+    from inventory.pricing import discount
+
+
+    def test_discount_range() -> None:
+        for bad in (-1, 101, 250):
+            with pytest.raises(ValueError):
+                discount(1000, bad)
+        assert discount(1000, 0) == 1000
+        assert discount(1000, 100) == 0
+  solution:
+    inventory/pricing.py: |
+      """Prices are integer cents."""
+
+
+      def discount(price_cents: int, percent: int) -> int:
+          if not 0 <= percent <= 100:
+              raise ValueError(f"discount must be 0-100%, got {percent}")
+          return price_cents - price_cents * percent // 100
+
+
+      def bulk_price(price_cents: int, qty: int) -> int:
+          """10% off each item when buying 10 or more."""
+          if qty > 10:
+              return discount(price_cents, 10) * qty
+          return price_cents * qty
+- id: inventory-move-bulk
+  repo: inventory
+  refs: file
+  kind: refactor
+  task: Move bulk_price from inventory/pricing.py into a new module inventory/bulk.py. Keep `from inventory.pricing
+    import bulk_price` working for old callers. Don't change how it prices anything.
+  hidden: |
+    import inventory.bulk
+    import inventory.pricing
+
+
+    def test_bulk_moved() -> None:
+        assert inventory.bulk.bulk_price(100, 20) == 1800
+        assert inventory.bulk.bulk_price(100, 10) == 1000
+        assert inventory.pricing.bulk_price is inventory.bulk.bulk_price
+        assert "def bulk_price" not in open(inventory.pricing.__file__).read()
+  solution:
+    inventory/bulk.py: |
+      """Bulk pricing."""
+
+
+      def bulk_price(price_cents: int, qty: int) -> int:
+          """10% off each item when buying 10 or more."""
+          from inventory.pricing import discount  # here, not at the top: pricing re-exports this module
+
+          if qty > 10:
+              return discount(price_cents, 10) * qty
+          return price_cents * qty
+    inventory/pricing.py: |
+      """Prices are integer cents."""
+
+
+      def discount(price_cents: int, percent: int) -> int:
+          return price_cents - price_cents * percent // 100
+
+
+      from inventory.bulk import bulk_price  # noqa: E402,F401  (old import path)
+- id: inventory-store-csv
+  repo: inventory
+  refs: symbol
+  kind: feature
+  task: Add Store.to_csv() and a Store.from_csv(text) classmethod that use the existing load_csv and dump_csv
+    helpers, so a whole store can be saved and loaded.
+  hidden: |
+    from inventory.models import Item
+    from inventory.store import Store
+
+
+    def test_store_round_trip() -> None:
+        store = Store()
+        store.add(Item("B1", "Bolt, hex", 25, 100))
+        store.add(Item("N1", 'Nut "M6"', 10, 3))
+        again = Store.from_csv(store.to_csv())
+        assert again.items == store.items
+  solution:
+    inventory/store.py: |
+      from inventory.csvio import dump_csv, load_csv
+      from inventory.models import Item
+
+
+      class Store:
+          def __init__(self) -> None:
+              self.items: dict[str, Item] = {}
+
+          def add(self, item: Item) -> None:
+              self.items[item.sku] = item
+
+          def remove(self, sku: str, qty: int) -> None:
+              item = self.items[sku]
+              item.qty -= qty
+
+          def find(self, text: str) -> list[Item]:
+              return [i for i in self.items.values() if text in i.name]
+
+          def value_cents(self) -> int:
+              return sum(i.price_cents for i in self.items.values())
+
+          def to_csv(self) -> str:
+              return dump_csv(list(self.items.values()))
+
+          @classmethod
+          def from_csv(cls, text: str) -> "Store":
+              store = cls()
+              for item in load_csv(text):
+                  store.add(item)
+              return store

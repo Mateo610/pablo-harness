@@ -19,7 +19,7 @@ Status: `todo` · `doing` · `done`. Update this table when a gate passes.
 | M4c | Deep rerun with real context | Symbol-based file picking, per-lane prompt budget, before-and-after checks; harness checks green in the sandbox; gpt-oss bake-off rerun decides keep or drop | done (deep off the router, available by hand: 2 better, 2 worse, 2 same) |
 | M5 | Sandbox | Checks run in a no-network container; a diff that opens a socket fails its checks | done (rootless runsc; pids, CPU pin, and the 4g address cap hold) |
 | M6 | Context | Repo map + Serena symbol lookup replace `repo_context`; coder fixes a bug in a file the task never names | todo |
-| M7 | Traces and evals | Traces mirrored to self-hosted Langfuse; Promptfoo suite of 30 tasks with a baseline score | todo |
+| M7 | Evals, then traces | `pablo eval`: 30 tasks with hidden tests, coder baseline and noise floor recorded; deep rematch on the suite. Langfuse viewer is M7b, optional | doing (suite and runner done in core track; baseline on Pablo) |
 | M8 | Learning loop | LoRA trained on `pablo export-training` output; promoted only if eval score beats baseline | todo |
 | M9 | Specialist lanes | Media lane dispatches image and 3D jobs; results come back as evidence cards | todo |
 | M9b | Voice lane | Local speech-to-text (Whisper/Canary class) behind `/api/voice`; hold-to-talk on the phone starts a run | todo |
@@ -38,4 +38,4 @@ Status: `todo` · `doing` · `done`. Update this table when a gate passes.
 ## Order that works
 M0 → M1 unblocks everything real. C1–C2 can be built any time (fake mode). M3 and M4 go
 together because the judge and coder cannot both stay resident in 24 GB. M8 waits for M7: no
-training without an eval gate. C5 after M1–M5 so the public demo runs on real models.
+training without an eval gate. M7's suite goes before M6 so context changes have a number to beat. C5 after M1–M5 so the public demo runs on real models.
