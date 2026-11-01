@@ -48,7 +48,7 @@ Or from the terminal: `uv run pablo run "add a demo note" --fake -C /tmp/hello`,
 | `pablo queue add "<task>"` / `list` / `cancel` / `run` | overnight queue: slow work runs 01:00–06:30 |
 | `pablo brief [--make]` | the morning brief: what finished overnight and what needs you |
 | `pablo doctor` | gateway, GPU, disk |
-| `pablo eval-judge [--write]` | score the judge on 10 fixed good/bad diffs |
+| `pablo eval-judge [--set holdout] [--write]` | score the judge on fixed good/bad diffs (tune on `main`, report `holdout`) |
 | `pablo export-training` | approved, trainable traces as chat JSONL |
 | `pablo export-traces` | daily TOON stats files (no prompts or code) |
 

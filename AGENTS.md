@@ -18,6 +18,7 @@ and leaves the merge decision to the human. Claude is an escalation lane, never 
   - `hunks.py` split diffs into hunks for partial approval (mirrored in `web/src/hunks.ts`)
   - `resources.py` GPU/VRAM/RAM snapshot · `judge_eval.py` judge accuracy on `evals/judge` fixtures
   - `tasks.py` task type + quick/build/deep · `context.py` budgeted coder prompt + skill cards (`skills/*.md`)
+  - `edits.py` find-and-replace edit blocks → git-made diff (the coder's default edit format)
 - `web/` cockpit (React + Vite + cmdk); desktop `App.tsx` + `RunView.tsx`, phone `Phone.tsx` (PWA), styled only with tokens in `web/src/tokens.css`
 - `config/` lanes and the LiteLLM gateway · `scripts/` Pablo bootstrap and model archiving
 - `docs/cursor-prompts/` one prompt per milestone, each with acceptance checks

@@ -358,7 +358,7 @@ def test_unappliable_diff_gets_one_repair(settings: Settings, repo: Path) -> Non
     run = orch.start("add sub", lane="coder")
     assert run.repaired and run.state == "ready"
     repair_call = backend.calls[1][1]
-    assert "did not apply" in repair_call[-1]["content"]
+    assert "could not be applied" in repair_call[-1]["content"]
 
 
 def test_repair_happens_only_once(settings: Settings, repo: Path) -> None:
@@ -424,3 +424,78 @@ def test_toon_export_is_stats_only(settings: Settings, repo: Path) -> None:
     assert values[TOON_FIELDS.index("decision")] == "approved"
     assert values[TOON_FIELDS.index("checks")] == "pass"
     assert "def sub" not in path.read_text()  # no code or prompts leak into stats
+
+
+BLOCKS_REPLY = """Added sub with a test.
+
+calc.py
+<<<<<<< SEARCH
+def add(a, b):
+    return a + b
+=======
+def add(a, b):
+    return a + b
+
+
+def sub(a, b):
+    return a - b
+>>>>>>> REPLACE
+
+test_calc.py
+<<<<<<< SEARCH
+from calc import add
+=======
+from calc import add, sub
+>>>>>>> REPLACE
+
+test_calc.py
+<<<<<<< SEARCH
+    assert add(2, 3) == 5
+=======
+    assert add(2, 3) == 5
+
+
+def test_sub():
+    assert sub(5, 3) == 2
+>>>>>>> REPLACE
+"""
+
+
+def test_coder_edit_blocks_end_to_end(settings: Settings, repo: Path) -> None:
+    backend = FakeBackend(
+        scripts={"pablo/coder": [BLOCKS_REPLY], "pablo/judge": [judge_reply(0.9)]}
+    )
+    orch = Orchestrator(settings, backend, repo=repo, checks=CHECKS)
+    run = orch.start("add sub to calc.py with a test", lane="coder")
+    assert run.state == "ready" and not run.repaired
+    assert run.explanation == "Added sub with a test."
+    assert "SEARCH" in backend.calls[0][1][0]["content"]  # blocks prompt was used
+    orch.approve(run.id)
+    assert "def sub" in (repo / "calc.py").read_text()
+    assert "test_sub" in (repo / "test_calc.py").read_text()
+
+
+def test_bad_search_is_repaired_with_the_exact_error(settings: Settings, repo: Path) -> None:
+    wrong = BLOCKS_REPLY.replace("    return a + b\n=======", "    return a * b\n=======")
+    backend = FakeBackend(
+        scripts={"pablo/coder": [wrong, BLOCKS_REPLY], "pablo/judge": [judge_reply(0.9)]}
+    )
+    run = Orchestrator(settings, backend, repo=repo, checks=CHECKS).start("add sub", lane="coder")
+    assert run.repaired and run.state == "ready"
+    assert "SEARCH text not found" in backend.calls[1][1][-1]["content"]
+
+
+def test_unfixable_edits_land_in_needs_you(settings: Settings, repo: Path) -> None:
+    wrong = BLOCKS_REPLY.replace("    return a + b\n=======", "    return a * b\n=======")
+    backend = FakeBackend(scripts={"pablo/coder": [wrong, wrong]})
+    run = Orchestrator(settings, backend, repo=repo, checks=CHECKS).start("add sub", lane="coder")
+    assert run.state == "needs_you" and "could not be applied" in run.question
+    assert run.diff == "" and run.certainty is None
+
+
+def test_diff_format_lane_still_works(settings: Settings, repo: Path) -> None:
+    settings.lane("coder").edit_format = "diff"
+    orch = make_orch(settings, repo, coder_reply(GOOD_DIFF), 0.9)
+    run = orch.start("add sub", lane="coder")
+    assert run.state == "ready"
+    assert "unified diff" in orch.backend.calls[0][1][0]["content"]  # type: ignore[attr-defined]

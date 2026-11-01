@@ -73,3 +73,15 @@ Resident ceiling, keeping 8 GiB of RAM free and about 4 GiB of VRAM for KV and c
 | GLM-5.2 smallest Unsloth GGUF (UD-IQ1_S) | ~217 GB | Disk yes (1.6 TB free). RAM no. Stream only. Not downloaded |
 
 The K128 header still says `expert_count = 256` and `expert_used_count = 6`. The file is 50439361920 bytes. llama.cpp `b12031` rejects it: `blk.3.ffn_gate_inp.weight` is 4096×128, and the runtime expects 4096×256. colibrì v2.1.0 imports the GGUF and then fails the same way (`layers.3.ffn.gate.weight`). It is not replaced with a larger quant.
+
+## Coder edit format: find-and-replace blocks (2026-11-01)
+
+M1 showed the coder's unified diffs need heavy repair (wrong hunk counts, invented blank context,
+fake `index` lines). Code lanes now default to `edit_format: blocks`: the coder writes
+`path / <<<<<<< SEARCH / ======= / >>>>>>> REPLACE` blocks, `pablo/edits.py` applies them to a
+throwaway copy of the touched files, and `git diff` writes the patch, so hunk headers are always
+right. SEARCH matching is exact, then trailing-whitespace tolerant, then indentation tolerant (the
+replacement is re-indented). A SEARCH that is missing or matches twice gets one repair pass with
+the exact error and the closest lines in the file; if that fails the run lands in "Needs you".
+Diff replies are still accepted in either mode, and `edit_format: diff` restores the old prompt.
+Measure on Pablo: rerun the three M1 sandbox tasks and compare repair rate and pass rate.

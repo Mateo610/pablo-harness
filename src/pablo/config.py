@@ -21,6 +21,8 @@ class Lane(BaseModel):
     train_ok: bool = True
     requires_approval: bool = False
     keywords: list[str] = Field(default_factory=list)
+    # How code lanes write changes: find-and-replace blocks (default) or a unified diff.
+    edit_format: Literal["blocks", "diff"] = "blocks"
 
     @model_validator(mode="after")
     def _remote_never_trains(self) -> Lane:

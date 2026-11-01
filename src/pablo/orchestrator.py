@@ -17,6 +17,7 @@ from typing import Any, Literal
 
 from pablo.config import ESCALATION_LANE, Settings
 from pablo.context import build_coder_context
+from pablo.edits import EditError, blocks_to_diff, has_blocks, parse_blocks, strip_blocks
 from pablo.events import Event, EventBus
 from pablo.gateway import ChatBackend, Message
 from pablo.hunks import all_ids
@@ -48,6 +49,28 @@ Re-read the numbered files and reply with one corrected unified diff in a ```dif
 No `index` lines. A blank context line is a single space.
 Hunk counts must match the lines that follow.
 Copy context exactly, without the line number or the |. End the diff with a newline."""
+
+CODER_BLOCKS_PROMPT = """You are the coder on a small local team. Make the smallest correct change.
+Include tests when behavior changes. A new test must import every name it calls.
+Reply with a short explanation, then one edit block per change, in exactly this format:
+
+path/to/file.py
+<<<<<<< SEARCH
+lines copied exactly from the current file
+=======
+the new lines
+>>>>>>> REPLACE
+
+Rules:
+- SEARCH must match the file exactly and in only one place. Copy whole lines, without the
+  line number and | that prefix the files above.
+- Keep blocks small: the lines you change plus one or two around them, not the whole file.
+- Use several blocks for several places. To create a new file, leave SEARCH empty."""
+
+REPAIR_BLOCKS_PROMPT = """Those edits could not be applied: {error}
+
+Re-read the numbered files and reply with the complete, corrected set of edit blocks.
+Copy SEARCH lines exactly as they are in the file, without line numbers or |."""
 
 ANSWER_PROMPT = """You are a specialist on a small local team. Answer directly and concretely."""
 
@@ -243,36 +266,53 @@ class Orchestrator:
             raise
         return run
 
+    def _extract(self, text: str) -> tuple[str, str, str]:
+        """(explanation, diff, edit error) from a coder reply in either edit format."""
+        if has_blocks(text):
+            explanation = strip_blocks(text)
+            try:
+                return explanation, blocks_to_diff(self.repo, parse_blocks(text)), ""
+            except EditError as exc:
+                return explanation, "", str(exc)
+        explanation, diff = extract_diff(text)
+        return explanation, diff, ""
+
     def _work(self, run: Run) -> None:
         wants_diff = run.lane in ("coder", ESCALATION_LANE)
+        blocks = self.settings.lane(run.lane).edit_format == "blocks"
+        system = (CODER_BLOCKS_PROMPT if blocks else CODER_PROMPT) if wants_diff else ANSWER_PROMPT
         messages: list[Message] = [
-            {"role": "system", "content": CODER_PROMPT if wants_diff else ANSWER_PROMPT},
+            {"role": "system", "content": system},
             {"role": "user", "content": repo_context(self.repo, run.task)},
         ]
         self._emit("status", run, text=f"{run.lane} · thinking")
         reply = self.backend.complete(run.model, messages)
-        run.explanation, run.diff = extract_diff(reply.text)
-
+        run.explanation, run.diff, edit_error = self._extract(reply.text)
         verdict: Verdict | None = None
         if run.diff:
             self._emit("status", run, text=f"{run.lane} · running checks")
             verdict = verify_diff(self.repo, run.diff, self.checks)
-            # Local models often write diffs with wrong line numbers or context. Give the
-            # coder one chance to fix the patch itself, with git's error, before judging.
-            if not verdict.applied:
-                self._emit("status", run, text=f"{run.lane} · diff didn't apply, repairing")
-                messages = [
-                    *messages,
-                    {"role": "assistant", "content": reply.text},
-                    {"role": "user", "content": REPAIR_PROMPT.format(error=verdict.error)},
-                ]
-                reply = self.backend.complete(run.model, messages)
-                explanation, repaired = extract_diff(reply.text)
-                if repaired:
-                    run.explanation = explanation or run.explanation
-                    run.diff = repaired
-                    run.repaired = True
-                    verdict = verify_diff(self.repo, run.diff, self.checks)
+
+        # Local models slip on exact text. Give the coder one chance to fix its own edits,
+        # with the precise error, before anything is judged.
+        problem = edit_error or (verdict.error if verdict and not verdict.applied else "")
+        if wants_diff and problem:
+            self._emit("status", run, text=f"{run.lane} · edits didn't apply, repairing")
+            repair = REPAIR_BLOCKS_PROMPT if blocks else REPAIR_PROMPT
+            messages = [
+                *messages,
+                {"role": "assistant", "content": reply.text},
+                {"role": "user", "content": repair.format(error=problem)},
+            ]
+            reply = self.backend.complete(run.model, messages)
+            explanation, repaired, edit_error = self._extract(reply.text)
+            if repaired:
+                run.explanation = explanation or run.explanation
+                run.diff = repaired
+                run.repaired = True
+                verdict = verify_diff(self.repo, run.diff, self.checks)
+
+        if run.diff and verdict is not None:
             run.verdict = verdict.to_dict()
             self._emit("evidence", run, summary=verdict.summary(), passed=verdict.passed)
 
@@ -288,6 +328,11 @@ class Orchestrator:
             )
             run.state = "ready" if ready else "needs_you"
             self._emit("judged", run, certainty=judgement.certainty, state=run.state)
+        elif wants_diff and edit_error:
+            run.state = "needs_you"
+            run.question = (
+                f"The coder's edits could not be applied ({edit_error}). Retry or escalate?"
+            )
         else:
             run.state = "ready"
 
