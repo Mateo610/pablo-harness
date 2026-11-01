@@ -293,3 +293,31 @@ def test_compare_runs_both_and_approving_one_rejects_other(settings: Settings, r
     assert orch.get(b.id).state == "rejected"
     with pytest.raises(PermissionError):
         orch.compare("x", ["coder", "claude"])
+
+
+def test_unappliable_diff_gets_one_repair(settings: Settings, repo: Path) -> None:
+    broken = GOOD_DIFF.replace("return a + b", "return a * b")  # wrong context
+    backend = FakeBackend(
+        scripts={
+            "pablo/coder": [coder_reply(broken), coder_reply(GOOD_DIFF)],
+            "pablo/judge": [judge_reply(0.9)],
+        }
+    )
+    orch = Orchestrator(settings, backend, repo=repo, checks=CHECKS)
+    run = orch.start("add sub", lane="coder")
+    assert run.repaired and run.state == "ready"
+    repair_call = backend.calls[1][1]
+    assert "did not apply" in repair_call[-1]["content"]
+
+
+def test_repair_happens_only_once(settings: Settings, repo: Path) -> None:
+    broken = GOOD_DIFF.replace("return a + b", "return a * b")
+    backend = FakeBackend(
+        scripts={
+            "pablo/coder": [coder_reply(broken), coder_reply(broken)],
+            "pablo/judge": [judge_reply(0.9)],
+        }
+    )
+    run = Orchestrator(settings, backend, repo=repo, checks=CHECKS).start("add sub", lane="coder")
+    assert run.state == "needs_you" and not (run.verdict or {}).get("applied")
+    assert sum(1 for model, _ in backend.calls if model == "pablo/coder") == 2

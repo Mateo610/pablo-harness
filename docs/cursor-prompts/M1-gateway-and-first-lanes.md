@@ -28,7 +28,7 @@ running a real task end to end (the judge temporarily reuses the coder model).
 6. **Smoke test.** `uv run pablo doctor` (gateway up, GPU shown). Then in `~/pablo-sandbox/hello`:
    `uv run pablo run "add a function mul(a, b) to the module with a test" -C ~/pablo-sandbox/hello`.
 7. **Fix what breaks.** Likely spots: the coder not emitting a clean ```diff block (tune `CODER_PROMPT`
-   in orchestrator.py), diffs failing `git apply` (add a retry that sends the apply error back once),
+   in orchestrator.py), diffs failing `git apply` (already handled: one automatic repair pass with git's error; tune `REPAIR_PROMPT` if needed),
    judge JSON parsing. Every fix gets a FakeBackend test.
 8. Switch the systemd `pablo` unit from `--fake` to real mode.
 

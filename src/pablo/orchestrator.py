@@ -32,6 +32,13 @@ CODER_PROMPT = """You are the coder on a small local team. Make the smallest cor
 Reply with a short explanation, then exactly one unified diff in a ```diff fenced block,
 with paths relative to the repo root (a/ and b/ prefixes). Include tests when behavior changes."""
 
+REPAIR_PROMPT = """That diff did not apply. `git apply` said:
+
+{error}
+
+Re-read the files above and reply with one corrected unified diff in a ```diff block.
+Copy context lines exactly from the current file contents."""
+
 ANSWER_PROMPT = """You are a specialist on a small local team. Answer directly and concretely."""
 
 MAX_TREE = 200
@@ -62,7 +69,8 @@ class Run:
     task_id: str | None = None
     escalated_from: str | None = None
     group: str | None = None  # runs started together by compare()
-    applied_hunks: list[str] | None = None  # set when you approve only part of the diff
+    applied_hunks: list[str] | None = None
+    repaired: bool = False  # the coder fixed its own diff after git apply failed  # set when you approve only part of the diff
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
 
     def to_dict(self) -> dict[str, Any]:
@@ -234,6 +242,22 @@ class Orchestrator:
         if run.diff:
             self._emit("status", run, text=f"{run.lane} · running checks")
             verdict = verify_diff(self.repo, run.diff, self.checks)
+            # Local models often write diffs with wrong line numbers or context. Give the
+            # coder one chance to fix the patch itself, with git's error, before judging.
+            if not verdict.applied:
+                self._emit("status", run, text=f"{run.lane} · diff didn't apply, repairing")
+                messages = [
+                    *messages,
+                    {"role": "assistant", "content": reply.text},
+                    {"role": "user", "content": REPAIR_PROMPT.format(error=verdict.error)},
+                ]
+                reply = self.backend.complete(run.model, messages)
+                explanation, repaired = extract_diff(reply.text)
+                if repaired:
+                    run.explanation = explanation or run.explanation
+                    run.diff = repaired
+                    run.repaired = True
+                    verdict = verify_diff(self.repo, run.diff, self.checks)
             run.verdict = verdict.to_dict()
             self._emit("evidence", run, summary=verdict.summary(), passed=verdict.passed)
 
