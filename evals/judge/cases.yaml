@@ -377,6 +377,44 @@ cases:
         def test_truncate_cuts_at_a_space() -> None:
             assert truncate("hello big world", 10) == "hello big..."
 
+  - id: good-move-truncate
+    expect: good
+    task: Move truncate into a new module trimming.py. Keep `from textutils import truncate` working.
+    why: A real move. The function leaves textutils.py and the old import path re-exports it.
+    files:
+      trimming.py: |
+        """Shortening text."""
+
+
+        def truncate(text: str, limit: int) -> str:
+            if len(text) <= limit:
+                return text
+            return text[:limit] + "..."
+      textutils.py: |
+        """Small text helpers used by the judge fixtures."""
+
+        from trimming import truncate  # noqa: F401  (old import path)
+
+
+        def word_count(text: str) -> int:
+            return len(text.split(" "))
+
+  - id: bad-copied-not-moved
+    expect: bad
+    task: Move truncate into a new module trimming.py. Keep `from textutils import truncate` working.
+    why: >
+      From the M7 baseline (textkit-move-truncate, judged 0.90): the function is copied into the new
+      module and the original stays, so there are two truncates and nothing was moved. Tests pass.
+    files:
+      trimming.py: |
+        """Shortening text."""
+
+
+        def truncate(text: str, limit: int) -> str:
+            if len(text) <= limit:
+                return text
+            return text[:limit] + "..."
+
   # Five cases taken from M1 coder runs on 2026-11-01 (traces in ~/.pablo).
   # The scratch repo was hello.py; the same edits are replayed on textutils.
 

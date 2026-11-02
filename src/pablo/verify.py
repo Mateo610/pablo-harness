@@ -22,6 +22,55 @@ DEFAULT_CHECKS: dict[str, list[str]] = {
     "tests": ["python", "-m", "pytest", "-q"],
     "types": ["python", "-m", "mypy", "."],
 }
+# The "imports" check: import every module of the repo on its own, each in a fresh interpreter.
+# It catches what tests that import in a lucky order miss, such as a circular import created by
+# moving a function between modules (M7 baseline: inventory-move-bulk, judged 1.00). Stdlib only,
+# so it runs in any sandbox image. Modules run their top-level code; the sandbox contains that.
+IMPORTS_SCRIPT = """
+import concurrent.futures as cf, os, subprocess, sys
+SKIP = {"tests", "test", "docs", "scripts", "examples", "build", "dist", "node_modules",
+        "venv", "env", "site-packages", "migrations"}
+NOT_MODULES = {"conftest.py", "setup.py", "noxfile.py", "manage.py", "sitecustomize.py",
+               "usercustomize.py", "__main__.py"}
+def is_test(name):
+    return name.startswith("test_") or name.endswith("_test.py")
+def wanted_dir(parent, name):
+    return (not name.startswith((".", "_")) and name not in SKIP
+            and os.path.isfile(os.path.join(parent, name, "__init__.py")))
+mods = []
+for root in [r for r in (".", "src") if os.path.isdir(r)]:
+    for name in sorted(os.listdir(root)):
+        path = os.path.join(root, name)
+        if os.path.isdir(path) and wanted_dir(root, name):
+            for dirpath, dirnames, files in os.walk(path):
+                dirnames[:] = sorted(d for d in dirnames if wanted_dir(dirpath, d))
+                package = os.path.relpath(dirpath, root).replace(os.sep, ".")
+                for f in sorted(files):
+                    if f.endswith(".py") and f not in NOT_MODULES and not is_test(f):
+                        mods.append(package if f == "__init__.py" else package + "." + f[:-3])
+        elif root == "." and name.endswith(".py") and name not in NOT_MODULES and not is_test(name):
+            mods.append(name[:-3])
+env = dict(os.environ, PYTHONPATH=os.pathsep.join(["src", "."]))
+CODE = "import importlib, sys; importlib.import_module(sys.argv[1])"
+def load(mod):
+    try:
+        p = subprocess.run([sys.executable, "-c", CODE, mod],
+                           capture_output=True, text=True, timeout=60, env=env)
+    except subprocess.TimeoutExpired:
+        return mod, "timed out after 60s"
+    lines = (p.stderr or "").strip().splitlines()
+    return mod, (lines[-1] if lines else "exit %d" % p.returncode) if p.returncode else ""
+with cf.ThreadPoolExecutor(4) as pool:
+    failed = [(m, why) for m, why in pool.map(load, mods) if why]
+for mod, why in failed:
+    print("FAILED import %s: %s" % (mod, why))
+print("imported %d of %d modules on their own" % (len(mods) - len(failed), len(mods)))
+if failed:
+    print("Found %d errors" % len(failed))
+    sys.exit(1)
+"""
+IMPORTS_CHECK = ["python", "-c", IMPORTS_SCRIPT]
+
 IGNORED_DIRS = (".git", ".venv", "node_modules", "__pycache__", ".mypy_cache")
 IGNORE = shutil.ignore_patterns(*IGNORED_DIRS)
 

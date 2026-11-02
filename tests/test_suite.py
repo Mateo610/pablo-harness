@@ -22,6 +22,7 @@ from pablo.evals import (
 )
 from pablo.gateway import FakeBackend, Message
 from pablo.sandbox import LocalSandbox
+from pablo.verify import IMPORTS_CHECK, run_check
 
 TASKS = load_suite()
 PY = sys.executable
@@ -68,6 +69,8 @@ def test_hidden_test_needs_a_real_fix(tmp_path: Path, task: SuiteTask) -> None:
         (repo / rel).write_text(text)
     ok, out = visible_ok(repo)
     assert ok, f"the reference solution breaks the visible tests:\n{out}"
+    imports = run_check("imports", [PY, *IMPORTS_CHECK[1:]], repo)
+    assert imports.passed, imports.output_tail
 
 
 def _blocks_for(task: SuiteTask, repo_root: Path) -> str:

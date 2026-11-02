@@ -9,7 +9,7 @@ from pathlib import Path
 import yaml
 
 from pablo.gateway import FakeBackend, Message
-from pablo.verify import DEFAULT_CHECKS
+from pablo.verify import DEFAULT_CHECKS, IMPORTS_CHECK
 
 DEMO_DIFF = """diff --git a/PABLO_DEMO.md b/PABLO_DEMO.md
 new file mode 100644
@@ -59,11 +59,32 @@ def demo_backend() -> FakeBackend:
 
 
 def load_checks(repo: Path) -> dict[str, list[str]]:
-    """Project checks from .pablo/checks.yaml; Python defaults if it looks like a Python repo."""
+    """Project checks from .pablo/checks.yaml; Python defaults if it looks like a Python repo.
+
+    Any Python repo also gets the `imports` check unless checks.yaml sets `imports: off`.
+    """
     path = repo / ".pablo" / "checks.yaml"
+    checks: dict[str, list[str]] = {}
+    imports_off = False
     if path.is_file():
         data = yaml.safe_load(path.read_text("utf-8")) or {}
-        return {str(k): (v.split() if isinstance(v, str) else list(v)) for k, v in data.items()}
-    if (repo / "pyproject.toml").is_file():
-        return dict(DEFAULT_CHECKS)
-    return {}
+        for key, value in data.items():
+            if str(key) == "imports" and value in (False, "off", None):
+                imports_off = True
+                continue
+            checks[str(key)] = value.split() if isinstance(value, str) else list(value)
+    elif (repo / "pyproject.toml").is_file():
+        checks = dict(DEFAULT_CHECKS)
+    if not imports_off and "imports" not in checks and _has_python(repo):
+        checks["imports"] = list(IMPORTS_CHECK)
+    return checks
+
+
+def _has_python(repo: Path) -> bool:
+    for base in (repo, repo / "src"):
+        if not base.is_dir():
+            continue
+        for path in base.iterdir():
+            if path.suffix == ".py" or (path / "__init__.py").is_file():
+                return True
+    return False
