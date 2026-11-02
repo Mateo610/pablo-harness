@@ -19,7 +19,7 @@ Status: `todo` · `doing` · `done`. Update this table when a gate passes.
 | M4c | Deep rerun with real context | Symbol-based file picking, per-lane prompt budget, before-and-after checks; harness checks green in the sandbox; gpt-oss bake-off rerun decides keep or drop | done (deep off the router, available by hand: 2 better, 2 worse, 2 same) |
 | M5 | Sandbox | Checks run in a no-network container; a diff that opens a socket fails its checks | done (rootless runsc; pids, CPU pin, and the 4g address cap hold) |
 | M6 | Context | Repo map + Serena symbol lookup replace `repo_context`; coder fixes a bug in a file the task never names | todo |
-| M7 | Evals, then traces | `pablo eval`: 30 tasks with hidden tests, coder baseline and noise floor recorded; deep rematch on the suite. Langfuse viewer is M7b, optional | doing (suite and runner done in core track; baseline on Pablo) |
+| M7 | Evals, then traces | `pablo eval`: 30 tasks with hidden tests, coder baseline and noise floor recorded; deep rematch on the suite. Langfuse viewer is M7b, optional | doing (coder baseline 23/30, noise floor 2, false ready 2; deep rematch waits for an empty overnight queue) |
 | M8 | Learning loop | LoRA trained on `pablo export-training` output; promoted only if eval score beats baseline | todo |
 | M9 | Specialist lanes | Media lane dispatches image and 3D jobs; results come back as evidence cards | todo |
 | M9b | Voice lane | Local speech-to-text (Whisper/Canary class) behind `/api/voice`; hold-to-talk on the phone starts a run | todo |

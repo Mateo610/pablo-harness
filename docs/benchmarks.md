@@ -483,3 +483,42 @@ refactor-format. Context, both lanes: `ledger/money.py`, `ledger/entries.py`, `l
 refactor-dates. Context, both lanes: `ledger/entries.py`, `ledger/report.py`, `ledger/__init__.py`, `tests/test_ledger.py`, `ledger/money.py`, `pyproject.toml`. Both add `month_key` as `day[:7]`. Coder calls it from `in_month` and leaves `monthly` on `in_month`; the new `monthly_report_line` is a second copy. Deep calls it from both: `in_month` uses `month_key(entry.day) == month`, and `monthly` selects with `month_key(entry.day) == month`. Both change `in_month` from `day[5:7]`, so the old two-digit result changes. Deep is the one that edits both modules the task named.
 
 bug-monthly-amount. Same six files as refactor-dates. Both replace `format_cents(cents // 100)` with `format_cents(cents)` in `ledger/report.py`, and both make `monthly("2026-11")` see November. Coder's `in_month` becomes `entry.day.startswith(month)`. Deep keeps `entry.day[5:7] == month` for a two-digit month and uses `startswith` when `len(month) == 7`. Coder's new test expects `2026-11 $150.00`. Deep's `tests/test_report.py` expects `2026-11 $101.50`, which is not what `cents // 100` produced. The judge called that test a non-failure and scored 0.30. The hand score does not follow that.
+
+### Coder suite · coder (pablo/coder) · 2026-11-01T23:49:03+00:00 · `598a203`
+
+Hidden-test pass rate 77% (file 78% · symbol 67% · none 89%) · no diff 2 · ready 21, of which passed 0.905 · false ready 2 · missed 4 · certainty passed 0.85 / failed 0.56 · wall 431.9 s
+
+| task | refs | state | diff | visible | hidden | certainty | wall s |
+|---|---|---|---|---|---|---|---|
+| ledger-by-payee-sums | file | ready | yes | clean | pass | 1.00 | 15 |
+| ledger-load-line-commas | symbol | needs_you | yes | worse | FAIL | 0.30 | 15 |
+| ledger-negative-format | none | ready | yes | clean | pass | 1.00 | 16 |
+| ledger-thousands | symbol | needs_you | yes | clean | pass | 0.30 | 14 |
+| ledger-comments | none | ready | yes | clean | pass | 0.80 | 15 |
+| ledger-move-format | file | ready | yes | clean | pass | 1.00 | 16 |
+| ledger-month-total | symbol | ready | yes | clean | pass | 1.00 | 15 |
+| ledger-refunds-parse | none | ready | yes | clean | pass | 1.00 | 16 |
+| ledger-largest | file | ready | yes | clean | pass | 0.90 | 15 |
+| ledger-month-number | symbol | ready | yes | clean | pass | 1.00 | 16 |
+| textkit-word-count | symbol | ready | yes | clean | pass | 1.00 | 13 |
+| textkit-slug-accents | file | ready | yes | clean | pass | 0.80 | 14 |
+| textkit-top-words-punctuation | none | ready | yes | clean | pass | 0.90 | 15 |
+| textkit-wrap-max-lines | symbol | needs_you | yes | worse | pass | 0.30 | 16 |
+| textkit-truncate-words | none | ready | yes | clean | pass | 1.00 | 14 |
+| textkit-move-truncate | file | ready | yes | clean | FAIL | 0.90 | 14 |
+| textkit-slug-max-length | symbol | needs_you | yes | worse | FAIL | 0.30 | 25 |
+| textkit-reading-time | symbol | needs_you | yes | worse | FAIL | 0.30 | 17 |
+| textkit-top-words-ties | file | ready | yes | clean | pass | 1.00 | 14 |
+| textkit-slug-separator | none | ready | yes | clean | pass | 1.00 | 13 |
+| inventory-value-qty | symbol | ready | yes | clean | pass | 1.00 | 15 |
+| inventory-remove-too-many | none | needs_you | no | worse | FAIL | — | 8 |
+| inventory-bulk-threshold | file | ready | yes | clean | pass | 1.00 | 7 |
+| inventory-find-any-case | none | ready | yes | clean | pass | 1.00 | 14 |
+| inventory-csv-lenient | symbol | needs_you | yes | worse | pass | 0.30 | 16 |
+| inventory-merge-stock | file | ready | yes | clean | pass | 1.00 | 14 |
+| inventory-low-stock | symbol | needs_you | no | worse | FAIL | — | 11 |
+| inventory-discount-range | none | needs_you | yes | worse | pass | 0.30 | 10 |
+| inventory-move-bulk | file | ready | yes | clean | FAIL | 1.00 | 14 |
+| inventory-store-csv | symbol | ready | yes | clean | pass | 0.90 | 15 |
+
+Second run, same commit, not written to `evals/results.jsonl`: 25/30 (83%), file 78% · symbol 83% · none 89%, ready 22 (precision 0.955), false ready 1 (`textkit-move-truncate`), wall 448 s. Hidden-test flips versus the baseline: 2 (`ledger-load-line-commas`, `inventory-low-stock`). That is the noise floor.
