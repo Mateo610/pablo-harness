@@ -282,11 +282,17 @@ def test_escalated_trace_never_trains(settings: Settings, repo: Path) -> None:
 
 
 def test_answer_only_run_emits_finished(settings: Settings, repo: Path) -> None:
-    backend = FakeBackend(scripts={"pablo/deep": ["Here is a plan, no diff."]})
+    backend = FakeBackend(scripts={"pablo/media": ["Here is a moodboard plan, no diff."]})
     orch = Orchestrator(settings, backend, repo=repo, checks=CHECKS)
-    run = orch.start("sketch an architecture", lane="deep")
+    run = orch.start("sketch a logo direction", lane="media")
     kinds = [e.kind for e in orch.bus.history(run.id)]
     assert run.state == "ready" and kinds[-1] == "finished"
+
+
+def test_a_code_lane_reply_without_a_change_needs_you(settings: Settings, repo: Path) -> None:
+    backend = FakeBackend(scripts={"pablo/coder": ["I think add() is fine as it is."]})
+    run = Orchestrator(settings, backend, repo=repo, checks=CHECKS).start("fix add", lane="coder")
+    assert run.state == "needs_you" and "without a change" in run.question
 
 
 TWO_HUNK_DIFF = """diff --git a/calc.py b/calc.py

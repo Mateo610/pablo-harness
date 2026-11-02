@@ -115,7 +115,7 @@ def test_a_perfect_coder_scores_full_marks(settings: Settings) -> None:
     assert all(r.ready and r.clean for r in report.results)
     assert report.summary()["ready_precision"] == 1.0 and not report.false_ready
     assert all(r.context_files for r in report.results)
-    assert "| ledger-by-payee-sums | file | ready | yes | clean | pass |" in report.to_markdown()
+    assert "| ledger-by-payee-sums | file | ready | yes |  | clean | pass |" in report.to_markdown()
 
 
 def test_a_cheating_coder_fails_every_hidden_test(settings: Settings) -> None:

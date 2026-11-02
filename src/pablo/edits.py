@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import difflib
 import re
+import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -206,4 +207,49 @@ def blocks_to_diff(repo: Path, blocks: list[EditBlock]) -> str:
         diff = _git(work, "diff")
     if not diff.strip():
         raise EditError("the edit blocks did not change anything")
+    return diff
+
+
+def blocks_on_top(repo: Path, base_diff: str, blocks: list[EditBlock]) -> str:
+    """Apply blocks to the repo *after* `base_diff`, and return one diff from the original.
+
+    A coder fixing its own red checks often writes SEARCH text from its edited version of a
+    file. This lets those blocks land on that version. Raises EditError.
+    """
+    if not blocks:
+        raise EditError("no edit blocks found")
+    with tempfile.TemporaryDirectory(prefix="pablo-stack-") as tmp:
+        work = Path(tmp) / "work"
+        shutil.copytree(
+            repo,
+            work,
+            ignore=shutil.ignore_patterns(".git", ".venv", "node_modules", "__pycache__"),
+        )
+        _git(work, "init", "-q")
+        _git(work, "add", "-A")
+        _git(work, "-c", "user.name=pablo", "-c", "user.email=pablo@localhost",
+             "commit", "-q", "--allow-empty", "-m", "base")  # fmt: skip
+        applied = subprocess.run(
+            ["git", "apply", "--whitespace=nowarn", "-"],
+            cwd=work, input=base_diff, text=True, capture_output=True,
+        )  # fmt: skip
+        if applied.returncode != 0:
+            raise EditError(f"the earlier edits no longer apply: {applied.stderr.strip()}")
+        for block in blocks:
+            target = _safe_path(work, block.path)
+            current = target.read_text("utf-8") if target.is_file() else ""
+            if not block.search.strip():
+                if current:
+                    raise EditError(
+                        f"{block.path}: empty SEARCH on a file that already has content"
+                    )
+                updated = block.replace
+            else:
+                updated = apply_block(current, block)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(updated, "utf-8")
+        _git(work, "add", "-A", "--intent-to-add")
+        diff = _git(work, "diff", "HEAD")
+    if not diff.strip():
+        raise EditError("the edit blocks undid every change")
     return diff

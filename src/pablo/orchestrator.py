@@ -16,11 +16,18 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from pablo.config import ESCALATION_LANE, Settings
-from pablo.context import Budget, build_coder_context, context_files
-from pablo.edits import EditError, blocks_to_diff, has_blocks, parse_blocks, strip_blocks
+from pablo.config import ESCALATION_LANE, Lane, Settings
+from pablo.context import Budget, build_coder_context, clip, context_files
+from pablo.edits import (
+    EditError,
+    blocks_on_top,
+    blocks_to_diff,
+    has_blocks,
+    parse_blocks,
+    strip_blocks,
+)
 from pablo.events import Event, EventBus
-from pablo.gateway import ChatBackend, Message
+from pablo.gateway import ChatBackend, Completion, Message
 from pablo.hunks import all_ids
 from pablo.hunks import select as select_hunks
 from pablo.judge import judge
@@ -75,6 +82,15 @@ REPAIR_BLOCKS_PROMPT = """Those edits could not be applied: {error}
 Re-read the numbered files and reply with the complete, corrected set of edit blocks.
 Copy SEARCH lines exactly as they are in the file, without line numbers or |."""
 
+FIX_BLOCKS_PROMPT = """Your edits applied, but these checks are now worse than before your change:
+
+{failures}
+
+Fix it. If the code is wrong, fix the code. If a test you just wrote expects the wrong thing, fix
+that test. Never weaken, skip, or delete a test of the behavior the task asked for, and never patch
+the code under test from a test, conftest, or new module.
+Reply with edit blocks. SEARCH may copy the original numbered files or your edited version."""
+
 ANSWER_PROMPT = """You are a specialist on a small local team. Answer directly and concretely."""
 
 
@@ -104,6 +120,7 @@ class Run:
     group: str | None = None  # runs started together by compare()
     applied_hunks: list[str] | None = None  # set when you approve only part of the diff
     repaired: bool = False  # the coder fixed its own diff after git apply failed
+    fixed: bool = False  # the coder fixed its change after seeing checks it made worse
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
 
     def to_dict(self) -> dict[str, Any]:
@@ -335,6 +352,59 @@ class Orchestrator:
         explanation, diff = extract_diff(text)
         return explanation, diff, ""
 
+    def _fix_round(
+        self,
+        run: Run,
+        lane: Lane,
+        messages: list[Message],
+        reply: Completion,
+        verdict: Verdict,
+    ) -> tuple[list[Message], Completion, Verdict]:
+        """Show the coder the checks it made worse and take its fix if the result is better."""
+        failing = [c for c in verdict.checks if c.status not in ("passed", "already failing")]
+        failures = "\n\n".join(f"{c.label()}\n{clip(c.output_tail, 600)}" for c in failing)
+        self._emit("status", run, text=f"{run.lane} · checks got worse, fixing")
+        asked: list[Message] = [
+            *messages,
+            {"role": "assistant", "content": reply.text},
+            {"role": "user", "content": FIX_BLOCKS_PROMPT.format(failures=failures)},
+        ]
+        answer = self._during_swap(
+            run,
+            run.lane,
+            run.model,
+            f"{run.lane} · thinking",
+            lambda: self.backend.complete(
+                run.model,
+                asked,
+                temperature=lane.temperature,
+                top_p=lane.top_p,
+                max_tokens=lane.max_tokens,
+                timeout_s=lane.timeout_s,
+            ),
+            announce=False,
+        )
+        if not has_blocks(answer.text):
+            return messages, reply, verdict
+        blocks = parse_blocks(answer.text)
+        try:
+            diff = blocks_to_diff(self.repo, blocks)
+        except EditError:
+            try:
+                diff = blocks_on_top(self.repo, run.diff, blocks)
+            except EditError:
+                return messages, reply, verdict
+        fixed = verify_diff(
+            self.repo, diff, self.checks, sandbox=self.sandbox, baselines=self.baselines
+        )
+        if not _better(fixed, verdict):
+            self._emit("status", run, text=f"{run.lane} · fix didn't help, keeping the first try")
+            return messages, reply, verdict
+        run.diff = diff
+        run.fixed = True
+        run.explanation = strip_blocks(answer.text) or run.explanation
+        return asked, answer, fixed
+
     def _work(self, run: Run) -> None:
         lane = self.settings.lane(run.lane)
         wants_diff = lane.writes_code or run.lane in ("coder", ESCALATION_LANE)
@@ -408,6 +478,12 @@ class Orchestrator:
                     self.repo, run.diff, self.checks, sandbox=self.sandbox, baselines=self.baselines
                 )
 
+        if wants_diff and run.diff and verdict is not None and verdict.applied:
+            for _ in range(lane.fix_rounds if lane.kind == "local" else 0):
+                if verdict.clean:
+                    break
+                messages, reply, verdict = self._fix_round(run, lane, messages, reply, verdict)
+
         if run.diff and verdict is not None:
             checked = verdict
             run.verdict = checked.to_dict()
@@ -439,6 +515,12 @@ class Orchestrator:
             run.state = "needs_you"
             run.question = (
                 f"The coder's edits could not be applied ({edit_error}). Retry or escalate?"
+            )
+        elif wants_diff:
+            # A code lane that replied without a change has not done the task.
+            run.state = "needs_you"
+            run.question = (
+                "The coder replied without a change. Read its answer, retry, or escalate?"
             )
         else:
             run.state = "ready"
@@ -543,3 +625,16 @@ class Orchestrator:
         return self.start(
             original.task, escalate=True, escalated_from=original.id, task_id=original.task_id
         )
+
+
+def _better(new: Verdict, old: Verdict) -> bool:
+    """Clean beats not clean; otherwise fewer checks worse than the unedited repo."""
+    if not new.applied:
+        return False
+    if new.clean != old.clean:
+        return new.clean
+
+    def bad(v: Verdict) -> int:
+        return sum(c.status not in ("passed", "already failing") for c in v.checks)
+
+    return bad(new) < bad(old)

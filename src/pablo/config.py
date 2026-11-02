@@ -35,6 +35,9 @@ class Lane(BaseModel):
     # Whether the router may send work here on its own. False keeps a lane available
     # by hand (--lane, compare, the overnight queue) but out of automatic routing.
     routable: bool = True
+    # After checks get worse, show the coder the failing output this many times and let it fix
+    # its change. 0 turns it off. Remote lanes never get extra rounds (each one costs a call).
+    fix_rounds: int = 1
     # Sampling. Most lanes stay at 0.2. A lane sets top_p only when its model card requires it.
     temperature: float = 0.2
     top_p: float | None = None
@@ -46,6 +49,7 @@ class Lane(BaseModel):
             self.train_ok = False
             self.requires_approval = True
             self.routable = False
+            self.fix_rounds = 0
         return self
 
 

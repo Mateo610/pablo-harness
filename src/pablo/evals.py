@@ -122,6 +122,7 @@ class TaskResult:
     wall_s: float
     context_files: list[str] = field(default_factory=list)
     repaired: bool = False
+    fixed: bool = False  # passed or failed after a fix-on-red round
     run_id: str = ""
     hidden_tail: str = ""
 
@@ -177,6 +178,8 @@ class SuiteReport:
             else None,
             "false_ready": [r.id for r in self.false_ready],
             "missed": len(self.missed),
+            "fixed": sum(r.fixed for r in self.results),
+            "fixed_and_passed": sum(r.fixed and r.hidden_passed for r in self.results),
             "certainty_when_passed": self.mean_certainty(True),
             "certainty_when_failed": self.mean_certainty(False),
             "wall_s": round(sum(r.wall_s for r in self.results), 1),
@@ -194,17 +197,19 @@ class SuiteReport:
             f"Hidden-test pass rate {s['pass_rate']:.0%} ({by}) · no diff {s['no_diff']} · "
             f"ready {s['ready']}, of which passed {s['ready_precision'] if s['ready'] else '—'} · "
             f"false ready {len(s['false_ready'])} · missed {s['missed']} · "
+            f"fix rounds taken {s['fixed']} ({s['fixed_and_passed']} passed) · "
             f"certainty passed {s['certainty_when_passed']} "
             f"/ failed {s['certainty_when_failed']} · "
             f"wall {s['wall_s']} s",
             "",
-            "| task | refs | state | diff | visible | hidden | certainty | wall s |",
-            "|---|---|---|---|---|---|---|---|",
+            "| task | refs | state | diff | fixed | visible | hidden | certainty | wall s |",
+            "|---|---|---|---|---|---|---|---|---|",
         ]
         for r in self.results:
             cert = "—" if r.certainty is None else f"{r.certainty:.2f}"
             lines.append(
                 f"| {r.id} | {r.refs} | {r.state} | {'yes' if r.has_diff else 'no'} | "
+                f"{'yes' if r.fixed else ''} | "
                 f"{'clean' if r.clean else 'worse'} | {'pass' if r.hidden_passed else 'FAIL'} | "
                 f"{cert} | {r.wall_s:.0f} |"
             )
@@ -270,6 +275,7 @@ def run_suite(
                 wall_s=round(wall, 1),
                 context_files=list(context),
                 repaired=run.repaired,
+                fixed=run.fixed,
                 run_id=run.id,
                 hidden_tail="" if passed else tail[-600:],
             )
