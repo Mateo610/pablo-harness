@@ -168,9 +168,13 @@ def _clean_diff(diff: str) -> str:
     return text
 
 
-def repo_context(repo: Path, task: str, context_tokens: int = 10_500) -> str:
-    """The coder's context: task, one skill card, file tree, numbered files, under a budget."""
-    return build_coder_context(repo, task, budget=Budget.for_window(context_tokens))
+def repo_context(
+    repo: Path, task: str, context_tokens: int = 10_500, home: Path | None = None
+) -> str:
+    """The coder's context: task, one skill card, repo map, numbered files, under a budget."""
+    return build_coder_context(
+        repo, task, budget=Budget.for_window(context_tokens), home=home
+    )
 
 
 class Orchestrator:
@@ -418,13 +422,18 @@ class Orchestrator:
         system = (CODER_BLOCKS_PROMPT if blocks else CODER_PROMPT) if wants_diff else ANSWER_PROMPT
         messages: list[Message] = [
             {"role": "system", "content": system},
-            {"role": "user", "content": repo_context(self.repo, run.task, lane.context_tokens)},
+            {
+                "role": "user",
+                "content": repo_context(
+                    self.repo, run.task, lane.context_tokens, home=self.settings.home
+                ),
+            },
         ]
         budget = Budget.for_window(lane.context_tokens)
         self._emit(
             "context",
             run,
-            files=context_files(self.repo, run.task, budget),
+            files=context_files(self.repo, run.task, budget, home=self.settings.home),
             budget_tokens=budget.total,
         )
         reply = self._during_swap(

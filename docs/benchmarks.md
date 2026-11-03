@@ -827,3 +827,275 @@ Passed per run [29, 26, 30] · mean 79% ± 6% · false ready over all runs 4
 
 - Flaky (6): harness-hunk-stats, inventory-discount-range, inventory-low-stock, ledger-refunds-parse, textkit-move-truncate, textkit-slug-accents
 - Never passed (5): harness-clip-small-caps, harness-memory-units, inventory-remove-too-many, textkit-reading-time, textkit-slug-max-length
+
+### Coder suite · coder (pablo/coder) · 2026-11-03T03:56:52+00:00 · `d153feb`
+
+Hidden-test pass rate 83% (file 90% · symbol 80% · none 82%) · no diff 3 · ready 27, of which passed 1.0 · false ready 0 · missed 3 · fix rounds tried 8 {'kept': 6, 'not better': 2}, kept 6 (5 passed) · certainty passed 0.9 / failed 0.3 · wall 1193.0 s
+
+| task | refs | state | diff | fixed | visible | hidden | certainty | wall s |
+|---|---|---|---|---|---|---|---|---|
+| ledger-by-payee-sums | file | ready | yes |  | clean | pass | 1.00 | 16 |
+| ledger-load-line-commas | symbol | ready | yes | kept | clean | pass | 1.00 | 21 |
+| ledger-negative-format | none | ready | yes |  | clean | pass | 1.00 | 16 |
+| ledger-thousands | symbol | ready | yes |  | clean | pass | 1.00 | 15 |
+| ledger-comments | none | ready | yes |  | clean | pass | 1.00 | 19 |
+| ledger-move-format | file | ready | yes |  | clean | pass | 1.00 | 14 |
+| ledger-month-total | symbol | ready | yes |  | clean | pass | 1.00 | 13 |
+| ledger-refunds-parse | none | ready | yes |  | clean | pass | 1.00 | 16 |
+| ledger-largest | file | ready | yes |  | clean | pass | 1.00 | 15 |
+| ledger-month-number | symbol | ready | yes |  | clean | pass | 1.00 | 17 |
+| textkit-word-count | symbol | ready | yes |  | clean | pass | 1.00 | 14 |
+| textkit-slug-accents | file | needs_you | yes |  | clean | FAIL | 0.30 | 15 |
+| textkit-top-words-punctuation | none | ready | yes |  | clean | pass | 0.90 | 15 |
+| textkit-wrap-max-lines | symbol | needs_you | yes | not better | worse | FAIL | 0.30 | 35 |
+| textkit-truncate-words | none | ready | yes |  | clean | pass | 0.80 | 15 |
+| textkit-move-truncate | file | ready | yes |  | clean | pass | 1.00 | 14 |
+| textkit-slug-max-length | symbol | needs_you | yes | not better | worse | pass | 0.30 | 47 |
+| textkit-reading-time | symbol | needs_you | yes | kept | clean | FAIL | 0.30 | 18 |
+| textkit-top-words-ties | file | ready | yes |  | clean | pass | 1.00 | 14 |
+| textkit-slug-separator | none | ready | yes |  | clean | pass | 0.80 | 13 |
+| inventory-value-qty | symbol | ready | yes |  | clean | pass | 1.00 | 15 |
+| inventory-remove-too-many | none | needs_you | no |  | worse | FAIL | — | 8 |
+| inventory-bulk-threshold | file | ready | yes |  | clean | pass | 1.00 | 7 |
+| inventory-find-any-case | none | ready | yes |  | clean | pass | 1.00 | 14 |
+| inventory-csv-lenient | symbol | ready | yes | kept | clean | pass | 0.90 | 22 |
+| inventory-merge-stock | file | ready | yes |  | clean | pass | 1.00 | 14 |
+| inventory-low-stock | symbol | ready | yes | kept | clean | pass | 1.00 | 18 |
+| inventory-discount-range | none | ready | yes |  | clean | pass | 1.00 | 15 |
+| inventory-move-bulk | file | needs_you | yes | kept | clean | pass | 0.30 | 26 |
+| inventory-store-csv | symbol | ready | yes |  | clean | pass | 1.00 | 15 |
+| harness-judge-fenced-json | none | needs_you | yes |  | clean | pass | 0.30 | 114 |
+| harness-certainty-percent | symbol | ready | yes |  | clean | pass | 0.80 | 115 |
+| harness-memory-units | none | needs_you | no |  | worse | FAIL | — | 23 |
+| harness-hunk-stats | symbol | ready | yes | kept | clean | pass | 1.00 | 297 |
+| harness-clip-small-caps | symbol | needs_you | no |  | worse | FAIL | — | 17 |
+| harness-router-unknown-lane | file | ready | yes |  | clean | pass | 0.90 | 109 |
+
+### Coder suite · coder (pablo/coder) · 2026-11-03T04:17:11+00:00 · `d153feb`
+
+Hidden-test pass rate 86% (file 90% · symbol 80% · none 91%) · no diff 2 · ready 26, of which passed 0.962 · false ready 1 · missed 6 · fix rounds tried 7 {"didn't apply": 1, 'kept': 3, 'not better': 3}, kept 3 (2 passed) · certainty passed 0.85 / failed 0.53 · wall 1194.8 s
+
+| task | refs | state | diff | fixed | visible | hidden | certainty | wall s |
+|---|---|---|---|---|---|---|---|---|
+| ledger-by-payee-sums | file | ready | yes |  | clean | pass | 1.00 | 16 |
+| ledger-load-line-commas | symbol | ready | yes | kept | clean | pass | 1.00 | 20 |
+| ledger-negative-format | none | ready | yes |  | clean | pass | 1.00 | 17 |
+| ledger-thousands | symbol | ready | yes |  | clean | pass | 1.00 | 15 |
+| ledger-comments | none | ready | yes |  | clean | pass | 0.90 | 15 |
+| ledger-move-format | file | ready | yes |  | clean | pass | 1.00 | 14 |
+| ledger-month-total | symbol | ready | yes |  | clean | pass | 1.00 | 15 |
+| ledger-refunds-parse | none | ready | yes |  | clean | pass | 1.00 | 19 |
+| ledger-largest | file | ready | yes |  | clean | pass | 1.00 | 15 |
+| ledger-month-number | symbol | ready | yes |  | clean | pass | 1.00 | 17 |
+| textkit-word-count | symbol | ready | yes |  | clean | pass | 1.00 | 14 |
+| textkit-slug-accents | file | needs_you | yes |  | clean | FAIL | 0.30 | 15 |
+| textkit-top-words-punctuation | none | ready | yes |  | clean | pass | 0.90 | 16 |
+| textkit-wrap-max-lines | symbol | needs_you | yes | not better | worse | pass | 0.30 | 27 |
+| textkit-truncate-words | none | ready | yes |  | clean | pass | 1.00 | 15 |
+| textkit-move-truncate | file | ready | yes |  | clean | pass | 1.00 | 14 |
+| textkit-slug-max-length | symbol | needs_you | yes | not better | worse | FAIL | 0.30 | 27 |
+| textkit-reading-time | symbol | ready | yes | kept | clean | FAIL | 1.00 | 19 |
+| textkit-top-words-ties | file | ready | yes |  | clean | pass | 1.00 | 13 |
+| textkit-slug-separator | none | ready | yes |  | clean | pass | 0.80 | 13 |
+| inventory-value-qty | symbol | ready | yes |  | clean | pass | 1.00 | 14 |
+| inventory-remove-too-many | none | needs_you | no |  | worse | FAIL | — | 8 |
+| inventory-bulk-threshold | file | ready | yes |  | clean | pass | 1.00 | 9 |
+| inventory-find-any-case | none | ready | yes |  | clean | pass | 1.00 | 14 |
+| inventory-csv-lenient | symbol | needs_you | yes | not better | worse | pass | 0.30 | 25 |
+| inventory-merge-stock | file | ready | yes |  | clean | pass | 1.00 | 14 |
+| inventory-low-stock | symbol | ready | yes |  | clean | pass | 1.00 | 20 |
+| inventory-discount-range | none | ready | yes |  | clean | pass | 1.00 | 15 |
+| inventory-move-bulk | file | needs_you | yes | kept | clean | pass | 0.30 | 23 |
+| inventory-store-csv | symbol | ready | yes |  | clean | pass | 0.90 | 15 |
+| harness-judge-fenced-json | none | needs_you | yes |  | clean | pass | 0.30 | 113 |
+| harness-certainty-percent | symbol | ready | yes |  | clean | pass | 1.00 | 114 |
+| harness-memory-units | none | needs_you | yes | didn't apply | worse | pass | 0.30 | 226 |
+| harness-hunk-stats | symbol | needs_you | yes |  | clean | pass | 0.30 | 123 |
+| harness-clip-small-caps | symbol | needs_you | no |  | worse | FAIL | — | 19 |
+| harness-router-unknown-lane | file | ready | yes |  | clean | pass | 0.90 | 108 |
+
+### Coder suite · coder (pablo/coder) · 2026-11-03T04:38:44+00:00 · `d153feb`
+
+Hidden-test pass rate 75% (file 80% · symbol 73% · none 73%) · no diff 3 · ready 28, of which passed 0.893 · false ready 3 · missed 2 · fix rounds tried 9 {"didn't apply": 1, 'kept': 7, 'not better': 1}, kept 7 (3 passed) · certainty passed 0.91 / failed 0.63 · wall 1269.5 s
+
+| task | refs | state | diff | fixed | visible | hidden | certainty | wall s |
+|---|---|---|---|---|---|---|---|---|
+| ledger-by-payee-sums | file | ready | yes |  | clean | pass | 1.00 | 16 |
+| ledger-load-line-commas | symbol | ready | yes | kept | clean | pass | 1.00 | 23 |
+| ledger-negative-format | none | ready | yes |  | clean | pass | 1.00 | 16 |
+| ledger-thousands | symbol | ready | yes |  | clean | pass | 1.00 | 14 |
+| ledger-comments | none | ready | yes |  | clean | pass | 0.90 | 15 |
+| ledger-move-format | file | ready | yes |  | clean | pass | 0.90 | 17 |
+| ledger-month-total | symbol | ready | yes |  | clean | pass | 1.00 | 15 |
+| ledger-refunds-parse | none | ready | yes |  | clean | pass | 1.00 | 21 |
+| ledger-largest | file | ready | yes |  | clean | pass | 1.00 | 15 |
+| ledger-month-number | symbol | ready | yes |  | clean | pass | 1.00 | 16 |
+| textkit-word-count | symbol | ready | yes |  | clean | pass | 1.00 | 14 |
+| textkit-slug-accents | file | needs_you | yes |  | clean | pass | 0.30 | 15 |
+| textkit-top-words-punctuation | none | ready | yes |  | clean | pass | 0.90 | 15 |
+| textkit-wrap-max-lines | symbol | needs_you | yes | not better | worse | pass | 0.30 | 23 |
+| textkit-truncate-words | none | ready | yes | kept | clean | pass | 0.80 | 29 |
+| textkit-move-truncate | file | ready | yes |  | clean | FAIL | 0.90 | 15 |
+| textkit-slug-max-length | symbol | ready | yes | kept | clean | FAIL | 1.00 | 22 |
+| textkit-reading-time | symbol | ready | yes | kept | clean | FAIL | 1.00 | 18 |
+| textkit-top-words-ties | file | ready | yes |  | clean | pass | 1.00 | 14 |
+| textkit-slug-separator | none | ready | yes |  | clean | pass | 0.80 | 13 |
+| inventory-value-qty | symbol | ready | yes |  | clean | pass | 1.00 | 15 |
+| inventory-remove-too-many | none | needs_you | no |  | worse | FAIL | — | 8 |
+| inventory-bulk-threshold | file | ready | yes |  | clean | pass | 1.00 | 7 |
+| inventory-find-any-case | none | ready | yes |  | clean | pass | 1.00 | 14 |
+| inventory-csv-lenient | symbol | ready | yes | kept | clean | pass | 0.90 | 22 |
+| inventory-merge-stock | file | ready | yes |  | clean | pass | 1.00 | 15 |
+| inventory-low-stock | symbol | needs_you | no |  | worse | FAIL | — | 10 |
+| inventory-discount-range | none | needs_you | yes | kept | clean | FAIL | 0.30 | 12 |
+| inventory-move-bulk | file | needs_you | yes | didn't apply | worse | FAIL | 0.30 | 19 |
+| inventory-store-csv | symbol | ready | yes |  | clean | pass | 1.00 | 15 |
+| harness-judge-fenced-json | none | ready | yes |  | clean | pass | 1.00 | 121 |
+| harness-certainty-percent | symbol | ready | yes |  | clean | pass | 1.00 | 115 |
+| harness-memory-units | none | needs_you | yes | kept | clean | FAIL | 0.30 | 304 |
+| harness-hunk-stats | symbol | ready | yes |  | clean | pass | 1.00 | 120 |
+| harness-clip-small-caps | symbol | needs_you | no |  | worse | FAIL | — | 20 |
+| harness-router-unknown-lane | file | ready | yes |  | clean | pass | 0.90 | 107 |
+
+### Coder suite × 3 · coder (pablo/coder) · `d153feb`
+
+Passed per run [30, 31, 27] · mean 82% ± 6% · false ready over all runs 4
+
+- Flaky (8): harness-memory-units, inventory-discount-range, inventory-low-stock, inventory-move-bulk, textkit-move-truncate, textkit-slug-accents, textkit-slug-max-length, textkit-wrap-max-lines
+- Never passed (3): harness-clip-small-caps, inventory-remove-too-many, textkit-reading-time
+
+### Coder suite · coder (pablo/coder) · 2026-11-03T04:57:01+00:00 · `d153feb`
+
+Hidden-test pass rate 78% (file 90% · symbol 73% · none 73%) · no diff 3 · ready 29, of which passed 0.931 · false ready 2 · missed 1 · fix rounds tried 5 {"didn't apply": 1, 'kept': 3, 'not better': 1}, kept 3 (2 passed) · certainty passed 0.95 / failed 0.54 · wall 959.4 s
+
+| task | refs | state | diff | fixed | visible | hidden | certainty | wall s |
+|---|---|---|---|---|---|---|---|---|
+| ledger-by-payee-sums | file | ready | yes |  | clean | pass | 1.00 | 13 |
+| ledger-load-line-commas | symbol | ready | yes | kept | clean | pass | 1.00 | 23 |
+| ledger-negative-format | none | ready | yes |  | clean | pass | 1.00 | 16 |
+| ledger-thousands | symbol | ready | yes |  | clean | pass | 1.00 | 15 |
+| ledger-comments | none | ready | yes |  | clean | pass | 0.90 | 17 |
+| ledger-move-format | file | ready | yes |  | clean | pass | 0.90 | 22 |
+| ledger-month-total | symbol | ready | yes |  | clean | pass | 1.00 | 16 |
+| ledger-refunds-parse | none | ready | yes |  | clean | pass | 1.00 | 19 |
+| ledger-largest | file | ready | yes |  | clean | pass | 1.00 | 15 |
+| ledger-month-number | symbol | ready | yes |  | clean | pass | 1.00 | 17 |
+| textkit-word-count | symbol | ready | yes |  | clean | pass | 1.00 | 14 |
+| textkit-slug-accents | file | ready | yes |  | clean | pass | 1.00 | 15 |
+| textkit-top-words-punctuation | none | needs_you | no |  | worse | FAIL | — | 16 |
+| textkit-wrap-max-lines | symbol | needs_you | yes | not better | worse | pass | 0.30 | 24 |
+| textkit-truncate-words | none | ready | yes |  | clean | pass | 0.80 | 15 |
+| textkit-move-truncate | file | ready | yes |  | clean | pass | 1.00 | 14 |
+| textkit-slug-max-length | symbol | needs_you | yes |  | clean | FAIL | 0.30 | 19 |
+| textkit-reading-time | symbol | needs_you | yes | kept | clean | FAIL | 0.30 | 20 |
+| textkit-top-words-ties | file | ready | yes |  | clean | pass | 1.00 | 13 |
+| textkit-slug-separator | none | ready | yes |  | clean | pass | 1.00 | 14 |
+| inventory-value-qty | symbol | ready | yes |  | clean | pass | 1.00 | 15 |
+| inventory-remove-too-many | none | ready | yes | kept | clean | pass | 1.00 | 17 |
+| inventory-bulk-threshold | file | ready | yes |  | clean | pass | 1.00 | 13 |
+| inventory-find-any-case | none | ready | yes |  | clean | pass | 1.00 | 14 |
+| inventory-csv-lenient | symbol | ready | yes |  | clean | pass | 0.90 | 13 |
+| inventory-merge-stock | file | ready | yes |  | clean | pass | 1.00 | 14 |
+| inventory-low-stock | symbol | ready | yes |  | clean | pass | 1.00 | 15 |
+| inventory-discount-range | none | ready | yes |  | clean | pass | 1.00 | 15 |
+| inventory-move-bulk | file | needs_you | yes | didn't apply | worse | FAIL | 0.30 | 18 |
+| inventory-store-csv | symbol | ready | yes |  | clean | pass | 1.00 | 15 |
+| harness-judge-fenced-json | none | needs_you | no |  | worse | FAIL | — | 15 |
+| harness-certainty-percent | symbol | ready | yes |  | clean | FAIL | 0.90 | 109 |
+| harness-memory-units | none | ready | yes |  | clean | FAIL | 0.90 | 113 |
+| harness-hunk-stats | symbol | ready | yes |  | clean | pass | 0.90 | 115 |
+| harness-clip-small-caps | symbol | needs_you | no |  | worse | FAIL | — | 14 |
+| harness-router-unknown-lane | file | ready | yes |  | clean | pass | 1.00 | 108 |
+
+### Coder suite · coder (pablo/coder) · 2026-11-03T05:13:59+00:00 · `d153feb`
+
+Hidden-test pass rate 81% (file 100% · symbol 80% · none 64%) · no diff 3 · ready 27, of which passed 0.963 · false ready 1 · missed 3 · fix rounds tried 4 {'kept': 3, 'not better': 1}, kept 3 (1 passed) · certainty passed 0.9 / failed 0.42 · wall 995.3 s
+
+| task | refs | state | diff | fixed | visible | hidden | certainty | wall s |
+|---|---|---|---|---|---|---|---|---|
+| ledger-by-payee-sums | file | ready | yes |  | clean | pass | 1.00 | 13 |
+| ledger-load-line-commas | symbol | ready | yes |  | clean | pass | 1.00 | 15 |
+| ledger-negative-format | none | ready | yes |  | clean | pass | 1.00 | 16 |
+| ledger-thousands | symbol | ready | yes |  | clean | pass | 1.00 | 15 |
+| ledger-comments | none | ready | yes |  | clean | pass | 1.00 | 16 |
+| ledger-move-format | file | ready | yes |  | clean | pass | 1.00 | 15 |
+| ledger-month-total | symbol | ready | yes |  | clean | pass | 1.00 | 16 |
+| ledger-refunds-parse | none | needs_you | no |  | worse | FAIL | — | 37 |
+| ledger-largest | file | ready | yes |  | clean | pass | 1.00 | 10 |
+| ledger-month-number | symbol | ready | yes |  | clean | pass | 1.00 | 17 |
+| textkit-word-count | symbol | needs_you | yes |  | clean | pass | 0.30 | 13 |
+| textkit-slug-accents | file | ready | yes |  | clean | pass | 1.00 | 15 |
+| textkit-top-words-punctuation | none | ready | yes |  | clean | pass | 0.90 | 17 |
+| textkit-wrap-max-lines | symbol | needs_you | yes | not better | worse | pass | 0.30 | 21 |
+| textkit-truncate-words | none | ready | yes |  | clean | pass | 0.80 | 19 |
+| textkit-move-truncate | file | ready | yes |  | clean | pass | 1.00 | 14 |
+| textkit-slug-max-length | symbol | needs_you | yes |  | clean | FAIL | 0.30 | 43 |
+| textkit-reading-time | symbol | needs_you | yes | kept | clean | FAIL | 0.30 | 18 |
+| textkit-top-words-ties | file | ready | yes |  | clean | pass | 1.00 | 14 |
+| textkit-slug-separator | none | ready | yes |  | clean | pass | 1.00 | 14 |
+| inventory-value-qty | symbol | ready | yes |  | clean | pass | 1.00 | 15 |
+| inventory-remove-too-many | none | needs_you | yes | kept | clean | FAIL | 0.20 | 17 |
+| inventory-bulk-threshold | file | ready | yes |  | clean | pass | 1.00 | 13 |
+| inventory-find-any-case | none | ready | yes |  | clean | pass | 1.00 | 14 |
+| inventory-csv-lenient | symbol | ready | yes |  | clean | pass | 0.90 | 13 |
+| inventory-merge-stock | file | ready | yes |  | clean | pass | 1.00 | 14 |
+| inventory-low-stock | symbol | ready | yes |  | clean | pass | 1.00 | 14 |
+| inventory-discount-range | none | ready | yes |  | clean | pass | 1.00 | 15 |
+| inventory-move-bulk | file | ready | yes | kept | clean | pass | 0.90 | 22 |
+| inventory-store-csv | symbol | ready | yes |  | clean | pass | 0.90 | 15 |
+| harness-judge-fenced-json | none | needs_you | no |  | worse | FAIL | — | 14 |
+| harness-certainty-percent | symbol | ready | yes |  | clean | pass | 1.00 | 109 |
+| harness-memory-units | none | ready | yes |  | clean | FAIL | 0.90 | 113 |
+| harness-hunk-stats | symbol | needs_you | yes |  | clean | pass | 0.30 | 129 |
+| harness-clip-small-caps | symbol | needs_you | no |  | worse | FAIL | — | 15 |
+| harness-router-unknown-lane | file | ready | yes |  | clean | pass | 0.90 | 108 |
+
+### Coder suite · coder (pablo/coder) · 2026-11-03T05:32:41+00:00 · `d153feb`
+
+Hidden-test pass rate 78% (file 70% · symbol 87% · none 73%) · no diff 3 · ready 25, of which passed 0.92 · false ready 2 · missed 5 · fix rounds tried 6 {"didn't apply": 2, 'kept': 2, 'not better': 2}, kept 2 (1 passed) · certainty passed 0.86 / failed 0.54 · wall 1099.1 s
+
+| task | refs | state | diff | fixed | visible | hidden | certainty | wall s |
+|---|---|---|---|---|---|---|---|---|
+| ledger-by-payee-sums | file | ready | yes |  | clean | pass | 1.00 | 13 |
+| ledger-load-line-commas | symbol | ready | yes |  | clean | pass | 0.90 | 18 |
+| ledger-negative-format | none | ready | yes |  | clean | pass | 1.00 | 18 |
+| ledger-thousands | symbol | ready | yes |  | clean | pass | 1.00 | 14 |
+| ledger-comments | none | ready | yes |  | clean | pass | 1.00 | 17 |
+| ledger-move-format | file | ready | yes |  | clean | pass | 1.00 | 15 |
+| ledger-month-total | symbol | ready | yes |  | clean | pass | 1.00 | 16 |
+| ledger-refunds-parse | none | ready | yes |  | clean | pass | 1.00 | 19 |
+| ledger-largest | file | ready | yes |  | clean | pass | 1.00 | 15 |
+| ledger-month-number | symbol | ready | yes |  | clean | pass | 1.00 | 17 |
+| textkit-word-count | symbol | needs_you | yes |  | clean | pass | 0.30 | 13 |
+| textkit-slug-accents | file | needs_you | yes |  | clean | FAIL | 0.30 | 15 |
+| textkit-top-words-punctuation | none | ready | yes |  | clean | pass | 0.90 | 18 |
+| textkit-wrap-max-lines | symbol | needs_you | yes | didn't apply | worse | pass | 0.30 | 26 |
+| textkit-truncate-words | none | ready | yes |  | clean | pass | 0.80 | 14 |
+| textkit-move-truncate | file | ready | yes |  | clean | pass | 1.00 | 14 |
+| textkit-slug-max-length | symbol | needs_you | yes | didn't apply | worse | pass | 0.30 | 29 |
+| textkit-reading-time | symbol | ready | yes |  | clean | FAIL | 0.90 | 42 |
+| textkit-top-words-ties | file | needs_you | no |  | worse | FAIL | — | 14 |
+| textkit-slug-separator | none | ready | yes |  | clean | pass | 1.00 | 8 |
+| inventory-value-qty | symbol | ready | yes |  | clean | pass | 1.00 | 15 |
+| inventory-remove-too-many | none | needs_you | yes | not better | worse | pass | 0.30 | 17 |
+| inventory-bulk-threshold | file | ready | yes |  | clean | pass | 1.00 | 13 |
+| inventory-find-any-case | none | ready | yes |  | clean | pass | 1.00 | 14 |
+| inventory-csv-lenient | symbol | ready | yes |  | clean | pass | 0.90 | 13 |
+| inventory-merge-stock | file | ready | yes |  | clean | pass | 1.00 | 14 |
+| inventory-low-stock | symbol | ready | yes |  | clean | pass | 1.00 | 14 |
+| inventory-discount-range | none | needs_you | yes | kept | clean | FAIL | 0.30 | 18 |
+| inventory-move-bulk | file | needs_you | yes | not better | worse | FAIL | 0.30 | 23 |
+| inventory-store-csv | symbol | ready | yes |  | clean | pass | 1.00 | 15 |
+| harness-judge-fenced-json | none | needs_you | no |  | worse | FAIL | — | 21 |
+| harness-certainty-percent | symbol | ready | yes |  | clean | pass | 1.00 | 109 |
+| harness-memory-units | none | ready | yes |  | clean | FAIL | 0.90 | 114 |
+| harness-hunk-stats | symbol | needs_you | yes | kept | clean | pass | 0.30 | 219 |
+| harness-clip-small-caps | symbol | needs_you | no |  | worse | FAIL | — | 19 |
+| harness-router-unknown-lane | file | ready | yes |  | clean | pass | 1.00 | 108 |
+
+### Coder suite × 3 · coder (pablo/coder) · `d153feb`
+
+Passed per run [28, 29, 28] · mean 79% ± 2% · false ready over all runs 5
+
+- Flaky (9): harness-certainty-percent, inventory-discount-range, inventory-move-bulk, inventory-remove-too-many, ledger-refunds-parse, textkit-slug-accents, textkit-slug-max-length, textkit-top-words-punctuation, textkit-top-words-ties
+- Never passed (4): harness-clip-small-caps, harness-judge-fenced-json, harness-memory-units, textkit-reading-time

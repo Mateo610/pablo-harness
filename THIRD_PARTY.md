@@ -25,6 +25,8 @@ and how it is used. Add a row before adding a dependency or copying code.
 | gVisor `runsc` 20261026.0 | Apache-2.0 | process (OCI runtime; wrapper adds `--ignore-cgroups`) |
 | `python:3.11-slim` `@sha256:673719e071ec…` | PSF + Debian packages | base of `pablo-check:py311`, saved at `~/pablo-data/images/pablo-check-py311.tar` |
 | git (Debian package in `pablo-check:py311`) | GPL-2.0 | process (the harness tests run `git init` inside the sandbox; not imported) |
+| tree-sitter (py-tree-sitter) 0.26.0 | MIT | dep (repo map parser) |
+| tree-sitter-python 0.25.0 | MIT | dep (Python grammar for the repo map) |
 
 ## Planned (verify each license at the source before adopting)
 | Name | Expected license | Planned use | Milestone |
@@ -33,8 +35,8 @@ and how it is used. Add a row before adding a dependency or copying code.
 | llama.cpp | MIT | process (engine) | M1 |
 | KTransformers | Apache-2.0 | process (MoE engine) | M3 |
 | colibrì v2.1.0 | Apache-2.0 | process (expert streaming) | M3 |
-| Serena | MIT | process (LSP tools over MCP) | M6 |
-| Langfuse (core) | MIT | process (trace UI) | M7 |
+| Serena | MIT | process (LSP tools over MCP) | M6 (only if the map alone does not win) |
+| Langfuse (core) | MIT | process (trace UI) | M7b |
 | Promptfoo | MIT | dev tool (evals) | M7 |
 | Unsloth | Apache-2.0 | dev tool (LoRA training) | M8 |
 | MiroFish-Offline | AGPL-3.0 | process only, never imported | later |

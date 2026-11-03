@@ -13,6 +13,7 @@ import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -261,13 +262,15 @@ def pick_files(
     task: str,
     repo: Path | None = None,
     max_files: int = MAX_FILES,
+    *,
+    repo_map: Any | None = None,
 ) -> list[str]:
     """Files the task is about, most relevant first, at most `max_files`.
 
     Order: files the task names by path, modules it names (`report` in report.monthly),
     files that define a symbol it names, files that use those symbols, then the rest
-    ranked by how many task words they contain (a big window also takes the rest, smallest
-    first, so a small repo fits whole). Without `repo` only paths are matched.
+    ranked by the repo map (BM25 over symbols) when present, else by task-word hits.
+    Without `repo` only paths are matched.
     """
     named = [f for f in listed if f in task or Path(f).name in task]
     if repo is None:
@@ -300,20 +303,24 @@ def pick_files(
             if rel not in picked and _uses(text(rel), refs):
                 picked.append(rel)
 
-    def score(rel: str) -> tuple[int, int]:
-        body = text(rel).lower()
-        path = rel.lower()
-        hits = sum(3 if w in path else 1 for w in refs.words if w in path or w in body)
-        return (-hits, len(body))
-
     # A file that quotes the task (an eval or plan listing it) is the question, not the code.
     quote = " ".join(task.split())[:60]
-    rest = sorted(
-        (f for f in readable if f not in picked and quote not in " ".join(text(f).split())),
-        key=score,
-    )
-    if max_files <= MAX_FILES:  # a small window keeps only files that share task words
-        rest = [f for f in rest if score(f)[0] < 0] or (rest if not picked else [])
+    rest = [
+        f for f in readable if f not in picked and quote not in " ".join(text(f).split())
+    ]
+    if repo_map is not None:
+        rest = repo_map.rank_files(task, rest)
+    else:
+
+        def score(rel: str) -> tuple[int, int]:
+            body = text(rel).lower()
+            path = rel.lower()
+            hits = sum(3 if w in path else 1 for w in refs.words if w in path or w in body)
+            return (-hits, len(body))
+
+        rest = sorted(rest, key=score)
+        if max_files <= MAX_FILES:  # a small window keeps only files that share task words
+            rest = [f for f in rest if score(f)[0] < 0] or (rest if not picked else [])
     return [*picked, *rest][:max_files]
 
 
@@ -342,30 +349,49 @@ class Budget:
 
 
 def context_files(
-    repo: Path, task: str, budget: Budget | None = None, listed: list[str] | None = None
+    repo: Path,
+    task: str,
+    budget: Budget | None = None,
+    listed: list[str] | None = None,
+    *,
+    repo_map: Any | None = None,
+    home: Path | None = None,
 ) -> list[str]:
     """The files a prompt for this task will carry, in order (shown in the run's replay)."""
     budget = budget or Budget()
-    return pick_files(
-        listed if listed is not None else list_files(repo), task, repo, budget.max_files
-    )
+    files = listed if listed is not None else list_files(repo)
+    rmap = repo_map
+    if rmap is None:
+        from pablo.repomap import load_or_build
+
+        rmap = load_or_build(repo, home=home, listed=files)
+    return pick_files(files, task, repo, budget.max_files, repo_map=rmap)
 
 
 def build_coder_context(
-    repo: Path, task: str, *, last_error: str = "", budget: Budget | None = None
+    repo: Path,
+    task: str,
+    *,
+    last_error: str = "",
+    budget: Budget | None = None,
+    home: Path | None = None,
 ) -> str:
     budget = budget or Budget()
     listed = list_files(repo)
+    from pablo.repomap import load_or_build
+
+    rmap = load_or_build(repo, home=home, listed=listed)
     blocks = []
-    for rel in context_files(repo, task, budget, listed):
+    for rel in context_files(repo, task, budget, listed, repo_map=rmap, home=home):
         body = (repo / rel).read_text(encoding="utf-8", errors="replace")
         blocks.append(f"--- {rel}\n{clip(numbered(body), budget.per_file)}")
     skill = pick_skill(task)
+    tree = rmap.render() if rmap.symbols else "\n".join(listed[:MAX_TREE_FILES])
     sections = [
         Section("task", task, BUDGET["task"]),
         Section("skill", skill.body if skill else "", BUDGET["skill"], "Guidance:"),
         Section("error", last_error, BUDGET["error"], "Last attempt failed with:"),
-        Section("tree", "\n".join(listed[:MAX_TREE_FILES]), budget.tree, "Repo files:"),
+        Section("tree", tree, budget.tree, "Repo map:" if rmap.symbols else "Repo files:"),
         Section("files", "\n\n".join(blocks), budget.files),
     ]
     return assemble(sections, budget.total)
