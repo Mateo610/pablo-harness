@@ -155,3 +155,25 @@ def test_repeat_runs_report_spread_and_flaky_tasks(settings: Settings) -> None:
     a = aggregate([good, bad])
     assert a["pass_counts"] == [2, 0] and a["mean_pass_rate"] == 0.5
     assert a["flaky"] == sorted(one) and a["always"] == [] and a["never"] == []
+
+
+def test_a_move_may_leave_a_wrapper_but_not_a_copy(tmp_path: Path) -> None:
+    """The baseline's move tasks failed on `is` checks; a thin wrapper is a real move too."""
+    task = next(t for t in TASKS if t.id == "textkit-move-truncate")
+    repo = materialize(task, tmp_path)
+    wrap = (repo / "textkit" / "wrap.py").read_text()
+    head = wrap[: wrap.index("\n\ndef truncate")]
+    trim = task.solution["textkit/trim.py"]
+    wrapper = head + (
+        "\n\ndef truncate(text: str, limit: int) -> str:\n"
+        "    from textkit.trim import truncate as moved\n\n    return moved(text, limit)\n"
+    )
+    ok, out = hidden_check(
+        task, repo, "", LocalSandbox(), files={"textkit/trim.py": trim, "textkit/wrap.py": wrapper},
+        python=PY,
+    )  # fmt: skip
+    assert ok, out
+    copied, _ = hidden_check(
+        task, repo, "", LocalSandbox(), files={"textkit/trim.py": trim}, python=PY
+    )
+    assert not copied

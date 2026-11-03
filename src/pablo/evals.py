@@ -175,6 +175,8 @@ class TaskResult:
     fix_outcome: str = ""  # "" · kept · no edit blocks · didn't apply · not better
     run_id: str = ""
     hidden_tail: str = ""
+    question: str = ""  # why it landed in Needs you (an edit error, a reply with no change, ...)
+    explanation: str = ""  # the start of the coder's own words
 
     @property
     def ready(self) -> bool:
@@ -335,6 +337,8 @@ def run_suite(
                 fix_outcome=run.fix_outcome,
                 run_id=run.id,
                 hidden_tail="" if passed else tail[-600:],
+                question=run.question[:400],
+                explanation=run.explanation[:300],
             )
             results.append(result)
             if on_task:

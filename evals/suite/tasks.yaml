@@ -212,8 +212,9 @@ tasks:
 
     def test_format_lives_in_its_own_module() -> None:
         assert ledger.format.format_cents(150) == "$1.50"
-        assert ledger.money.format_cents is ledger.format.format_cents
-        assert "def format_cents" not in open(ledger.money.__file__).read()
+        assert ledger.money.format_cents(-0) == "$0.00"  # the old import path still works
+        # Moved, not copied: the formatting logic no longer lives in money.py (a thin wrapper is fine).
+        assert "% 100" not in open(ledger.money.__file__).read()
   solution:
     ledger/format.py: |
       """Turning cents into text."""
@@ -610,8 +611,9 @@ tasks:
 
     def test_truncate_moved() -> None:
         assert textkit.trim.truncate("abcdefghij", 4) == "abcd..."
-        assert textkit.wrap.truncate is textkit.trim.truncate
-        assert "def truncate" not in open(textkit.wrap.__file__).read()
+        assert textkit.wrap.truncate("abcdefghij", 4) == "abcd..."  # the old import path still works
+        # Moved, not copied: the cutting logic no longer lives in wrap.py (a thin wrapper is fine).
+        assert "text[:limit]" not in open(textkit.wrap.__file__).read()
   solution:
     textkit/trim.py: |
       """Shortening text."""
@@ -1081,8 +1083,9 @@ tasks:
     def test_bulk_moved() -> None:
         assert inventory.bulk.bulk_price(100, 20) == 1800
         assert inventory.bulk.bulk_price(100, 10) == 1000
-        assert inventory.pricing.bulk_price is inventory.bulk.bulk_price
-        assert "def bulk_price" not in open(inventory.pricing.__file__).read()
+        assert inventory.pricing.bulk_price(100, 20) == 1800  # the old import path still works
+        # Moved, not copied: the bulk rule no longer lives in pricing.py (a thin wrapper is fine).
+        assert "qty > 10" not in open(inventory.pricing.__file__).read()
   solution:
     inventory/bulk.py: |
       """Bulk pricing."""
