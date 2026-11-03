@@ -263,9 +263,12 @@ def deps_hash(repo: Path) -> str:
 
 
 def project_image(base: str, repo: Path) -> str:
-    """`pablo-check-<project>:<deps hash>`. Changes whenever a dependency file does."""
-    slug = re.sub(r"[^a-z0-9]+", "-", repo.resolve().name.lower()).strip("-") or "project"
-    return f"{base.split(':', 1)[0]}-{slug}:{deps_hash(repo)}"
+    """`pablo-check-deps:<deps hash>`: named by the dependency files' contents, not the folder.
+
+    Two copies of a project with the same pyproject/lock share one image, so an eval's
+    throwaway copy of a repo uses the image you built for the real one.
+    """
+    return f"{base.split(':', 1)[0]}-deps:{deps_hash(repo)}"
 
 
 def touches_deps(files: Sequence[str]) -> bool:

@@ -12,6 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # the eval suite's harness seed is a pinned commit of this repo
       - uses: astral-sh/setup-uv@v3
       - run: uv sync
       - run: uv run ruff check src tests

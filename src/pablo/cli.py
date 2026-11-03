@@ -398,13 +398,14 @@ def export_training(out: Path = Path("training/approved.jsonl")) -> None:
 def eval_suite(
     lane: Annotated[str, typer.Option(help="Lane to score")] = "coder",
     only: Annotated[str, typer.Option(help="Comma-separated task ids")] = "",
+    repeat: Annotated[int, typer.Option(help="Run the suite N times and report the spread")] = 1,
     fake: FakeOpt = False,
     write: Annotated[
         bool, typer.Option(help="Append to evals/results.jsonl and docs/benchmarks.md")
     ] = False,
 ) -> None:
-    """Score a lane on the 30-task coder suite against hidden tests (evals/suite)."""
-    from pablo.evals import append_result, run_suite
+    """Score a lane on the coder suite against hidden tests (evals/suite)."""
+    from pablo.evals import aggregate, aggregate_markdown, append_result, run_suite
     from pablo.sandbox import LocalSandbox
 
     settings = load_settings()
@@ -413,28 +414,45 @@ def eval_suite(
     def show(r: Any) -> None:
         mark = "[green]pass[/]" if r.hidden_passed else "[red]FAIL[/]"
         cert = "—" if r.certainty is None else f"{r.certainty:.2f}"
-        console.print(f"  {r.id:<32} {r.refs:<6} {r.state:<9} {mark}  {cert}  {r.wall_s:.0f}s")
+        fix = f"  fix: {r.fix_outcome}" if r.fix_outcome else ""
+        console.print(f"  {r.id:<32} {r.refs:<6} {r.state:<9} {mark}  {cert}  {r.wall_s:.0f}s{fix}")
 
-    report = run_suite(
-        settings,
-        backend,
-        lane=lane,
-        only={x.strip() for x in only.split(",") if x.strip()} or None,
-        sandbox=LocalSandbox() if fake else None,
-        swap=None if fake else SwapView(),
-        on_task=show,
-    )
-    s = report.summary()
-    console.print(
-        f"pass {s['pass_rate']:.0%} {s['pass_rate_by_refs']} · ready {s['ready']} "
-        f"(precision {s['ready_precision']}) · false ready {s['false_ready']} · wall {s['wall_s']}s"
-    )
+    reports = []
+    for i in range(max(1, repeat)):
+        if repeat > 1:
+            console.print(f"[bold]run {i + 1} of {repeat}[/]")
+        report = run_suite(
+            settings,
+            backend,
+            lane=lane,
+            only={x.strip() for x in only.split(",") if x.strip()} or None,
+            sandbox=LocalSandbox() if fake else None,
+            swap=None if fake else SwapView(),
+            on_task=show,
+        )
+        s = report.summary()
+        console.print(
+            f"pass {s['pass_rate']:.0%} {s['pass_rate_by_refs']} · ready {s['ready']} "
+            f"(precision {s['ready_precision']}) · false ready {s['false_ready']} · "
+            f"fix tried {s['fix_tried']} {s['fix_outcomes']} · wall {s['wall_s']}s"
+        )
+        reports.append(report)
+        if write and not fake:
+            append_result(report)
+    if repeat > 1:
+        a = aggregate(reports)
+        console.print(
+            f"[bold]{a['runs']} runs:[/] passed {a['pass_counts']} · mean "
+            f"{a['mean_pass_rate']:.0%} ± {a['stdev_pass_rate']:.0%} · flaky {a['flaky']}"
+        )
     if write and not fake:
-        append_result(report)
         docs = Path("docs/benchmarks.md")
         if docs.is_file():
             with docs.open("a", encoding="utf-8") as fh:
-                fh.write("\n" + report.to_markdown() + "\n")
+                for report in reports:
+                    fh.write("\n" + report.to_markdown() + "\n")
+                if repeat > 1:
+                    fh.write("\n" + aggregate_markdown(reports) + "\n")
         console.print("appended to evals/results.jsonl and docs/benchmarks.md")
 
 
@@ -491,13 +509,39 @@ app.add_typer(sandbox_app, name="sandbox")
 def sandbox_build(
     repo: RepoOpt = Path("."),
     base: Annotated[bool, typer.Option("--base", help="Build the base image instead")] = False,
+    suite: Annotated[
+        bool, typer.Option("--suite", help="Build images for the eval suite's seeds that need one")
+    ] = False,
 ) -> None:
     """Build the check image (needs network; checks never do). Rebuild when deps change."""
     from pablo.config import find_config
-    from pablo.sandbox import build_base, build_project, project_image
+    from pablo.sandbox import build_base, build_project, dep_files, make_sandbox, project_image
 
     settings = load_settings()
     cfg = settings.sandbox
+    if suite:
+        import tempfile
+
+        from pablo.evals import load_suite, materialize
+
+        seen: set[str] = set()
+        with tempfile.TemporaryDirectory(prefix="pablo-suite-images-") as tmp:
+            for task in load_suite():
+                if task.repo in seen:
+                    continue
+                seen.add(task.repo)
+                seed = materialize(task, Path(tmp))
+                if not dep_files(seed):
+                    continue
+                ready, _ = make_sandbox(cfg, seed).ready()
+                tag = project_image(cfg.image, seed)
+                if ready:
+                    console.print(f"{task.repo}: {tag} already built")
+                    continue
+                if build_project(cfg, seed).returncode != 0:
+                    raise typer.Exit(1)
+                console.print(f"{task.repo}: built [bold]{tag}[/]")
+        return
     if base:
         dockerfile = find_config().parent.parent / "scripts" / "sandbox" / "Dockerfile"
         code = build_base(cfg, dockerfile).returncode

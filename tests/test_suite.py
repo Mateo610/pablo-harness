@@ -15,7 +15,9 @@ from pablo.config import Settings
 from pablo.evals import (
     SUITE,
     SuiteTask,
+    aggregate,
     hidden_check,
+    load_seeds,
     load_suite,
     materialize,
     run_suite,
@@ -38,15 +40,29 @@ def visible_ok(repo: Path) -> tuple[bool, str]:
     return proc.returncode == 0, proc.stdout[-800:]
 
 
+SEEDS = load_seeds()
+
+
 def test_suite_shape() -> None:
-    assert len(TASKS) == 30 and len({t.id for t in TASKS}) == 30
+    assert len(TASKS) == 36 and len({t.id for t in TASKS}) == 36
     refs = Counter(t.refs for t in TASKS)
-    assert set(refs) == {"file", "symbol", "none"} and min(refs.values()) >= 8
-    assert {t.repo for t in TASKS} == {"ledger", "textkit", "inventory"}
+    assert set(refs) == {"file", "symbol", "none"} and min(refs.values()) >= 10
+    assert {t.repo for t in TASKS} == {"ledger", "textkit", "inventory", "harness"}
+    assert sum(t.repo == "harness" for t in TASKS) == 6
     for t in TASKS:
-        assert (SUITE / "repos" / t.repo).is_dir()
+        assert t.repo in SEEDS or (SUITE / "repos" / t.repo).is_dir()
         assert t.solution and "def test_" in t.hidden
         assert not any(name in t.task for name in t.solution.values())  # no answers in the task
+
+
+def test_the_harness_seed_is_a_pinned_commit_without_the_suite(tmp_path: Path) -> None:
+    """The model must never find the suite's hidden tests or solutions inside its repo."""
+    task = next(t for t in TASKS if t.repo == "harness")
+    repo = materialize(task, tmp_path)
+    assert (repo / "src" / "pablo" / "judge.py").is_file()
+    assert (
+        not (repo / "evals" / "suite").exists() and not (repo / "tests" / "test_suite.py").exists()
+    )
 
 
 @pytest.mark.parametrize("name", ["ledger", "textkit", "inventory"])
@@ -67,8 +83,9 @@ def test_hidden_test_needs_a_real_fix(tmp_path: Path, task: SuiteTask) -> None:
     for rel, text in task.solution.items():
         (repo / rel).parent.mkdir(parents=True, exist_ok=True)
         (repo / rel).write_text(text)
-    ok, out = visible_ok(repo)
-    assert ok, f"the reference solution breaks the visible tests:\n{out}"
+    if task.repo not in SEEDS:  # the harness's own suite is too slow for every CI run
+        ok, out = visible_ok(repo)
+        assert ok, f"the reference solution breaks the visible tests:\n{out}"
     imports = run_check("imports", [PY, *IMPORTS_CHECK[1:]], repo)
     assert imports.passed, imports.output_tail
 
@@ -129,3 +146,12 @@ def test_eval_runs_never_reach_real_traces(settings: Settings) -> None:
     run_suite(settings, _coder(cheat=False), only={"ledger-by-payee-sums"}, python=PY,
               sandbox=LocalSandbox())  # fmt: skip
     assert not settings.traces_dir.exists() or not any(settings.traces_dir.iterdir())
+
+
+def test_repeat_runs_report_spread_and_flaky_tasks(settings: Settings) -> None:
+    one = {"ledger-by-payee-sums", "textkit-word-count"}
+    good = run_suite(settings, _coder(cheat=False), only=one, python=PY, sandbox=LocalSandbox())
+    bad = run_suite(settings, _coder(cheat=True), only=one, python=PY, sandbox=LocalSandbox())
+    a = aggregate([good, bad])
+    assert a["pass_counts"] == [2, 0] and a["mean_pass_rate"] == 0.5
+    assert a["flaky"] == sorted(one) and a["always"] == [] and a["never"] == []

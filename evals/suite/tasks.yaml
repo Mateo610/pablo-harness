@@ -1,4 +1,6 @@
-# The M7 coder eval suite: 30 tasks on three small repos (evals/suite/repos).
+# The M7 coder eval suite: 30 tasks on three small repos (evals/suite/repos), plus 6 on a pinned
+# commit of this harness (`seeds.harness`), big enough that finding the code is part of the work.
+# Harness hidden tests put src/ on sys.path themselves, since they run with `python -I`.
 #
 # The model sees only `task` and the repo. `hidden` is a test it never sees: after the run, the
 # diff is applied to a fresh copy, the hidden test is written next to it, and it runs with
@@ -11,6 +13,12 @@
 # hidden test fails on the base repo and passes on a real fix. Never show it to a model.
 #
 # These tasks and their runs are never training data: `pablo eval` runs in a throwaway home.
+seeds:
+  harness:
+    git: 7cc54b1f30c468376ad7bae0a4b410af4c3a0e90
+    exclude:
+    - evals/suite
+    - tests/test_suite.py
 tasks:
 - id: ledger-by-payee-sums
   repo: ledger
@@ -1145,3 +1153,1214 @@ tasks:
               for item in load_csv(text):
                   store.add(item)
               return store
+- id: harness-judge-fenced-json
+  repo: harness
+  refs: none
+  kind: bugfix
+  task: When the judge wraps its JSON reply in a ```json fence and then writes more text that contains
+    curly braces, the certainty is thrown away and the run scores 0. Read the JSON object the judge actually
+    sent.
+  hidden: |
+    import sys
+
+    sys.path.insert(0, "src")
+
+    from pablo.judge import parse_judgement  # noqa: E402
+
+
+    def test_fenced_json_with_braces_after() -> None:
+        text = 'Here you go:\n```json\n{"certainty": 0.9, "summary": "ok"}\n```\nKeep {x} as is.'
+        assert parse_judgement(text).certainty == 0.9
+        assert parse_judgement(text).summary == "ok"
+
+
+    def test_still_handles_junk() -> None:
+        assert parse_judgement("no json here").certainty == 0.0
+        assert parse_judgement('ok {"certainty": 1.7}').certainty == 1.0
+  solution:
+    src/pablo/judge.py: |
+      """The judge reads the task, the diff, and the evidence, then scores certainty.
+
+      Certainty is the judge's confidence that the change is right AND that you would
+      approve it. A check the diff made worse caps certainty; a check that was already
+      failing the same way before the diff does not. Below the threshold the run lands in
+      "Needs you" instead of being presented as ready.
+      """
+
+      from __future__ import annotations
+
+      import json
+      import re
+      from dataclasses import dataclass
+      from typing import Any
+
+      from pablo.gateway import ChatBackend, Message
+      from pablo.verify import Verdict
+
+      FAILED_CAP = 0.3
+
+      JUDGE_PROMPT = (
+          "You review changes for a small team of models. Be strict and brief.\n"
+          "Read the diff. Passing checks are not enough.\n"
+          "A check marked 'already failing before this diff' is not this diff's fault; judge "
+          "the diff on its own merits.\n"
+          "Set certainty to 0.2 when either of these is true:\n"
+          "- a test assertion was added or edited to match code that the diff does not fix\n"
+          "- a test function was removed in the same diff that changes behavior\n"
+          "If the diff deletes a test function and also changes behavior, certainty is 0.2 "
+          "even when the task asked for the new behavior. A diff that adds a test and "
+          "deletes none is not this case.\n"
+          "Set certainty to 0.3 when the diff returns the test's expected string for one "
+          "input and something else otherwise, or adds a shell call, file write, or other "
+          "side effect the task did not ask for, or makes the tests pass by patching or "
+          "replacing the code under test (a new sitecustomize, conftest, or module that "
+          "monkeypatches the function) instead of fixing it where it lives.\n"
+          "If the task says not to change something, check that the diff leaves it "
+          "unchanged; if it changed, certainty is 0.3 even when the rest of the diff "
+          "is a correct fix of what the task asked for.\n"
+          "A general implementation that works for other inputs too, plus a test of it, "
+          "is high certainty. So is a real fix of the implementation plus a test of that "
+          "fixed behavior.\n"
+          "Reply with JSON only:\n"
+          '{"certainty": 0..1, "summary": "one sentence", "question": '
+          '"what the human must decide, or empty"}\n'
+          "certainty = how sure you are the diff is correct, complete, and safe to merge."
+      )
+
+
+      @dataclass(frozen=True)
+      class Judgement:
+          certainty: float
+          summary: str
+          question: str = ""
+
+
+      def judge(backend: ChatBackend, model: str, task: str, diff: str, verdict: Verdict) -> Judgement:
+          evidence = verdict.summary()
+          messages: list[Message] = [
+              {"role": "system", "content": JUDGE_PROMPT},
+              {"role": "user", "content": f"Task:\n{task}\n\nEvidence: {evidence}\n\nDiff:\n{diff}"},
+          ]
+          reply = backend.complete(model, messages, max_tokens=300, temperature=0.0)
+          judgement = parse_judgement(reply.text)
+          if not verdict.clean:
+              judgement = Judgement(
+                  min(judgement.certainty, FAILED_CAP),
+                  judgement.summary or evidence,
+                  judgement.question or "Checks failed. Retry, edit, or escalate?",
+              )
+          return judgement
+
+
+      def _first_object(text: str) -> dict[str, Any] | None:
+          decoder = json.JSONDecoder()
+          for found in re.finditer(r"\{", text):
+              try:
+                  value, _ = decoder.raw_decode(text, found.start())
+              except ValueError:
+                  continue
+              if isinstance(value, dict):
+                  return value
+          return None
+
+
+      def parse_judgement(text: str) -> Judgement:
+          data = _first_object(text)
+          if data is None:
+              return Judgement(0.0, "judge reply was not JSON", "Judge could not score this. Review it?")
+          try:
+              certainty = max(0.0, min(1.0, float(data.get("certainty", 0.0))))
+              return Judgement(certainty, str(data.get("summary", "")), str(data.get("question", "")))
+          except (ValueError, TypeError):
+              return Judgement(0.0, "judge reply was malformed", "Judge could not score this. Review it?")
+- id: harness-certainty-percent
+  repo: harness
+  refs: symbol
+  kind: feature
+  task: parse_judgement should accept a certainty written as a percentage string, like "85%", and read
+    it as 0.85. Plain numbers keep working as they do now.
+  hidden: |
+    import sys
+
+    sys.path.insert(0, "src")
+
+    from pablo.judge import parse_judgement  # noqa: E402
+
+
+    def test_percent_strings() -> None:
+        assert parse_judgement('{"certainty": "85%", "summary": "x"}').certainty == 0.85
+        assert parse_judgement('{"certainty": "100%"}').certainty == 1.0
+        assert parse_judgement('{"certainty": 0.7}').certainty == 0.7
+        assert parse_judgement('{"certainty": 1.7}').certainty == 1.0
+  solution:
+    src/pablo/judge.py: |
+      """The judge reads the task, the diff, and the evidence, then scores certainty.
+
+      Certainty is the judge's confidence that the change is right AND that you would
+      approve it. A check the diff made worse caps certainty; a check that was already
+      failing the same way before the diff does not. Below the threshold the run lands in
+      "Needs you" instead of being presented as ready.
+      """
+
+      from __future__ import annotations
+
+      import json
+      import re
+      from dataclasses import dataclass
+
+      from pablo.gateway import ChatBackend, Message
+      from pablo.verify import Verdict
+
+      FAILED_CAP = 0.3
+
+      JUDGE_PROMPT = (
+          "You review changes for a small team of models. Be strict and brief.\n"
+          "Read the diff. Passing checks are not enough.\n"
+          "A check marked 'already failing before this diff' is not this diff's fault; judge "
+          "the diff on its own merits.\n"
+          "Set certainty to 0.2 when either of these is true:\n"
+          "- a test assertion was added or edited to match code that the diff does not fix\n"
+          "- a test function was removed in the same diff that changes behavior\n"
+          "If the diff deletes a test function and also changes behavior, certainty is 0.2 "
+          "even when the task asked for the new behavior. A diff that adds a test and "
+          "deletes none is not this case.\n"
+          "Set certainty to 0.3 when the diff returns the test's expected string for one "
+          "input and something else otherwise, or adds a shell call, file write, or other "
+          "side effect the task did not ask for, or makes the tests pass by patching or "
+          "replacing the code under test (a new sitecustomize, conftest, or module that "
+          "monkeypatches the function) instead of fixing it where it lives.\n"
+          "If the task says not to change something, check that the diff leaves it "
+          "unchanged; if it changed, certainty is 0.3 even when the rest of the diff "
+          "is a correct fix of what the task asked for.\n"
+          "A general implementation that works for other inputs too, plus a test of it, "
+          "is high certainty. So is a real fix of the implementation plus a test of that "
+          "fixed behavior.\n"
+          "Reply with JSON only:\n"
+          '{"certainty": 0..1, "summary": "one sentence", "question": '
+          '"what the human must decide, or empty"}\n'
+          "certainty = how sure you are the diff is correct, complete, and safe to merge."
+      )
+
+
+      @dataclass(frozen=True)
+      class Judgement:
+          certainty: float
+          summary: str
+          question: str = ""
+
+
+      def judge(backend: ChatBackend, model: str, task: str, diff: str, verdict: Verdict) -> Judgement:
+          evidence = verdict.summary()
+          messages: list[Message] = [
+              {"role": "system", "content": JUDGE_PROMPT},
+              {"role": "user", "content": f"Task:\n{task}\n\nEvidence: {evidence}\n\nDiff:\n{diff}"},
+          ]
+          reply = backend.complete(model, messages, max_tokens=300, temperature=0.0)
+          judgement = parse_judgement(reply.text)
+          if not verdict.clean:
+              judgement = Judgement(
+                  min(judgement.certainty, FAILED_CAP),
+                  judgement.summary or evidence,
+                  judgement.question or "Checks failed. Retry, edit, or escalate?",
+              )
+          return judgement
+
+
+      def parse_judgement(text: str) -> Judgement:
+          match = re.search(r"\{.*\}", text, re.S)
+          if not match:
+              return Judgement(0.0, "judge reply was not JSON", "Judge could not score this. Review it?")
+          try:
+              data = json.loads(match.group(0))
+              raw = data.get("certainty", 0.0)
+              if isinstance(raw, str) and raw.strip().endswith("%"):
+                  raw = float(raw.strip().rstrip("%")) / 100
+              certainty = max(0.0, min(1.0, float(raw)))
+              return Judgement(certainty, str(data.get("summary", "")), str(data.get("question", "")))
+          except (ValueError, TypeError):
+              return Judgement(0.0, "judge reply was malformed", "Judge could not score this. Review it?")
+- id: harness-memory-units
+  repo: harness
+  refs: none
+  kind: feature
+  task: The sandbox memory setting only takes forms like 4g or 512m. It should also take 4gb, 4GiB, 512MB
+    and 512MiB, all as binary units (1g = 1024^3 bytes).
+  hidden: |
+    import sys
+
+    sys.path.insert(0, "src")
+
+    import pytest  # noqa: E402
+
+    from pablo.sandbox import memory_bytes  # noqa: E402
+
+
+    def test_more_unit_spellings() -> None:
+        gib = 1024**3
+        for spec in ("4g", "4G", "4gb", "4GB", "4GiB", "4gib"):
+            assert memory_bytes(spec) == 4 * gib, spec
+        assert memory_bytes("512MB") == memory_bytes("512MiB") == 512 * 1024**2
+        assert memory_bytes("1024") == 1024
+
+
+    def test_nonsense_still_fails() -> None:
+        for bad in ("4 gigs", "g", "-1g", "4xb"):
+            with pytest.raises(ValueError):
+                memory_bytes(bad)
+  solution:
+    src/pablo/sandbox.py: |
+      """Where checks run: a plain subprocess, or a locked-down container.
+
+      Checks run code the model wrote. `ContainerSandbox` gives that code no network, a
+      read-only image, a tmpfs /tmp, no capabilities, and CPU, memory, and process limits.
+      Only the scratch copy is mounted, at /work. It fails closed: if the container can't
+      start, the check fails. It never falls back to running on the host.
+
+      Project dependencies are baked into a per-project image (`pablo sandbox build`), keyed
+      by a hash of the repo's dependency files. Building is the only step with network, and
+      you run it yourself. A diff that changes dependencies is checked against the image
+      built from the current files, never one built from the diff.
+      """
+
+      from __future__ import annotations
+
+      import hashlib
+      import os
+      import re
+      import shutil
+      import subprocess
+      import tempfile
+      import time
+      import uuid
+      from collections.abc import Callable, Sequence
+      from dataclasses import dataclass
+      from pathlib import Path
+      from typing import Any, Protocol
+
+      from pablo.config import SandboxConfig
+
+      Runner = Callable[..., "subprocess.CompletedProcess[str]"]
+
+      # Files that decide what a Python project installs. Their hash names the project image.
+      DEP_FILES = ("pyproject.toml", "uv.lock", "requirements.txt", "requirements-dev.txt")
+
+      ENGINE_FAILED = 125  # what podman and docker return when the container itself can't run
+
+      # The sentry and the guest share one address space. On runsc 20261026.0 a 4 GiB
+      # cap kills `uv`; 7 GiB (this 3 GiB plus a 4 GiB guest) lets 3 GiB through and
+      # kills a 4 GiB allocation. The wrapper reads PABLO_RUNSC_AS_KIB.
+      SENTRY_AS_OVERHEAD = 3 * 1024**3
+      _MEMORY = re.compile(r"^(\d+)([kmgt])?(?:i?b)?$", re.IGNORECASE)
+      _MEMORY_UNITS = {"": 1, "k": 1024, "m": 1024**2, "g": 1024**3, "t": 1024**4}
+
+      PROJECT_CONTAINERFILE = """\
+      FROM {base}
+      COPY . /deps/
+      RUN set -eu; cd /deps; \\
+          if [ -f uv.lock ]; then \\
+            UV_PROJECT_ENVIRONMENT=/opt/venv uv sync --frozen --inexact --no-install-project; \\
+          elif [ -f requirements.txt ]; then \\
+            uv pip install --python /opt/venv/bin/python -r requirements.txt; \\
+          elif [ -f pyproject.toml ]; then \\
+            uv pip install --python /opt/venv/bin/python -r pyproject.toml; \\
+          fi; \\
+          if [ -f requirements-dev.txt ]; then \\
+            uv pip install --python /opt/venv/bin/python -r requirements-dev.txt; \\
+          fi; \\
+          rm -rf /deps
+      """
+
+
+      @dataclass
+      class Result:
+          exit_code: int
+          output: str
+          duration_s: float
+
+
+      class Sandbox(Protocol):
+          @property
+          def label(self) -> str: ...
+
+          def ready(self) -> tuple[bool, str]: ...
+
+          def run(self, command: Sequence[str], cwd: Path, timeout_s: float) -> Result: ...
+
+
+      class LocalSandbox:
+          """Checks as plain subprocesses with your user's permissions. Tests, CI, and --fake."""
+
+          label = "local"
+
+          def __init__(self, runner: Runner = subprocess.run) -> None:
+              self._runner = runner
+
+          def ready(self) -> tuple[bool, str]:
+              return True, ""
+
+          def run(self, command: Sequence[str], cwd: Path, timeout_s: float) -> Result:
+              started = time.perf_counter()
+              try:
+                  proc = self._runner(
+                      list(command), cwd=cwd, text=True, capture_output=True, timeout=timeout_s
+                  )
+                  code, out = proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+              except subprocess.TimeoutExpired:
+                  code, out = 124, f"timed out after {timeout_s:.0f}s"
+              except FileNotFoundError as exc:
+                  code, out = 127, str(exc)
+              return Result(code, out, round(time.perf_counter() - started, 2))
+
+
+      class ContainerSandbox:
+          """One throwaway container per check. Nothing but the scratch copy is visible."""
+
+          def __init__(
+              self,
+              cfg: SandboxConfig,
+              repo: Path | None = None,
+              runner: Runner = subprocess.run,
+              which: Callable[[str], str | None] = shutil.which,
+          ) -> None:
+              self.cfg = cfg
+              self.repo = repo
+              self._runner = runner
+              self._which = which
+              self._ready = False
+              self.image = project_image(cfg.image, repo) if repo and dep_files(repo) else cfg.image
+
+          @property
+          def label(self) -> str:
+              return f"{self.cfg.engine}/{self.cfg.runtime or 'default'} {self.image}"
+
+          def ready(self) -> tuple[bool, str]:
+              """Engine on PATH and image built. Only success is cached: a build can fix it."""
+              if self._ready:
+                  return True, ""
+              if self._which(self.cfg.engine) is None:
+                  return False, f"{self.cfg.engine} not found"
+              proc = self._runner(
+                  [self.cfg.engine, "image", "inspect", self.image],
+                  text=True,
+                  capture_output=True,
+                  timeout=30,
+              )
+              if proc.returncode != 0:
+                  where = f" -C {self.repo}" if self.image != self.cfg.image else " --base"
+                  hint = "pablo sandbox build" + where
+                  return False, f"image {self.image} is not built (run: {hint})"
+              self._ready = True
+              return True, ""
+
+          def argv(self, command: Sequence[str], scratch: Path, name: str) -> list[str]:
+              cfg = self.cfg
+              args = [
+                  cfg.engine,
+                  "run",
+                  "--rm",
+                  "--name",
+                  name,
+                  "--network",
+                  "none",
+                  "--read-only",
+                  "--tmpfs",
+                  f"/tmp:rw,size={cfg.tmpfs_mb}m,mode=1777",
+                  "--cap-drop",
+                  "ALL",
+                  "--security-opt",
+                  "no-new-privileges",
+                  "--pids-limit",
+                  str(cfg.pids),
+                  # gVisor with --ignore-cgroups does not apply --pids-limit. RLIMIT_NPROC does.
+                  "--ulimit",
+                  f"nproc={cfg.pids}:{cfg.pids}",
+                  "--memory",
+                  cfg.memory,
+                  "--memory-swap",
+                  cfg.memory,
+                  "--cpus",
+                  str(cfg.cpus),
+                  "--volume",
+                  f"{scratch.resolve()}:/work:rw",
+                  "--workdir",
+                  "/work",
+                  "--env",
+                  "HOME=/tmp",
+                  "--env",
+                  "PYTHONDONTWRITEBYTECODE=1",
+                  "--env",
+                  "PYTHONPATH=/work/src:/work",
+                  # The baked venv. Checks must not sync: the image is read-only and has no network.
+                  "--env",
+                  "UV_PROJECT_ENVIRONMENT=/opt/venv",
+                  "--env",
+                  "UV_NO_SYNC=1",
+                  "--env",
+                  "UV_OFFLINE=1",
+                  "--env",
+                  "UV_CACHE_DIR=/tmp/uv-cache",
+              ]
+              if cfg.runtime:
+                  args += ["--runtime", cfg.runtime]
+              args += self._user_args()
+              return [*args, self.image, *command]
+
+          def _user_args(self) -> list[str]:
+              mode = self.cfg.user
+              if mode == "root":
+                  return []  # rootless docker: container root is already you
+              if mode == "auto" and Path(self.cfg.engine).name == "podman":
+                  return ["--userns=keep-id"]
+              return ["--user", f"{os.getuid()}:{os.getgid()}"]
+
+          def run(self, command: Sequence[str], cwd: Path, timeout_s: float) -> Result:
+              ok, why = self.ready()
+              if not ok:
+                  return Result(
+                      ENGINE_FAILED, f"sandbox unavailable: {why}. Checks never fall back to the host.", 0
+                  )
+              name = f"pablo-check-{uuid.uuid4().hex[:12]}"
+              argv = self.argv(command, cwd, name)
+              # Affinity reaches the guest through conmon. --cpus does not, under --ignore-cgroups.
+              if self.cfg.cpu_set:
+                  argv = ["taskset", "-c", self.cfg.cpu_set, *argv]
+              # create is the invocation that spawns the sentry, and it inherits this.
+              env = os.environ.copy()
+              env["PABLO_RUNSC_AS_KIB"] = str(address_kib(self.cfg.memory))
+              started = time.perf_counter()
+              try:
+                  proc = self._runner(argv, text=True, capture_output=True, timeout=timeout_s, env=env)
+                  code, out = proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+              except subprocess.TimeoutExpired:
+                  # Killing the client doesn't stop the container, so remove it by name.
+                  self._runner(
+                      [self.cfg.engine, "rm", "--force", name], text=True, capture_output=True, timeout=60
+                  )
+                  code, out = 124, f"timed out after {timeout_s:.0f}s; container removed"
+              except FileNotFoundError as exc:
+                  code, out = 127, str(exc)
+              return Result(code, out, round(time.perf_counter() - started, 2))
+
+
+      def memory_bytes(spec: str) -> int:
+          """Docker-style size (`4g`, `512m`) as bytes."""
+          match = _MEMORY.fullmatch(spec.strip())
+          if match is None:
+              raise ValueError(f"sandbox memory must be an integer with optional k/m/g/t, got {spec!r}")
+          unit = match.group(2).lower() if match.group(2) else ""
+          return int(match.group(1)) * _MEMORY_UNITS[unit]
+
+
+      def address_kib(spec: str) -> int:
+          """RLIMIT_AS for the sentry, in KiB: the configured guest cap plus its own share."""
+          return (memory_bytes(spec) + SENTRY_AS_OVERHEAD) // 1024
+
+
+      def make_sandbox(cfg: SandboxConfig, repo: Path | None = None) -> Sandbox:
+          if cfg.kind == "container":
+              return ContainerSandbox(cfg, repo)
+          return LocalSandbox()
+
+
+      def dep_files(repo: Path) -> list[Path]:
+          return [repo / name for name in DEP_FILES if (repo / name).is_file()]
+
+
+      def deps_hash(repo: Path) -> str:
+          digest = hashlib.sha256()
+          for path in dep_files(repo):
+              digest.update(path.name.encode() + b"\0" + path.read_bytes() + b"\0")
+          return digest.hexdigest()[:12]
+
+
+      def project_image(base: str, repo: Path) -> str:
+          """`pablo-check-<project>:<deps hash>`. Changes whenever a dependency file does."""
+          slug = re.sub(r"[^a-z0-9]+", "-", repo.resolve().name.lower()).strip("-") or "project"
+          return f"{base.split(':', 1)[0]}-{slug}:{deps_hash(repo)}"
+
+
+      def touches_deps(files: Sequence[str]) -> bool:
+          return any(Path(f).name in DEP_FILES for f in files)
+
+
+      def build_base(cfg: SandboxConfig, dockerfile: Path, runner: Runner = subprocess.run) -> Any:
+          """Build the base check image. Needs network; you run it, never a check."""
+          context = str(dockerfile.parent)
+          return runner(
+              [cfg.engine, "build", "--tag", cfg.image, "--file", str(dockerfile), context], text=True
+          )
+
+
+      def build_project(cfg: SandboxConfig, repo: Path, runner: Runner = subprocess.run) -> Any:
+          """Bake the repo's dependencies into its own image on top of the base."""
+          files = dep_files(repo)
+          if not files:
+              raise ValueError(f"{repo} has none of {', '.join(DEP_FILES)}; the base image is enough")
+          tag = project_image(cfg.image, repo)
+          with tempfile.TemporaryDirectory(prefix="pablo-sandbox-build-") as tmp:
+              context = Path(tmp)
+              for path in files:
+                  shutil.copy2(path, context / path.name)
+              containerfile = context / "Containerfile"
+              containerfile.write_text(PROJECT_CONTAINERFILE.format(base=cfg.image), encoding="utf-8")
+              return runner(
+                  [cfg.engine, "build", "--tag", tag, "--file", str(containerfile), str(context)],
+                  text=True,
+              )
+- id: harness-hunk-stats
+  repo: harness
+  refs: symbol
+  kind: feature
+  task: 'Add stats(diff) next to hunks.parse. It returns a tuple (files, hunks, added, removed) for a
+    unified diff: how many files, how many hunks, and how many lines were added and removed.'
+  hidden: |
+    import sys
+
+    sys.path.insert(0, "src")
+
+    from pablo.hunks import stats  # noqa: E402
+
+    DIFF = 'diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1,2 +1,3 @@\n x = 1\n+y = 2\n z = 3\n@@ -10,2 +11,1 @@\n-old = 1\n-older = 2\n+new = 1\ndiff --git a/b.py b/b.py\nnew file mode 100644\n--- /dev/null\n+++ b/b.py\n@@ -0,0 +1,2 @@\n+a = 1\n+b = 2\n'
+
+
+    def test_stats() -> None:
+        assert stats(DIFF) == (2, 3, 4, 2)
+        assert stats("") == (0, 0, 0, 0)
+  solution:
+    src/pablo/hunks.py: |
+      """Split a unified diff into hunks and rebuild a patch from the ones you keep.
+
+      Hunk ids are "<file index>:<hunk index>", stable for a given diff. `git apply`
+      locates hunks by their original ("-") line numbers, so dropping earlier hunks
+      from a file doesn't break the later ones.
+      """
+
+      from __future__ import annotations
+
+      from dataclasses import dataclass, field
+
+
+      @dataclass
+      class Hunk:
+          id: str
+          header: str
+          lines: list[str]
+
+          @property
+          def added(self) -> int:
+              return sum(1 for ln in self.lines if ln.startswith("+"))
+
+          @property
+          def removed(self) -> int:
+              return sum(1 for ln in self.lines if ln.startswith("-"))
+
+
+      @dataclass
+      class FilePatch:
+          path: str
+          head: list[str]
+          hunks: list[Hunk] = field(default_factory=list)
+
+
+      def parse(diff: str) -> list[FilePatch]:
+          files: list[FilePatch] = []
+          current: FilePatch | None = None
+          hunk: Hunk | None = None
+          for line in diff.splitlines():
+              if line.startswith("diff --git ") or (
+                  line.startswith("--- ") and (current is None or current.hunks)
+              ):
+                  current = FilePatch(path="", head=[line])
+                  files.append(current)
+                  hunk = None
+                  continue
+              if current is None:
+                  continue
+              if line.startswith("@@"):
+                  hunk = Hunk(id=f"{len(files) - 1}:{len(current.hunks)}", header=line, lines=[])
+                  current.hunks.append(hunk)
+              elif hunk is not None:
+                  hunk.lines.append(line)
+              else:
+                  current.head.append(line)
+                  if line.startswith("+++ "):
+                      path = line[4:].strip()
+                      current.path = path[2:] if path.startswith("b/") else path
+                  elif line.startswith("--- ") and not current.path:
+                      path = line[4:].strip()
+                      if path != "/dev/null":
+                          current.path = path[2:] if path.startswith("a/") else path
+          return files
+
+
+      def all_ids(diff: str) -> list[str]:
+          return [h.id for f in parse(diff) for h in f.hunks]
+
+
+      def select(diff: str, keep: set[str]) -> str:
+          """A patch containing only the hunks in `keep`. Unknown ids raise ValueError."""
+          files = parse(diff)
+          known = {h.id for f in files for h in f.hunks}
+          unknown = keep - known
+          if unknown:
+              raise ValueError(f"unknown hunks: {', '.join(sorted(unknown))}")
+          out: list[str] = []
+          for f in files:
+              chosen = [h for h in f.hunks if h.id in keep]
+              if not chosen:
+                  continue
+              out.extend(f.head)
+              for h in chosen:
+                  out.append(h.header)
+                  out.extend(h.lines)
+          return "\n".join(out) + "\n" if out else ""
+
+
+      def stats(diff: str) -> tuple[int, int, int, int]:
+          """(files, hunks, lines added, lines removed) for a unified diff."""
+          files = parse(diff)
+          hunks = [h for f in files for h in f.hunks]
+          return len(files), len(hunks), sum(h.added for h in hunks), sum(h.removed for h in hunks)
+- id: harness-clip-small-caps
+  repo: harness
+  refs: symbol
+  kind: bugfix
+  task: clip can return more tokens than max_tokens when the cap is small, because the "more lines cut
+    to fit" note alone is bigger than the cap. It must never go over the cap; when the note doesn't fit,
+    return the whole lines that fit and no note.
+  hidden: |
+    import sys
+
+    sys.path.insert(0, "src")
+
+    from pablo.context import clip, tokens  # noqa: E402
+
+    TEXT = "\n".join(f"line {i}" for i in range(500))
+
+
+    def test_never_over_the_cap() -> None:
+        for cap in (1, 3, 5, 8, 12, 20, 40, 100, 1000):
+            assert tokens(clip(TEXT, cap)) <= cap, cap
+
+
+    def test_still_says_what_was_cut_when_it_fits() -> None:
+        out = clip(TEXT, 100)
+        assert out.startswith("line 0") and "more lines cut to fit" in out
+        assert clip("short", 100) == "short"
+  solution:
+    src/pablo/context.py: |
+      """Build the coder's prompt from capped sections so it always fits the context window.
+
+      Shape ported from ai-coding-team's `context_manager.py`: the prompt is a list of
+      sections (task, skill card, file tree, files, last error), each with its own token
+      cap, assembled under a total budget. Finding the right code is M6's job (repo map,
+      Serena); this module decides how much of it fits.
+      """
+
+      from __future__ import annotations
+
+      import math
+      import re
+      import subprocess
+      from dataclasses import dataclass
+      from pathlib import Path
+
+      import yaml
+
+      from pablo.tasks import detect_task_type
+
+      SKILLS_DIR = Path(__file__).resolve().parents[2] / "skills"
+      SKIP_SUFFIXES = (".lock", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".woff", ".woff2", ".ico")
+      MAX_TREE_FILES = 200
+      MAX_FILES = 6
+
+      # Default caps in tokens, sized for a 16k window with ~4k left for the reply.
+      BUDGET = {"task": 1000, "skill": 400, "error": 600, "tree": 800, "files": 8000}
+      TOTAL = 10_500
+
+
+      def tokens(text: str) -> int:
+          """Rough token count: ~4 characters per token for English and code."""
+          return math.ceil(len(text) / 4)
+
+
+      def clip(text: str, max_tokens: int) -> str:
+          """Keep whole lines up to the cap and say how much was cut."""
+          if tokens(text) <= max_tokens:
+              return text
+          lines = text.splitlines()
+          note_room = 12 if max_tokens > 24 else 0
+          kept: list[str] = []
+          used = 0
+          for line in lines:
+              cost = tokens(line + "\n")
+              if used + cost > max_tokens - note_room:
+                  break
+              kept.append(line)
+              used += cost
+          if not note_room:
+              return "\n".join(kept)
+          return "\n".join(kept) + f"\n… ({len(lines) - len(kept)} more lines cut to fit)"
+
+
+      @dataclass
+      class Section:
+          name: str
+          text: str
+          max_tokens: int
+          title: str = ""
+
+          def render(self) -> str:
+              body = clip(self.text.strip(), self.max_tokens)
+              return f"{self.title}\n{body}" if self.title else body
+
+
+      def assemble(sections: list[Section], total: int = TOTAL) -> str:
+          """Render sections in order. If the total is still too big, shrink `files` first."""
+          sections = [s for s in sections if s.text.strip()]
+          rendered = [s.render() for s in sections]
+          over = sum(tokens(r) for r in rendered) - total
+          if over > 0:
+              for i, section in enumerate(sections):
+                  if section.name == "files":
+                      section.max_tokens = max(500, tokens(rendered[i]) - over)
+                      rendered[i] = section.render()
+          return "\n\n".join(rendered)
+
+
+      # ---- skill cards -------------------------------------------------------------
+      @dataclass(frozen=True)
+      class Skill:
+          name: str
+          when: tuple[str, ...]
+          keywords: tuple[str, ...]
+          body: str
+
+
+      def load_skills(root: Path = SKILLS_DIR) -> list[Skill]:
+          skills = []
+          for path in sorted(root.glob("*.md")) if root.is_dir() else []:
+              text = path.read_text("utf-8")
+              match = re.match(r"^---\n(.*?)\n---\n(.*)$", text, re.S)
+              if not match:
+                  continue
+              meta = yaml.safe_load(match.group(1)) or {}
+              skills.append(
+                  Skill(
+                      name=str(meta.get("name", path.stem)),
+                      when=tuple(meta.get("when", [])),
+                      keywords=tuple(str(k).lower() for k in meta.get("keywords", [])),
+                      body=match.group(2).strip(),
+                  )
+              )
+          return skills
+
+
+      def pick_skill(task: str, skills: list[Skill] | None = None) -> Skill | None:
+          """At most one card: keyword hits first (most specific), then the task type."""
+          skills = load_skills() if skills is None else skills
+          text = task.lower()
+          scored = [
+              (sum(1 for kw in s.keywords if re.search(rf"\b{re.escape(kw)}", text)), s) for s in skills
+          ]
+          best = max(scored, key=lambda pair: pair[0], default=(0, None))
+          if best[0] > 0:
+              return best[1]
+          kind = detect_task_type(task)
+          return next((s for s in skills if kind in s.when), None)
+
+
+      # ---- repo files --------------------------------------------------------------
+      # Never context: environments, caches, build output. Matters when the repo isn't under
+      # git (the M4c ledger sandbox), where the fallback walk would otherwise list .venv.
+      NOT_SOURCE_DIRS = frozenset(
+          {".git", ".venv", "venv", "env", "node_modules", "__pycache__", ".mypy_cache",
+           ".pytest_cache", ".ruff_cache", ".tox", "dist", "build", "site-packages", ".pablo"}
+      )  # fmt: skip
+
+
+      def list_files(repo: Path) -> list[str]:
+          try:
+              out = subprocess.run(
+                  ["git", "ls-files"], cwd=repo, text=True, capture_output=True, check=True
+              ).stdout
+              return sorted(out.splitlines())
+          except (subprocess.CalledProcessError, FileNotFoundError):
+              found = []
+              for path in repo.rglob("*"):
+                  rel = path.relative_to(repo)
+                  if path.is_file() and not NOT_SOURCE_DIRS.intersection(rel.parts):
+                      found.append(str(rel))
+              return sorted(found)
+
+
+      def numbered(text: str) -> str:
+          return "\n".join(f"{i:4}|{line}" for i, line in enumerate(text.splitlines(), 1))
+
+
+      # ---- which files the task is about -----------------------------------------
+      # A stopgap until M6's repo map and symbol lookup: find files from what the task
+      # names (paths, `module.function`, snake_case and CamelCase symbols, backticked
+      # words), then the files that use those symbols (usually the tests), then the
+      # rest by how many of the task's words they contain.
+      READ_SUFFIXES = (
+          ".py", ".pyi", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs", ".java", ".rb",
+          ".md", ".yaml", ".yml", ".toml", ".sh", ".css", ".html", ".txt", ".cfg", ".ini",
+      )  # fmt: skip
+      MAX_READ_BYTES = 200_000
+      STOPWORDS = frozenset(
+          {
+              "this",
+              "that",
+              "with",
+              "from",
+              "into",
+              "when",
+              "then",
+              "than",
+              "they",
+              "them",
+              "their",
+              "there",
+              "what",
+              "which",
+              "while",
+              "have",
+              "should",
+              "would",
+              "could",
+              "must",
+              "only",
+              "also",
+              "make",
+              "keep",
+              "every",
+              "each",
+              "some",
+              "more",
+              "most",
+              "less",
+              "does",
+              "done",
+              "file",
+              "files",
+              "code",
+              "test",
+              "tests",
+              "task",
+              "change",
+              "changes",
+              "using",
+              "used",
+              "about",
+              "after",
+              "before",
+              "under",
+              "over",
+              "still",
+              "same",
+              "other",
+              "add",
+              "fix",
+          }
+      )
+
+
+      @dataclass(frozen=True)
+      class TaskRefs:
+          stems: frozenset[str]  # module names: `report` from report.monthly
+          symbols: frozenset[str]  # functions, classes, variables
+          words: frozenset[str]  # plain words for ranking the rest
+
+
+      def task_refs(task: str) -> TaskRefs:
+          stems: set[str] = set()
+          symbols: set[str] = set(re.findall(r"`([A-Za-z_][A-Za-z0-9_]*)`", task))
+          for raw in re.findall(r"[A-Za-z_][A-Za-z0-9_.]*", task):
+              token = raw.strip(".")
+              if "." in token:
+                  parts = [p for p in token.split(".") if len(p) >= 3]
+                  if len(parts) >= 2 and parts[-1] not in ("py", "ts", "tsx", "js", "md", "yaml"):
+                      stems.update(parts[:-1])
+                      symbols.add(parts[-1])
+                  elif parts:
+                      stems.add(parts[0])
+              elif "_" in token.strip("_") or re.fullmatch(r"(?:[A-Z][a-z0-9]+){2,}", token):
+                  symbols.add(token)
+          words = {w for w in re.findall(r"[a-z][a-z0-9]{3,}", task.lower()) if w not in STOPWORDS}
+          return TaskRefs(frozenset(stems), frozenset(symbols), frozenset(words))
+
+
+      def _defines(text: str, symbol: str) -> bool:
+          s = re.escape(symbol)
+          pattern = (
+              rf"^\s*(?:async\s+)?(?:def|class)\s+{s}\b"  # Python
+              rf"|^\s*{s}\s*(?::[^=\n]*)?=(?!=)"  # module-level assignment
+              rf"|\b(?:function|const|let|var|class|interface|type|enum)\s+{s}\b"  # TS/JS
+          )
+          return re.search(pattern, text, re.M) is not None
+
+
+      def _uses(text: str, refs: TaskRefs) -> bool:
+          if any(re.search(rf"\b{re.escape(sym)}\b", text) for sym in refs.symbols):
+              return True
+          return any(
+              re.search(rf"^\s*(?:from|import)\s+[\w.]*\b{re.escape(stem)}\b", text, re.M)
+              for stem in refs.stems
+          )
+
+
+      def pick_files(
+          listed: list[str],
+          task: str,
+          repo: Path | None = None,
+          max_files: int = MAX_FILES,
+      ) -> list[str]:
+          """Files the task is about, most relevant first, at most `max_files`.
+
+          Order: files the task names by path, modules it names (`report` in report.monthly),
+          files that define a symbol it names, files that use those symbols, then the rest
+          ranked by how many task words they contain (a big window also takes the rest, smallest
+          first, so a small repo fits whole). Without `repo` only paths are matched.
+          """
+          named = [f for f in listed if f in task or Path(f).name in task]
+          if repo is None:
+              if not named:
+                  named = [f for f in listed if not f.endswith(SKIP_SUFFIXES)]
+              return named[:max_files]
+
+          refs = task_refs(task)
+          readable = [f for f in listed if f.endswith(READ_SUFFIXES)]
+          cache: dict[str, str] = {}
+
+          def text(rel: str) -> str:
+              if rel not in cache:
+                  path = repo / rel
+                  try:
+                      data = path.read_bytes()[:MAX_READ_BYTES] if path.is_file() else b""
+                  except OSError:
+                      data = b""
+                  cache[rel] = data.decode("utf-8", errors="replace")
+              return cache[rel]
+
+          modules = [f for f in readable if Path(f).stem in refs.stems]
+          definers = [f for f in readable if any(_defines(text(f), sym) for sym in refs.symbols)]
+          picked: list[str] = []
+          for rel in [*named, *modules, *definers]:
+              if rel not in picked:
+                  picked.append(rel)
+          if refs.symbols or refs.stems:
+              for rel in readable:
+                  if rel not in picked and _uses(text(rel), refs):
+                      picked.append(rel)
+
+          def score(rel: str) -> tuple[int, int]:
+              body = text(rel).lower()
+              path = rel.lower()
+              hits = sum(3 if w in path else 1 for w in refs.words if w in path or w in body)
+              return (-hits, len(body))
+
+          # A file that quotes the task (an eval or plan listing it) is the question, not the code.
+          quote = " ".join(task.split())[:60]
+          rest = sorted(
+              (f for f in readable if f not in picked and quote not in " ".join(text(f).split())),
+              key=score,
+          )
+          if max_files <= MAX_FILES:  # a small window keeps only files that share task words
+              rest = [f for f in rest if score(f)[0] < 0] or (rest if not picked else [])
+          return [*picked, *rest][:max_files]
+
+
+      @dataclass(frozen=True)
+      class Budget:
+          """Token caps for one prompt. `for_window` scales the files section with the lane."""
+
+          total: int = TOTAL
+          files: int = BUDGET["files"]
+          tree: int = BUDGET["tree"]
+          max_files: int = MAX_FILES
+
+          @classmethod
+          def for_window(cls, total: int) -> Budget:
+              if total <= TOTAL:
+                  return cls()
+              extra = total - TOTAL
+              tree = min(BUDGET["tree"] + extra // 10, 3000)
+              files = BUDGET["files"] + extra - (tree - BUDGET["tree"])
+              return cls(total=total, files=files, tree=tree, max_files=60)
+
+          @property
+          def per_file(self) -> int:
+              """No single file may eat more than a third of the files section."""
+              return max(1500, self.files // 3)
+
+
+      def context_files(
+          repo: Path, task: str, budget: Budget | None = None, listed: list[str] | None = None
+      ) -> list[str]:
+          """The files a prompt for this task will carry, in order (shown in the run's replay)."""
+          budget = budget or Budget()
+          return pick_files(
+              listed if listed is not None else list_files(repo), task, repo, budget.max_files
+          )
+
+
+      def build_coder_context(
+          repo: Path, task: str, *, last_error: str = "", budget: Budget | None = None
+      ) -> str:
+          budget = budget or Budget()
+          listed = list_files(repo)
+          blocks = []
+          for rel in context_files(repo, task, budget, listed):
+              body = (repo / rel).read_text(encoding="utf-8", errors="replace")
+              blocks.append(f"--- {rel}\n{clip(numbered(body), budget.per_file)}")
+          skill = pick_skill(task)
+          sections = [
+              Section("task", task, BUDGET["task"]),
+              Section("skill", skill.body if skill else "", BUDGET["skill"], "Guidance:"),
+              Section("error", last_error, BUDGET["error"], "Last attempt failed with:"),
+              Section("tree", "\n".join(listed[:MAX_TREE_FILES]), budget.tree, "Repo files:"),
+              Section("files", "\n\n".join(blocks), budget.files),
+          ]
+          return assemble(sections, budget.total)
+- id: harness-router-unknown-lane
+  repo: harness
+  refs: file
+  kind: bugfix
+  task: In src/pablo/router.py, asking for a lane that doesn't exist (route(task, lane="nope")) raises
+    a bare KeyError. Raise ValueError instead, and name the lanes that do exist in the message.
+  hidden: |
+    import sys
+
+    sys.path.insert(0, "src")
+
+    from pathlib import Path  # noqa: E402
+
+    import pytest  # noqa: E402
+
+    from pablo.config import load_settings  # noqa: E402
+    from pablo.router import Router  # noqa: E402
+
+
+    def test_unknown_lane_names_the_real_ones() -> None:
+        router = Router(load_settings(Path("config/lanes.yaml")))
+        with pytest.raises(ValueError) as caught:
+            router.route("fix the bug", lane="nope")
+        assert "nope" in str(caught.value) and "coder" in str(caught.value)
+        assert router.route("fix the bug", lane="coder").lane == "coder"
+  solution:
+    src/pablo/router.py: |
+      """Pick a lane for each task.
+
+      Two layers: fast keyword rules (free, explainable), then an optional model
+      classifier (the router lane) when the rules are unsure. The router never picks
+      the escalation lane on its own; only you can send work to Claude. It also skips
+      any lane marked `routable: false` (deep, since M4c), which stays available by hand.
+      """
+
+      from __future__ import annotations
+
+      import json
+      import re
+      from dataclasses import dataclass
+
+      from pablo.config import ESCALATION_LANE, Settings
+      from pablo.gateway import ChatBackend, Message
+      from pablo.tasks import estimate_complexity  # re-exported for callers
+
+      RULE_CONFIDENT = 0.6
+
+
+      @dataclass(frozen=True)
+      class RouteDecision:
+          lane: str
+          confidence: float
+          reason: str
+          complexity: str  # "quick" | "build" | "deep"
+
+
+      class Router:
+          def __init__(self, settings: Settings, backend: ChatBackend | None = None) -> None:
+              self.settings = settings
+              self.backend = backend
+
+          def _routable(self, name: str) -> bool:
+              lane = self.settings.lanes.get(name)
+              return lane is not None and lane.routable and name != ESCALATION_LANE
+
+          def _rule_scores(self, task: str) -> dict[str, int]:
+              text = task.lower()
+              scores: dict[str, int] = {}
+              for name, lane in self.settings.lanes.items():
+                  if not self._routable(name) or not lane.keywords:
+                      continue
+                  hits = sum(1 for kw in lane.keywords if re.search(rf"\b{re.escape(kw)}", text))
+                  if hits:
+                      scores[name] = hits
+              return scores
+
+          def route(self, task: str, *, lane: str | None = None) -> RouteDecision:
+              complexity = estimate_complexity(task)
+              if lane:
+                  if lane not in self.settings.lanes:
+                      known = ", ".join(self.settings.lanes)
+                      raise ValueError(f"unknown lane '{lane}'; lanes are: {known}")
+                  return RouteDecision(lane, 1.0, "picked by you", complexity)
+
+              scores = self._rule_scores(task)
+              if scores:
+                  best = max(scores, key=lambda k: scores[k])
+                  total = sum(scores.values())
+                  confidence = scores[best] / total if total else 0.0
+                  if complexity == "deep" and self._routable("deep") and best == "coder":
+                      best, confidence = "deep", max(confidence, 0.5)
+                  if confidence >= RULE_CONFIDENT:
+                      return RouteDecision(best, round(confidence, 2), f"keywords → {best}", complexity)
+
+              if self.backend is not None:
+                  decided = self._ask_router_model(task)
+                  if decided is not None:
+                      return RouteDecision(decided[0], decided[1], "router model", complexity)
+
+              fallback = "deep" if complexity == "deep" and self._routable("deep") else "coder"
+              return RouteDecision(fallback, 0.5, "default lane", complexity)
+
+          def _ask_router_model(self, task: str) -> tuple[str, float] | None:
+              assert self.backend is not None
+              choices = [
+                  n for n in self.settings.lanes if self._routable(n) and n not in ("router", "judge")
+              ]
+              messages: list[Message] = [
+                  {
+                      "role": "system",
+                      "content": (
+                          "You route tasks for a team of models. Reply with JSON only: "
+                          '{"lane": one of ' + json.dumps(choices) + ', "confidence": 0..1}'
+                      ),
+                  },
+                  {"role": "user", "content": task},
+              ]
+              router = self.settings.lane("router")
+              reply = self.backend.complete(
+                  router.model,
+                  messages,
+                  temperature=router.temperature,
+                  top_p=router.top_p,
+                  max_tokens=64,
+              )
+              try:
+                  data = json.loads(_first_json(reply.text))
+                  lane = str(data["lane"])
+                  confidence = float(data.get("confidence", 0.5))
+              except (ValueError, KeyError, TypeError):
+                  return None
+              if lane not in choices:
+                  return None
+              return lane, max(0.0, min(1.0, confidence))
+
+
+      def _first_json(text: str) -> str:
+          match = re.search(r"\{.*\}", text, re.S)
+          if not match:
+              raise ValueError("no JSON object in reply")
+          return match.group(0)

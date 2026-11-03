@@ -124,8 +124,12 @@ def test_project_image_follows_dependency_files(tmp_path: Path) -> None:
     repo.mkdir()
     (repo / "pyproject.toml").write_text("[project]\nname='x'\n")
     first = project_image("pablo-check:py311", repo)
-    assert first.startswith("pablo-check-my-proj:")
+    assert first.startswith("pablo-check-deps:")
     assert project_image("pablo-check:py311", repo) == first
+    twin = tmp_path / "copy-elsewhere"
+    twin.mkdir()
+    (twin / "pyproject.toml").write_text("[project]\nname='x'\n")
+    assert project_image("pablo-check:py311", twin) == first  # same deps, same image
     (repo / "uv.lock").write_text("version = 1\n")
     assert project_image("pablo-check:py311", repo) != first
     # A repo with dependency files needs its own image; the hint names the repo.

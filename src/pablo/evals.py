@@ -12,9 +12,12 @@ never become training data. Results append to `evals/results.jsonl`.
 
 from __future__ import annotations
 
+import io
 import json
 import shutil
+import statistics
 import subprocess
+import tarfile
 import tempfile
 import time
 from collections.abc import Callable
@@ -34,6 +37,7 @@ from pablo.verify import IGNORE, apply_diff, run_check
 
 SUITE = Path(__file__).resolve().parents[2] / "evals" / "suite"
 RESULTS = SUITE.parent / "results.jsonl"
+HARNESS_ROOT = SUITE.parents[1]  # this repo: git seeds are commits of it
 REFS = ("file", "symbol", "none")
 
 
@@ -52,9 +56,50 @@ class SuiteTask:
         return f"test_hidden_{self.id.replace('-', '_')}.py"
 
 
+@dataclass(frozen=True)
+class GitSeed:
+    """A seed repo taken from a pinned commit of this repo, minus `exclude` paths."""
+
+    git: str
+    exclude: tuple[str, ...] = ()
+
+
 def load_suite(root: Path = SUITE) -> list[SuiteTask]:
     data = yaml.safe_load((root / "tasks.yaml").read_text("utf-8"))
     return [SuiteTask(**t) for t in data["tasks"]]
+
+
+def load_seeds(root: Path = SUITE) -> dict[str, GitSeed]:
+    data = yaml.safe_load((root / "tasks.yaml").read_text("utf-8"))
+    return {
+        name: GitSeed(str(spec["git"]), tuple(spec.get("exclude", ())))
+        for name, spec in (data.get("seeds") or {}).items()
+    }
+
+
+def _export_commit(seed: GitSeed, dest: Path, source: Path = HARNESS_ROOT) -> None:
+    """Write the files of `seed.git` into `dest` (no .git), then drop the excluded paths."""
+    archive = subprocess.run(
+        ["git", "archive", "--format=tar", seed.git],
+        cwd=source,
+        capture_output=True,
+        check=False,
+    )
+    if archive.returncode != 0:
+        why = archive.stderr.decode(errors="replace").strip()
+        raise RuntimeError(
+            f"cannot read commit {seed.git[:12]} from {source}: {why} "
+            "(a shallow clone? fetch full history)"
+        )
+    dest.mkdir(parents=True)
+    with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tar:
+        tar.extractall(dest, filter="data")
+    for rel in seed.exclude:
+        target = dest / rel
+        if target.is_dir():
+            shutil.rmtree(target)
+        elif target.exists():
+            target.unlink()
 
 
 def _git(cwd: Path, *args: str) -> None:
@@ -64,7 +109,11 @@ def _git(cwd: Path, *args: str) -> None:
 def materialize(task: SuiteTask, workdir: Path, root: Path = SUITE) -> Path:
     """A fresh git repo holding the task's seed repo, committed, ready for a run."""
     repo = workdir / task.id
-    shutil.copytree(root / "repos" / task.repo, repo)
+    seed = load_seeds(root).get(task.repo)
+    if seed is not None:
+        _export_commit(seed, repo)
+    else:
+        shutil.copytree(root / "repos" / task.repo, repo)
     _git(repo, "init", "-q")
     _git(repo, "add", ".")
     _git(repo, "-c", "user.name=pablo", "-c", "user.email=pablo@localhost", "commit", "-qm", "seed")
@@ -123,6 +172,7 @@ class TaskResult:
     context_files: list[str] = field(default_factory=list)
     repaired: bool = False
     fixed: bool = False  # passed or failed after a fix-on-red round
+    fix_outcome: str = ""  # "" · kept · no edit blocks · didn't apply · not better
     run_id: str = ""
     hidden_tail: str = ""
 
@@ -178,6 +228,11 @@ class SuiteReport:
             else None,
             "false_ready": [r.id for r in self.false_ready],
             "missed": len(self.missed),
+            "fix_tried": sum(bool(r.fix_outcome) for r in self.results),
+            "fix_outcomes": {
+                o: sum(r.fix_outcome == o for r in self.results)
+                for o in sorted({r.fix_outcome for r in self.results if r.fix_outcome})
+            },
             "fixed": sum(r.fixed for r in self.results),
             "fixed_and_passed": sum(r.fixed and r.hidden_passed for r in self.results),
             "certainty_when_passed": self.mean_certainty(True),
@@ -197,7 +252,8 @@ class SuiteReport:
             f"Hidden-test pass rate {s['pass_rate']:.0%} ({by}) · no diff {s['no_diff']} · "
             f"ready {s['ready']}, of which passed {s['ready_precision'] if s['ready'] else '—'} · "
             f"false ready {len(s['false_ready'])} · missed {s['missed']} · "
-            f"fix rounds taken {s['fixed']} ({s['fixed_and_passed']} passed) · "
+            f"fix rounds tried {s['fix_tried']} {s['fix_outcomes'] or ''}, "
+            f"kept {s['fixed']} ({s['fixed_and_passed']} passed) · "
             f"certainty passed {s['certainty_when_passed']} "
             f"/ failed {s['certainty_when_failed']} · "
             f"wall {s['wall_s']} s",
@@ -209,7 +265,7 @@ class SuiteReport:
             cert = "—" if r.certainty is None else f"{r.certainty:.2f}"
             lines.append(
                 f"| {r.id} | {r.refs} | {r.state} | {'yes' if r.has_diff else 'no'} | "
-                f"{'yes' if r.fixed else ''} | "
+                f"{r.fix_outcome} | "
                 f"{'clean' if r.clean else 'worse'} | {'pass' if r.hidden_passed else 'FAIL'} | "
                 f"{cert} | {r.wall_s:.0f} |"
             )
@@ -276,6 +332,7 @@ def run_suite(
                 context_files=list(context),
                 repaired=run.repaired,
                 fixed=run.fixed,
+                fix_outcome=run.fix_outcome,
                 run_id=run.id,
                 hidden_tail="" if passed else tail[-600:],
             )
@@ -294,6 +351,47 @@ def _repo_checks(repo: Path) -> dict[str, list[str]]:
     from pablo.demo import load_checks
 
     return load_checks(repo)
+
+
+def aggregate(reports: list[SuiteReport]) -> dict[str, Any]:
+    """Several runs of the same suite: mean, spread, and which tasks flip between runs."""
+    rates = [r.pass_rate() for r in reports]
+    passes: dict[str, int] = {}
+    for report in reports:
+        for row in report.results:
+            passes[row.id] = passes.get(row.id, 0) + int(row.hidden_passed)
+    n = len(reports)
+    return {
+        "runs": n,
+        "pass_counts": [sum(r.hidden_passed for r in rep.results) for rep in reports],
+        "mean_pass_rate": round(statistics.mean(rates), 3) if rates else 0.0,
+        "stdev_pass_rate": round(statistics.stdev(rates), 3) if n > 1 else 0.0,
+        "always": sorted(k for k, v in passes.items() if v == n),
+        "never": sorted(k for k, v in passes.items() if v == 0),
+        "flaky": sorted(k for k, v in passes.items() if 0 < v < n),
+        "false_ready_total": sum(len(r.false_ready) for r in reports),
+    }
+
+
+def aggregate_markdown(reports: list[SuiteReport]) -> str:
+    a = aggregate(reports)
+    head = reports[0] if reports else None
+    title = (
+        f"### Coder suite × {a['runs']} · {head.lane} ({head.model}) · `{head.commit}`"
+        if head
+        else ""
+    )
+    return "\n".join(
+        [
+            title,
+            "",
+            f"Passed per run {a['pass_counts']} · mean {a['mean_pass_rate']:.0%} "
+            f"± {a['stdev_pass_rate']:.0%} · false ready over all runs {a['false_ready_total']}",
+            "",
+            f"- Flaky ({len(a['flaky'])}): {', '.join(a['flaky']) or 'none'}",
+            f"- Never passed ({len(a['never'])}): {', '.join(a['never']) or 'none'}",
+        ]
+    )
 
 
 def append_result(report: SuiteReport, path: Path = RESULTS) -> None:

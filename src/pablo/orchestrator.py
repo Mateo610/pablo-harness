@@ -121,6 +121,8 @@ class Run:
     applied_hunks: list[str] | None = None  # set when you approve only part of the diff
     repaired: bool = False  # the coder fixed its own diff after git apply failed
     fixed: bool = False  # the coder fixed its change after seeing checks it made worse
+    # "" (no round) · kept · no edit blocks · didn't apply · not better
+    fix_outcome: str = ""
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
 
     def to_dict(self) -> dict[str, Any]:
@@ -385,6 +387,7 @@ class Orchestrator:
             announce=False,
         )
         if not has_blocks(answer.text):
+            run.fix_outcome = "no edit blocks"
             return messages, reply, verdict
         blocks = parse_blocks(answer.text)
         try:
@@ -393,15 +396,18 @@ class Orchestrator:
             try:
                 diff = blocks_on_top(self.repo, run.diff, blocks)
             except EditError:
+                run.fix_outcome = "didn't apply"
                 return messages, reply, verdict
         fixed = verify_diff(
             self.repo, diff, self.checks, sandbox=self.sandbox, baselines=self.baselines
         )
         if not _better(fixed, verdict):
             self._emit("status", run, text=f"{run.lane} · fix didn't help, keeping the first try")
+            run.fix_outcome = "not better"
             return messages, reply, verdict
         run.diff = diff
         run.fixed = True
+        run.fix_outcome = "kept"
         run.explanation = strip_blocks(answer.text) or run.explanation
         return asked, answer, fixed
 
