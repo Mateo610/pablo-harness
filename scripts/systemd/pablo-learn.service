@@ -1,0 +1,14 @@
+[Unit]
+Description=Pablo nightly LoRA learning cycle
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/mateo610/Desktop/pablo-harness/pablo-harness-main
+Environment=PABLO_DATA=/home/mateo610/pablo-data
+Environment=PATH=/home/mateo610/Desktop/pablo-harness/pablo-harness-main/.venv/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Stop the swapper so the 3090 is free for Unsloth; start it again after.
+ExecStartPre=-/usr/bin/systemctl --user stop pablo-swap.service
+ExecStart=/home/mateo610/Desktop/pablo-harness/pablo-harness-main/.venv/bin/pablo learn --nightly
+ExecStartPost=-/usr/bin/systemctl --user start pablo-swap.service
+Nice=10

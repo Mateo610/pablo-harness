@@ -21,6 +21,12 @@ model_list:
       api_base: http://127.0.0.1:8100/v1
       api_key: "none"
 
+  - model_name: pablo/coder-candidate
+    litellm_params:
+      model: openai/coder-candidate
+      api_base: http://127.0.0.1:8100/v1
+      api_key: "none"
+
   - model_name: pablo/judge
     litellm_params:
       model: openai/judge

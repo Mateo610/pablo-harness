@@ -394,6 +394,152 @@ def export_training(out: Path = Path("training/approved.jsonl")) -> None:
     console.print(f"wrote {count} examples to {out}")
 
 
+@app.command("learn")
+def learn(
+    nightly: Annotated[
+        bool, typer.Option(help="Skip unless ≥50 new approved examples since last train")
+    ] = False,
+    force: Annotated[bool, typer.Option(help="Run even with fewer than 50 new examples")] = False,
+    skip_train: Annotated[
+        bool, typer.Option(help="Prepare data only; do not call Unsloth (tests / dry-run)")
+    ] = False,
+    skip_eval: Annotated[
+        bool, typer.Option(help="Train (or prepare) but do not run the candidate suite")
+    ] = False,
+    fake: FakeOpt = False,
+) -> None:
+    """Export → train LoRA → eval coder-candidate → write a gated promotion item."""
+    from datetime import UTC, datetime
+
+    from pablo.learn import (
+        MIN_NEW_EXAMPLES,
+        ClaudeInTrainingError,
+        Promotion,
+        baseline_pass_rate,
+        new_adapter_dir,
+        prepare_training,
+        publish_candidate,
+        run_train_script,
+        save_promotion,
+        should_run_nightly,
+        train_marker,
+        write_marker,
+    )
+
+    settings = load_settings()
+    store = TraceStore(settings.traces_dir)
+    if nightly and not force:
+        ok, reason, n = should_run_nightly(store, settings.home)
+        if not ok:
+            console.print(f"[yellow]skip[/]: {reason}")
+            raise typer.Exit(0)
+        console.print(f"{n} new examples (≥{MIN_NEW_EXAMPLES}); starting cycle")
+
+    export = settings.home / "learn" / "approved.jsonl"
+    count = store.export_training(export)
+    if count == 0:
+        console.print("[yellow]skip[/]: no approved trainable traces")
+        raise typer.Exit(0)
+    console.print(f"exported {count} examples → {export}")
+
+    adapter_dir = new_adapter_dir()
+    try:
+        prepared = prepare_training(export, adapter_dir)
+    except ClaudeInTrainingError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(2) from exc
+    console.print(
+        f"prepared train={prepared.train_n} holdout={prepared.holdout_n} "
+        f"dupes_skipped={prepared.skipped_dupes}"
+    )
+
+    if not skip_train:
+        proc = run_train_script(export, adapter_dir, skip_train=False)
+        if proc.returncode != 0:
+            console.print(proc.stdout)
+            console.print(f"[red]train failed[/]\n{proc.stderr}")
+            raise typer.Exit(proc.returncode)
+        console.print(proc.stdout)
+        write_marker(train_marker(settings.home))
+    else:
+        run_train_script(export, adapter_dir, skip_train=True)
+        console.print("[yellow]skip-train[/]: data prepared only")
+
+    publish_candidate(adapter_dir)
+    baseline, baseline_commit = baseline_pass_rate()
+    candidate_rate: float | None = None
+    wall_s = 0.0
+    if not skip_eval and not skip_train and not fake:
+        from pablo.evals import append_result, run_suite
+
+        console.print("evaluating coder-candidate against the suite…")
+        report = run_suite(
+            settings,
+            _backend(settings, fake=False),
+            lane="coder-candidate",
+            swap=SwapView(),
+        )
+        s = report.summary()
+        candidate_rate = float(s["pass_rate"])
+        wall_s = float(s["wall_s"])
+        console.print(
+            f"candidate pass {candidate_rate:.0%} · baseline {baseline:.0%} · wall {wall_s:.0f}s"
+        )
+        append_result(report)
+        docs = Path("docs/benchmarks.md")
+        if docs.is_file():
+            with docs.open("a", encoding="utf-8") as fh:
+                fh.write("\n" + report.to_markdown() + "\n")
+    elif fake or skip_eval:
+        console.print("[yellow]skip-eval[/]: no candidate score")
+
+    beats = candidate_rate is not None and candidate_rate > baseline
+    promo = Promotion(
+        id=adapter_dir.name,
+        created_at=datetime.now(UTC).isoformat(),
+        adapter=str(adapter_dir),
+        baseline_pass_rate=baseline,
+        candidate_pass_rate=candidate_rate if candidate_rate is not None else -1.0,
+        baseline_commit=baseline_commit,
+        candidate_wall_s=wall_s,
+        beats_baseline=beats,
+        state="pending" if beats else "held",
+        note="" if beats else "does not beat baseline; not offered for promote",
+    )
+    path = save_promotion(promo, settings.home)
+    mark = "[green]beats baseline → pending promote[/]" if beats else "[yellow]held[/]"
+    console.print(f"promotion {promo.id} {mark} → {path}")
+
+
+@app.command("promote")
+def promote(
+    reject: Annotated[bool, typer.Option("--reject", help="Reject the pending promotion")] = False,
+    note: Annotated[str, typer.Option(help="Optional note")] = "",
+) -> None:
+    """Apply or reject the pending LoRA promotion (human only; never automatic)."""
+    from pablo.learn import load_pending, promote_adapter, reject_promotion
+
+    settings = load_settings()
+    pending = load_pending(settings.home)
+    if pending is None:
+        console.print("no pending promotion")
+        raise typer.Exit(1)
+    if reject:
+        reject_promotion(settings.home, note=note)
+        console.print(f"rejected {pending.id}")
+        return
+    try:
+        done = promote_adapter(settings.home)
+    except (ValueError, FileNotFoundError) as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(1) from exc
+    console.print(
+        f"[green]promoted[/] {done.id}: candidate {done.candidate_pass_rate:.0%} "
+        f"> baseline {done.baseline_pass_rate:.0%}"
+    )
+    console.print("restart pablo-swap so the coder picks up coder-active/adapter.gguf")
+
+
 @app.command("eval")
 def eval_suite(
     lane: Annotated[str, typer.Option(help="Lane to score")] = "coder",

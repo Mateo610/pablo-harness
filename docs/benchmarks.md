@@ -1278,3 +1278,53 @@ Hidden-test pass rate 94% (file 100% · symbol 87% · none 100%) · no diff 1 ·
 | harness-hunk-stats | symbol | ready | yes | kept | clean | pass | 1.00 | 652 |
 | harness-clip-small-caps | symbol | ready | yes |  | clean | FAIL | 0.90 | 847 |
 | harness-router-unknown-lane | file | ready | yes |  | clean | pass | 1.00 | 630 |
+
+### Coder suite · coder-candidate (pablo/coder-candidate) · 2026-11-04T04:44:03+00:00 · `8b6188f`
+
+Hidden-test pass rate 86% (file 100% · symbol 73% · none 91%) · no diff 1 · ready 27, of which passed 0.963 · false ready 1 · missed 5 · fix rounds tried 8 {'kept': 2, 'not better': 6}, kept 2 (2 passed) · certainty passed 0.88 / failed 0.45 · wall 1425.4 s
+
+| task | refs | state | diff | fixed | visible | hidden | certainty | wall s |
+|---|---|---|---|---|---|---|---|---|
+| ledger-by-payee-sums | file | ready | yes |  | clean | pass | 1.00 | 18 |
+| ledger-load-line-commas | symbol | ready | yes |  | clean | pass | 1.00 | 17 |
+| ledger-negative-format | none | ready | yes |  | clean | pass | 1.00 | 17 |
+| ledger-thousands | symbol | ready | yes |  | clean | pass | 1.00 | 17 |
+| ledger-comments | none | ready | yes |  | clean | pass | 1.00 | 18 |
+| ledger-move-format | file | ready | yes |  | clean | pass | 1.00 | 17 |
+| ledger-month-total | symbol | ready | yes |  | clean | pass | 1.00 | 18 |
+| ledger-refunds-parse | none | ready | yes |  | clean | pass | 1.00 | 18 |
+| ledger-largest | file | ready | yes |  | clean | pass | 1.00 | 17 |
+| ledger-month-number | symbol | ready | yes |  | clean | pass | 1.00 | 18 |
+| textkit-word-count | symbol | ready | yes |  | clean | pass | 1.00 | 16 |
+| textkit-slug-accents | file | ready | yes |  | clean | pass | 1.00 | 16 |
+| textkit-top-words-punctuation | none | ready | yes |  | clean | pass | 0.90 | 17 |
+| textkit-wrap-max-lines | symbol | needs_you | yes | not better | worse | pass | 0.30 | 25 |
+| textkit-truncate-words | none | needs_you | yes | not better | worse | pass | 0.30 | 24 |
+| textkit-move-truncate | file | ready | yes |  | clean | pass | 1.00 | 16 |
+| textkit-slug-max-length | symbol | needs_you | yes | not better | worse | FAIL | 0.30 | 68 |
+| textkit-reading-time | symbol | needs_you | yes | not better | worse | FAIL | 0.30 | 24 |
+| textkit-top-words-ties | file | ready | yes |  | clean | pass | 1.00 | 15 |
+| textkit-slug-separator | none | ready | yes |  | clean | pass | 1.00 | 15 |
+| inventory-value-qty | symbol | ready | yes |  | clean | pass | 1.00 | 16 |
+| inventory-remove-too-many | none | ready | yes |  | clean | pass | 1.00 | 17 |
+| inventory-bulk-threshold | file | ready | yes |  | clean | pass | 1.00 | 15 |
+| inventory-find-any-case | none | ready | yes |  | clean | pass | 1.00 | 16 |
+| inventory-csv-lenient | symbol | ready | yes | kept | clean | pass | 0.90 | 22 |
+| inventory-merge-stock | file | ready | yes |  | clean | pass | 1.00 | 16 |
+| inventory-low-stock | symbol | ready | yes | kept | clean | pass | 1.00 | 20 |
+| inventory-discount-range | none | ready | yes |  | clean | pass | 1.00 | 17 |
+| inventory-move-bulk | file | needs_you | yes |  | clean | pass | 0.30 | 18 |
+| inventory-store-csv | symbol | ready | yes |  | clean | pass | 0.90 | 17 |
+| harness-judge-fenced-json | none | needs_you | yes |  | clean | pass | 0.30 | 119 |
+| harness-certainty-percent | symbol | needs_you | yes | not better | worse | FAIL | 0.30 | 225 |
+| harness-memory-units | none | ready | yes |  | clean | FAIL | 0.90 | 122 |
+| harness-hunk-stats | symbol | ready | yes |  | clean | pass | 1.00 | 122 |
+| harness-clip-small-caps | symbol | needs_you | no |  | worse | FAIL | — | 31 |
+| harness-router-unknown-lane | file | needs_you | yes | not better | worse | pass | 0.30 | 218 |
+
+## M8 learning loop (2026-11-03)
+
+- Unsloth venv at `$PABLO_DATA/engines/unsloth` (torch 2.14.1+cu130, unsloth 2026.11.1).
+- Trained attention-only LoRA (r=8, seq 256, 1 epoch) on 7 unique approved traces against `unsloth/Qwen3.6-35B-A3B` QLoRA; GGUF via `convert_lora_to_gguf.py` (~6.6 MB).
+- `pablo eval --lane coder-candidate`: **86.1%** pass (31/36), wall 1425 s, false ready 1 (`harness-memory-units`). Coder baseline mean from last trio: **84.2%**.
+- Promotion `coder-20261104-seq256` is **pending** (beats baseline); not applied. `pablo promote` when you want it. Nightly timer 02:00 skips under 50 new examples.

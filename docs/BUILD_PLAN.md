@@ -20,7 +20,7 @@ Status: `todo` · `doing` · `done`. Update this table when a gate passes.
 | M5 | Sandbox | Checks run in a no-network container; a diff that opens a socket fails its checks | done (rootless runsc; pids, CPU pin, and the 4g address cap hold) |
 | M6 | Context | Repo map (then Serena if needed) beats the 36-task suite's 3-run mean by more than its spread, false ready not up | done (not a keep: two-step 84% ± 2% vs baseline 82% ± 6%, false ready 7 > 4; map and lookup stay) |
 | M7 | Evals, then traces | `pablo eval`: 30 tasks with hidden tests, coder baseline and noise floor recorded; deep rematch on the suite. Langfuse viewer is M7b, optional | done (coder v2 82% ± 6%; deep rematch 34/36 = 94%; Langfuse is M7b) |
-| M8 | Learning loop | LoRA trained on `pablo export-training` output; promoted only if eval score beats baseline | todo |
+| M8 | Learning loop | LoRA trained on `pablo export-training` output; promoted only if eval score beats baseline | done |
 | M9 | Specialist lanes | Media lane dispatches image and 3D jobs; results come back as evidence cards | todo |
 | M9b | Voice lane | Local speech-to-text (Whisper/Canary class) behind `/api/voice`; hold-to-talk on the phone starts a run | todo |
 | M10 | Ownership | Every model archived with checksums; full offline run with network unplugged; Headscale option documented | todo |

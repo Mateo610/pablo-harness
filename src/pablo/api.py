@@ -132,6 +132,34 @@ def create_app(orch: Orchestrator) -> FastAPI:
         items = sorted(orch.inbox(), key=lambda r: (r.state != "needs_you", r.created_at))
         return [r.to_dict() for r in items]
 
+    @app.get("/api/promotions")
+    def promotions() -> dict[str, Any]:
+        from pablo.learn import list_promotions, load_pending
+
+        pending = load_pending(orch.settings.home)
+        return {
+            "pending": None if pending is None else pending.to_dict(),
+            "history": [p.to_dict() for p in list_promotions(orch.settings.home)],
+        }
+
+    @app.post("/api/promotions/promote")
+    def promotions_promote() -> dict[str, Any]:
+        from pablo.learn import promote_adapter
+
+        try:
+            return promote_adapter(orch.settings.home).to_dict()
+        except (ValueError, FileNotFoundError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.post("/api/promotions/reject")
+    def promotions_reject() -> dict[str, Any]:
+        from pablo.learn import reject_promotion
+
+        try:
+            return reject_promotion(orch.settings.home).to_dict()
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
     def _decide(fn_name: str, run_id: str) -> dict[str, Any]:
         try:
             return dict(getattr(orch, fn_name)(run_id).to_dict())

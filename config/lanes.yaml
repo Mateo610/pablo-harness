@@ -49,6 +49,17 @@ lanes:
     retry_on: deep               # a coder run that needs you gets a fresh try on deep (M7: 94% vs 82%)
     retry_when: now              # now · overnight (queue it for the window) · off
 
+  coder-candidate:
+    role: LoRA candidate under eval; never auto-routed, never training data
+    model: pablo/coder-candidate
+    color: "#3aa896"
+    kind: local
+    train_ok: false
+    routable: false
+    edit_format: blocks
+    writes_code: true
+    symbol_lookup: true
+
   judge:
     role: Reviews diffs and scores certainty
     model: pablo/judge           # Mistral-Small-3.2-24B heretic Q5, llama.cpp

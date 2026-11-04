@@ -13,12 +13,13 @@ if [[ ! -f "$env_file" ]]; then
 fi
 
 mkdir -p "$unit_dir"
-for unit in pablo-swap.service pablo-gateway.service; do
+for unit in pablo-swap.service pablo-gateway.service pablo-learn.service pablo-learn.timer; do
   cp "$root/scripts/systemd/$unit" "$unit_dir/$unit"
 done
 systemctl --user daemon-reload
 for old in pablo-coder.service pablo-judge.service pablo-router.service; do
   systemctl --user disable --now "$old" >/dev/null 2>&1 || true
 done
-systemctl --user enable --now pablo-swap.service pablo-gateway.service
+systemctl --user enable --now pablo-swap.service pablo-gateway.service pablo-learn.timer
 systemctl --user --no-pager --lines=0 status pablo-swap.service pablo-gateway.service
+systemctl --user --no-pager list-timers 'pablo-learn*'
