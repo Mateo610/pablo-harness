@@ -373,12 +373,14 @@ class Orchestrator:
             run.question = f"Run failed: {exc}"
             self._save(run)
             self._emit("error", run, message=str(exc))
-        if run.state == "needs_you":
+        if run.state in ("needs_you", "failed"):
             self._retry_elsewhere(run)
         return run
 
     def _retry_elsewhere(self, run: Run) -> None:
-        """A run that needs you gets a fresh try on its lane's `retry_on` lane (coder → deep).
+        """A run that needs you (or failed) gets a fresh try on its `retry_on` lane (coder → deep).
+
+        A failed coder run is often a prompt too big for its 16k window; deep has 64k.
 
         Only plain runs retry: not a retry, an escalation, or a compare (which already has its
         other lanes). The two share a group, so approving one rejects the other.
@@ -590,15 +592,20 @@ class Orchestrator:
             repair = REPAIR_BLOCKS_PROMPT if blocks else REPAIR_PROMPT
             # Keep repair short: system + original context + last reply + error.
             # Dropping the lookup turn avoids blowing the 16k window on harness tasks.
+            context = messages[1] if len(messages) > 1 else messages[0]
+            if unseen_files(self.repo, reply.text, shown, budget.per_file):
+                # The full context + the reply + an unseen file overflows the coder's 16k
+                # window (llama.cpp answers 400 and the run fails). The repair only needs the
+                # files its edits touch, so show those instead of the original context.
+                context = {
+                    "role": "user",
+                    "content": repair_context(self.repo, run.task, reply.text, budget),
+                }
             messages = [
                 {"role": "system", "content": system},
-                messages[1] if len(messages) > 1 else messages[0],
+                context,
                 {"role": "assistant", "content": reply.text},
-                {
-                    "role": "user",
-                    "content": repair.format(error=problem)
-                    + unseen_files(self.repo, reply.text, shown, budget.per_file),
-                },
+                {"role": "user", "content": repair.format(error=problem)},
             ]
             reply = self._complete(run, lane, messages)
             explanation, repaired, edit_error = self._extract(reply.text)
@@ -772,23 +779,47 @@ def _better(new: Verdict, old: Verdict) -> bool:
     return bad(new) < bad(old)
 
 
+def _edited_paths(repo: Path, reply: str) -> list[str]:
+    """Files a reply's edit blocks touch that exist in the repo (sorted, never outside it)."""
+    if not has_blocks(reply):
+        return []
+    try:
+        paths = {b.path for b in parse_blocks(reply)}
+    except EditError:
+        return []
+    return sorted(
+        rel for rel in paths if rel and ".." not in Path(rel).parts and (repo / rel).is_file()
+    )
+
+
+def repair_context(repo: Path, task: str, reply: str, budget: Budget) -> str:
+    """A small repair prompt: the task and the files the reply edits, numbered.
+
+    Used when the reply edited a file its prompt never showed, so the repair fits the same
+    budget as the first prompt instead of stacking a new file on top of it.
+    """
+    paths = _edited_paths(repo, reply)
+    per_file = max(1500, budget.files // max(1, len(paths)))
+    blocks = []
+    for rel in paths:
+        body = (repo / rel).read_text(encoding="utf-8", errors="replace")
+        blocks.append(f"--- {rel}\n{clip(numbered(body), per_file)}")
+    return (
+        f"Task:\n{clip(task, 1000)}\n\n"
+        "The files your edits touch, as they are now (numbered):\n\n" + "\n\n".join(blocks)
+    )
+
+
 def unseen_files(repo: Path, reply: str, shown: list[str], max_tokens: int) -> str:
     """The files a reply edited that its prompt never showed, numbered, for the repair turn.
 
     A SEARCH block for an unseen file is written from memory and rarely matches; showing the
     file once is what lets the repair land (M6: harness-clip-small-caps missed in every run).
     """
-    if not has_blocks(reply):
-        return ""
-    try:
-        paths = {b.path for b in parse_blocks(reply)}
-    except EditError:
-        return ""
     parts = []
-    for rel in sorted(paths - set(shown)):
-        path = repo / rel
-        if rel and ".." not in Path(rel).parts and path.is_file():
-            body = path.read_text(encoding="utf-8", errors="replace")
+    for rel in _edited_paths(repo, reply):
+        if rel not in shown:
+            body = (repo / rel).read_text(encoding="utf-8", errors="replace")
             parts.append(f"--- {rel}\n{clip(numbered(body), max_tokens)}")
     if not parts:
         return ""

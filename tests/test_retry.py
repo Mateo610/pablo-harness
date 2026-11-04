@@ -95,3 +95,62 @@ def test_the_repair_shows_files_the_coder_was_never_shown(tmp_path: Path) -> Non
     extra = unseen_files(tmp_path, reply, shown=["pkg/other.py"], max_tokens=2000)
     assert "You edited files you were not shown" in extra and "   1|def clip(text, cap):" in extra
     assert unseen_files(tmp_path, reply, shown=["pkg/context.py"], max_tokens=2000) == ""
+
+
+def test_a_repair_with_an_unseen_file_stays_inside_the_first_prompt(
+    settings: Settings, repo: Path
+) -> None:
+    """M7 rerun: the repair stacked context.py on the full context and the coder got a 400."""
+    (repo / "big.py").write_text("".join(f"def f{i}():\n    return {i}\n\n" for i in range(900)))
+    for i in range(6):  # more calc files than the prompt holds, so pkg/ is never shown
+        (repo / f"calc_{i}.py").write_text(
+            f"from calc import add\n\n\ndef add_{i}(a):\n    return add(a, {i})\n"
+        )
+    (repo / "pkg").mkdir()
+    (repo / "pkg" / "deep_inside.py").write_text("def clip(text, cap):\n    return text\n")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    miss = (
+        "pkg/deep_inside.py\n<<<<<<< SEARCH\ndef clip(t):\n=======\ndef clip(t, c):\n"
+        ">>>>>>> REPLACE\n"
+    )
+    prompts: list[str] = []
+
+    def coder(model: str, msgs: list) -> str:  # type: ignore[type-arg]
+        prompts.append(msgs[1]["content"])
+        return miss if len(prompts) == 1 else GOOD
+
+    o = Orchestrator(
+        settings,
+        FakeBackend(scripts={"pablo/coder": coder, "pablo/judge": lambda m, msgs: JUDGE}),
+        repo=repo,
+        checks=PYTEST,
+    )
+    run = o.start("add sub(a, b) to calc and use big", lane="coder")
+    first, repair = prompts
+    assert "def f899" in first or "cut to fit" in first  # the first prompt carried big.py
+    assert "   1|def clip(text, cap):" in repair and "def f1()" not in repair
+    assert len(repair) < len(first)
+    assert run.repaired and run.state == "ready"
+
+
+def test_a_failed_coder_run_is_retried_on_deep(settings: Settings, repo: Path) -> None:
+    def boom(model: str, msgs: list) -> str:  # type: ignore[type-arg]
+        raise RuntimeError("400 Bad Request: the request exceeds the available context size")
+
+    settings.lanes["coder"].retry_when = "now"
+    o = Orchestrator(
+        settings,
+        FakeBackend(
+            scripts={
+                "pablo/coder": boom,
+                "pablo/deep": lambda m, msgs: GOOD,
+                "pablo/judge": lambda m, msgs: JUDGE,
+            }
+        ),
+        repo=repo,
+        checks=PYTEST,
+    )
+    o.retry_inline = True
+    run = o.start("add sub(a, b)", lane="coder")
+    assert run.state == "failed" and run.retry_run
+    assert o.get(run.retry_run).state == "ready"
