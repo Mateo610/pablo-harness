@@ -13,6 +13,8 @@ import random
 import shutil
 import subprocess
 import time
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,6 +26,26 @@ from pablo.traces import TraceStore
 MIN_NEW_EXAMPLES = 50
 HOLDOUT_FRACTION = 0.10
 PABLO_DATA = Path(os.environ.get("PABLO_DATA", Path.home() / "pablo-data"))
+SWAP_UNIT = "pablo-swap.service"
+Runner = Callable[..., subprocess.CompletedProcess[str]]
+
+
+@contextmanager
+def free_gpu_for_training(
+    *,
+    unit: str = SWAP_UNIT,
+    runner: Runner = subprocess.run,
+) -> Iterator[None]:
+    """Stop llama-swap so Unsloth owns the 3090; always start it again afterwards.
+
+    Lives here (not in the systemd unit's ExecStartPre) so a nightly skip under
+    50 examples never tears down the swapper during an eval.
+    """
+    runner(["systemctl", "--user", "stop", unit], check=False)
+    try:
+        yield
+    finally:
+        runner(["systemctl", "--user", "start", unit], check=False)
 
 
 @dataclass
@@ -288,8 +310,17 @@ def run_train_script(
         cmd.append("--skip-train")
     log_path = out_dir / "train.log"
     out_dir.mkdir(parents=True, exist_ok=True)
-    with log_path.open("w", encoding="utf-8") as log:
-        proc = subprocess.run(cmd, text=True, stdout=log, stderr=subprocess.STDOUT, check=False)
+
+    def _run() -> subprocess.CompletedProcess[str]:
+        with log_path.open("w", encoding="utf-8") as log:
+            return subprocess.run(cmd, text=True, stdout=log, stderr=subprocess.STDOUT, check=False)
+
+    # Real training needs the GPU; dry-runs must not bounce the swapper.
+    if skip_train:
+        proc = _run()
+    else:
+        with free_gpu_for_training():
+            proc = _run()
     # Re-read for callers that print stdout/stderr.
     text = log_path.read_text(encoding="utf-8") if log_path.is_file() else ""
     return subprocess.CompletedProcess(cmd, proc.returncode, text, "")

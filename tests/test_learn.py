@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -259,3 +260,56 @@ def test_eval_suite_tasks_never_reach_training(tmp_path: Path) -> None:
     export.write_text("".join(json.dumps(r) + "\n" for r in rows))
     prepared = prepare_training(export, tmp_path / "out")
     assert prepared.skipped_eval == 1 and prepared.train_n == 1
+
+
+def test_free_gpu_for_training_stops_then_starts_swap() -> None:
+    from pablo.learn import SWAP_UNIT, free_gpu_for_training
+
+    calls: list[list[str]] = []
+
+    def runner(cmd: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    with free_gpu_for_training(runner=runner):
+        assert calls == [["systemctl", "--user", "stop", SWAP_UNIT]]
+    assert calls == [
+        ["systemctl", "--user", "stop", SWAP_UNIT],
+        ["systemctl", "--user", "start", SWAP_UNIT],
+    ]
+
+
+def test_free_gpu_for_training_restarts_swap_after_a_train_failure() -> None:
+    from pablo.learn import SWAP_UNIT, free_gpu_for_training
+
+    calls: list[list[str]] = []
+
+    def runner(cmd: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    with pytest.raises(RuntimeError, match="boom"), free_gpu_for_training(runner=runner):
+        raise RuntimeError("boom")
+    assert calls[-1] == ["systemctl", "--user", "start", SWAP_UNIT]
+
+
+def test_run_train_script_skips_swap_bounce_on_dry_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pablo import learn as learn_mod
+
+    seen: list[str] = []
+
+    @contextmanager
+    def fake_free(**_: Any) -> Any:
+        seen.append("free")
+        yield
+
+    monkeypatch.setattr(learn_mod, "free_gpu_for_training", fake_free)
+    monkeypatch.setattr(learn_mod, "unsloth_python", lambda: Path(sys.executable))
+    data = tmp_path / "in.jsonl"
+    data.write_text(json.dumps(_row("coder", "hi")) + "\n", encoding="utf-8")
+    out = tmp_path / "out"
+    # --skip-train still invokes the script; it must not free the GPU.
+    learn_mod.run_train_script(data, out, skip_train=True)
+    assert seen == []

@@ -8,10 +8,8 @@ WorkingDirectory=/home/mateo610/Desktop/pablo-harness/pablo-harness-main
 Environment=PABLO_DATA=/home/mateo610/pablo-data
 Environment=PATH=/home/mateo610/Desktop/pablo-harness/pablo-harness-main/.venv/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=UNSLOTH_DISABLE_STATISTICS=1
-# Stop the swapper so the 3090 is free for Unsloth; start it again after.
-# Runs even when learn --nightly skips (<50 examples); stop the timer before long
-# evals, or move this stop into the learn path that actually trains.
-ExecStartPre=-/usr/bin/systemctl --user stop pablo-swap.service
+# GPU hand-off lives in pablo.learn.free_gpu_for_training (only when Unsloth
+# actually trains). Do not stop pablo-swap here — a --nightly skip under 50
+# examples must leave the swapper alone.
 ExecStart=/home/mateo610/Desktop/pablo-harness/pablo-harness-main/.venv/bin/pablo learn --nightly
-ExecStartPost=-/usr/bin/systemctl --user start pablo-swap.service
 Nice=10
