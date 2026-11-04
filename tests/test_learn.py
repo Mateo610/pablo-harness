@@ -6,6 +6,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -128,6 +129,7 @@ def test_promotion_gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
         candidate_wall_s=1.0,
         beats_baseline=True,
         state="pending",
+        runs=3,
     )
     save_promotion(strong, tmp_path / "home")
     pending = learn_mod.load_pending(tmp_path / "home")
@@ -191,3 +193,69 @@ def test_baseline_pass_rate(tmp_path: Path) -> None:
     mean, commit = baseline_pass_rate(path)
     assert mean == pytest.approx(0.82, abs=0.001)
     assert commit == "a"
+
+
+def _report(lane: str, passes: int, false_ready: int = 0, tasks: int = 36) -> Any:
+    from pablo.evals import SuiteReport, TaskResult
+
+    rows = []
+    for i in range(tasks):
+        ok = i < passes
+        broken_but_ready = not ok and i < passes + false_ready
+        rows.append(
+            TaskResult(
+                id=f"t{i}", refs="file", kind="bugfix",
+                state="ready" if ok or broken_but_ready else "needs_you",
+                has_diff=True, clean=True, hidden_passed=ok, certainty=0.9, wall_s=1.0,
+            )
+        )  # fmt: skip
+    return SuiteReport(lane=lane, model=lane, results=rows)
+
+
+def test_the_gate_needs_three_runs_a_real_lift_and_no_more_false_ready() -> None:
+    from pablo.learn import gate
+
+    coder = [_report("coder", n) for n in (29, 31, 27)]  # 80% ± 6%
+    assert not gate(coder[:1], [_report("c", 31)]).beats  # one run each: never
+    small = gate(coder, [_report("c", n) for n in (30, 31, 31)])
+    assert not small.beats and "within the spread" in small.reason
+    big = gate(coder, [_report("c", n) for n in (34, 35, 34)])
+    assert big.beats and big.runs == 3
+    riskier = gate(coder, [_report("c", n, false_ready=3) for n in (34, 35, 34)])
+    assert not riskier.beats and "false ready" in riskier.reason
+
+
+def test_promote_refuses_a_single_run_promotion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The M8 smoke test's 31/36 against a mean from another night is not a result."""
+    from pablo import learn as learn_mod
+
+    monkeypatch.setattr(learn_mod, "PABLO_DATA", tmp_path / "pdata")
+    candidate = tmp_path / "pdata" / "adapters" / "coder-candidate"
+    candidate.mkdir(parents=True)
+    (candidate / "adapter.gguf").write_bytes(b"fake")
+    old = Promotion(
+        id="coder-20261104-seq256", created_at="t", adapter=str(candidate),
+        baseline_pass_rate=0.842, candidate_pass_rate=0.861, baseline_commit="8b6188f",
+        candidate_wall_s=1425.0, beats_baseline=True, state="pending",
+    )  # fmt: skip
+    save_promotion(old, tmp_path / "home")
+    with pytest.raises(ValueError, match="needs 3"):
+        promote_adapter(tmp_path / "home")
+
+
+def test_eval_suite_tasks_never_reach_training(tmp_path: Path) -> None:
+    from pablo.evals import load_suite
+
+    task = load_suite()[0].task
+    rows = [
+        {"lane": "coder", "messages": [{"role": "user", "content": f"Task:\n{task}"},
+                                       {"role": "assistant", "content": "x"}]},
+        {"lane": "coder", "messages": [{"role": "user", "content": "rename a variable"},
+                                       {"role": "assistant", "content": "y"}]},
+    ]  # fmt: skip
+    export = tmp_path / "approved.jsonl"
+    export.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    prepared = prepare_training(export, tmp_path / "out")
+    assert prepared.skipped_eval == 1 and prepared.train_n == 1

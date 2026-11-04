@@ -51,6 +51,7 @@ class PreparedData:
     train_n: int
     holdout_n: int
     skipped_dupes: int
+    skipped_eval: int = 0  # rows whose prompt holds an eval-suite task: never train on the test
 
 
 @dataclass
@@ -65,6 +66,13 @@ class Promotion:
     beats_baseline: bool
     state: str = "pending"  # pending | promoted | rejected | held
     note: str = ""
+    # The gate: both sides measured the same night, same code, `runs` times each.
+    runs: int = 1
+    baseline_spread: float = 0.0
+    candidate_spread: float = 0.0
+    baseline_false_ready: int = 0
+    candidate_false_ready: int = 0
+    train_examples: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -113,12 +121,35 @@ def assert_no_claude(rows: list[TrainingRow]) -> None:
         )
 
 
+def suite_task_texts() -> list[str]:
+    """Every eval-suite task, as the model sees it. Training on one would fake the gate."""
+    from pablo.evals import load_suite
+
+    try:
+        return [" ".join(t.task.split()) for t in load_suite()]
+    except FileNotFoundError:
+        return []
+
+
+def mentions_eval_task(row: TrainingRow, texts: list[str]) -> bool:
+    prompt = " ".join(" ".join(m.get("content", "").split()) for m in row.messages[:-1])
+    return any(text[:80] in prompt for text in texts if text)
+
+
 def prepare_training(
-    export_path: Path, out_dir: Path, *, seed: int = 7
+    export_path: Path,
+    out_dir: Path,
+    *,
+    seed: int = 7,
+    exclude_texts: list[str] | None = None,
 ) -> PreparedData:
-    """Dedupe by prompt hash, hold out 10%, write train/holdout JSONL."""
+    """Drop eval-suite tasks, dedupe by prompt hash, hold out 10%, write train/holdout JSONL."""
     rows = load_export(export_path)
     assert_no_claude(rows)
+    texts = suite_task_texts() if exclude_texts is None else exclude_texts
+    kept = [r for r in rows if not mentions_eval_task(r, texts)]
+    skipped_eval = len(rows) - len(kept)
+    rows = kept
     seen: set[str] = set()
     unique: list[TrainingRow] = []
     skipped = 0
@@ -144,6 +175,7 @@ def prepare_training(
         train_n=len(train),
         holdout_n=len(holdout),
         skipped_dupes=skipped,
+        skipped_eval=skipped_eval,
     )
 
 
@@ -285,6 +317,60 @@ def baseline_pass_rate(results_path: Path = Path("evals/results.jsonl")) -> tupl
     return float(last["pass_rate"]), str(last.get("commit") or "")
 
 
+MIN_GATE_RUNS = 3
+
+
+@dataclass(frozen=True)
+class Gate:
+    beats: bool
+    reason: str
+    baseline_mean: float
+    candidate_mean: float
+    baseline_spread: float
+    candidate_spread: float
+    baseline_false_ready: int
+    candidate_false_ready: int
+    runs: int
+
+
+def gate(baseline: list[Any], candidate: list[Any]) -> Gate:
+    """The M7 bar for a LoRA: same night, same code, several runs each.
+
+    The candidate's mean must beat the coder's by more than either side's spread (and by at
+    least one task), and it must not mark more broken runs ready. One run against a mean is
+    noise on this suite (± 6 points), not a result.
+    """
+    from pablo.evals import aggregate
+
+    b, c = aggregate(baseline), aggregate(candidate)
+    runs = min(len(baseline), len(candidate))
+    tasks = len(candidate[0].results) if candidate and candidate[0].results else 36
+    margin = max(b["stdev_pass_rate"], c["stdev_pass_rate"], 1 / tasks)
+    lift = c["mean_pass_rate"] - b["mean_pass_rate"]
+    if runs < MIN_GATE_RUNS:
+        beats, why = False, f"{runs} run(s) each; the gate needs {MIN_GATE_RUNS}"
+    elif lift <= margin:
+        beats, why = False, f"lift {lift:+.1%} is within the spread ({margin:.1%})"
+    elif c["false_ready_total"] > b["false_ready_total"]:
+        beats, why = (
+            False,
+            (f"false ready went up ({b['false_ready_total']} → {c['false_ready_total']})"),
+        )
+    else:
+        beats, why = True, f"lift {lift:+.1%} beats the spread ({margin:.1%})"
+    return Gate(
+        beats=beats,
+        reason=why,
+        baseline_mean=b["mean_pass_rate"],
+        candidate_mean=c["mean_pass_rate"],
+        baseline_spread=b["stdev_pass_rate"],
+        candidate_spread=c["stdev_pass_rate"],
+        baseline_false_ready=b["false_ready_total"],
+        candidate_false_ready=c["false_ready_total"],
+        runs=runs,
+    )
+
+
 def new_adapter_dir(stamp: str | None = None) -> Path:
     day = stamp or datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     path = adapters_dir() / f"coder-{day}"
@@ -322,6 +408,11 @@ def promote_adapter(home: Path | None = None) -> Promotion:
         raise ValueError(
             f"candidate {pending.candidate_pass_rate:.0%} does not beat "
             f"baseline {pending.baseline_pass_rate:.0%}; refuse promote"
+        )
+    if pending.runs < MIN_GATE_RUNS:
+        raise ValueError(
+            f"{pending.id} was scored on {pending.runs} run(s); the gate needs "
+            f"{MIN_GATE_RUNS} of each, measured the same night. Rerun `pablo learn`."
         )
     candidate = adapters_dir() / "coder-candidate"
     active = adapters_dir() / "coder-active"

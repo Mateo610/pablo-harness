@@ -58,7 +58,7 @@ lanes:
     routable: false
     edit_format: blocks
     writes_code: true
-    symbol_lookup: true
+    symbol_lookup: false         # mirrors coder: the only difference under test is the adapter
 
   judge:
     role: Reviews diffs and scores certainty

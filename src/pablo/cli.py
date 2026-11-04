@@ -406,16 +406,19 @@ def learn(
     skip_eval: Annotated[
         bool, typer.Option(help="Train (or prepare) but do not run the candidate suite")
     ] = False,
+    repeat: Annotated[
+        int, typer.Option(help="Suite runs for the coder and for the candidate, each")
+    ] = 3,
     fake: FakeOpt = False,
 ) -> None:
-    """Export → train LoRA → eval coder-candidate → write a gated promotion item."""
+    """Export → train LoRA → eval coder and candidate the same night → gated promotion item."""
     from datetime import UTC, datetime
 
     from pablo.learn import (
         MIN_NEW_EXAMPLES,
         ClaudeInTrainingError,
         Promotion,
-        baseline_pass_rate,
+        gate,
         new_adapter_dir,
         prepare_training,
         publish_candidate,
@@ -450,11 +453,12 @@ def learn(
         raise typer.Exit(2) from exc
     console.print(
         f"prepared train={prepared.train_n} holdout={prepared.holdout_n} "
-        f"dupes_skipped={prepared.skipped_dupes}"
+        f"dupes_skipped={prepared.skipped_dupes} eval_tasks_dropped={prepared.skipped_eval}"
     )
 
     if not skip_train:
-        proc = run_train_script(export, adapter_dir, skip_train=False)
+        # Train on the prepared split only: the holdout and any eval-suite task stay out.
+        proc = run_train_script(prepared.train_path, adapter_dir, skip_train=False)
         if proc.returncode != 0:
             console.print(proc.stdout)
             console.print(f"[red]train failed[/]\n{proc.stderr}")
@@ -462,49 +466,59 @@ def learn(
         console.print(proc.stdout)
         write_marker(train_marker(settings.home))
     else:
-        run_train_script(export, adapter_dir, skip_train=True)
+        run_train_script(prepared.train_path, adapter_dir, skip_train=True)
         console.print("[yellow]skip-train[/]: data prepared only")
 
     publish_candidate(adapter_dir)
-    baseline, baseline_commit = baseline_pass_rate()
-    candidate_rate: float | None = None
+    result = None
     wall_s = 0.0
+    commit = ""
     if not skip_eval and not skip_train and not fake:
-        from pablo.evals import append_result, run_suite
+        from pablo.evals import aggregate_markdown, append_result, run_suite
 
-        console.print("evaluating coder-candidate against the suite…")
-        report = run_suite(
-            settings,
-            _backend(settings, fake=False),
-            lane="coder-candidate",
-            swap=SwapView(),
-        )
-        s = report.summary()
-        candidate_rate = float(s["pass_rate"])
-        wall_s = float(s["wall_s"])
+        sides: dict[str, list[Any]] = {"coder": [], "coder-candidate": []}
+        for i in range(max(1, repeat)):
+            # Interleaved, so both sides see the same box on the same night.
+            for lane_name, reports in sides.items():
+                console.print(f"run {i + 1} of {repeat}: {lane_name}")
+                report = run_suite(
+                    settings, _backend(settings, fake=False), lane=lane_name, swap=SwapView()
+                )
+                append_result(report)
+                reports.append(report)
+        result = gate(sides["coder"], sides["coder-candidate"])
+        wall_s = sum(float(r.summary()["wall_s"]) for r in sides["coder-candidate"])
+        commit = sides["coder"][0].commit
         console.print(
-            f"candidate pass {candidate_rate:.0%} · baseline {baseline:.0%} · wall {wall_s:.0f}s"
+            f"coder {result.baseline_mean:.0%} ± {result.baseline_spread:.0%} · candidate "
+            f"{result.candidate_mean:.0%} ± {result.candidate_spread:.0%} · {result.reason}"
         )
-        append_result(report)
         docs = Path("docs/benchmarks.md")
         if docs.is_file():
             with docs.open("a", encoding="utf-8") as fh:
-                fh.write("\n" + report.to_markdown() + "\n")
-    elif fake or skip_eval:
+                for reports in sides.values():
+                    fh.write("\n" + aggregate_markdown(reports) + "\n")
+    else:
         console.print("[yellow]skip-eval[/]: no candidate score")
 
-    beats = candidate_rate is not None and candidate_rate > baseline
+    beats = bool(result and result.beats)
     promo = Promotion(
         id=adapter_dir.name,
         created_at=datetime.now(UTC).isoformat(),
         adapter=str(adapter_dir),
-        baseline_pass_rate=baseline,
-        candidate_pass_rate=candidate_rate if candidate_rate is not None else -1.0,
-        baseline_commit=baseline_commit,
+        baseline_pass_rate=result.baseline_mean if result else 0.0,
+        candidate_pass_rate=result.candidate_mean if result else -1.0,
+        baseline_commit=commit,
         candidate_wall_s=wall_s,
         beats_baseline=beats,
         state="pending" if beats else "held",
-        note="" if beats else "does not beat baseline; not offered for promote",
+        note=result.reason if result else "not evaluated",
+        runs=result.runs if result else 0,
+        baseline_spread=result.baseline_spread if result else 0.0,
+        candidate_spread=result.candidate_spread if result else 0.0,
+        baseline_false_ready=result.baseline_false_ready if result else 0,
+        candidate_false_ready=result.candidate_false_ready if result else 0,
+        train_examples=prepared.train_n,
     )
     path = save_promotion(promo, settings.home)
     mark = "[green]beats baseline → pending promote[/]" if beats else "[yellow]held[/]"
