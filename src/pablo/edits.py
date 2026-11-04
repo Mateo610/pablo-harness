@@ -111,6 +111,33 @@ def _find_lines(content: str, search: str) -> tuple[int, int, str] | None:
     return None
 
 
+def _where_it_diverges(content: str, search: str) -> str:
+    """Where a SEARCH that starts right goes wrong: the first line it gets different."""
+    want = [ln for ln in search.splitlines()]
+    while want and not want[0].strip():
+        want.pop(0)
+    if not want:
+        return ""
+    lines = content.splitlines()
+    best: tuple[int, int] | None = None  # (matched lines, start index)
+    for i, line in enumerate(lines):
+        if line.strip() != want[0].strip():
+            continue
+        n = 0
+        while n < len(want) and i + n < len(lines) and lines[i + n].strip() == want[n].strip():
+            n += 1
+        if best is None or n > best[0]:
+            best = (n, i)
+    if best is None or best[0] >= len(want):
+        return ""
+    n, start = best
+    have = lines[start + n].strip() if start + n < len(lines) else "(end of file)"
+    return (
+        f"it matches {n} line(s) from line {start + 1}, then the file has {have!r} "
+        f"where SEARCH has {want[n].strip()!r}"
+    )
+
+
 def apply_block(content: str, block: EditBlock) -> str:
     if block.search in content and block.search:
         count = content.count(block.search)
@@ -121,6 +148,9 @@ def apply_block(content: str, block: EditBlock) -> str:
         return content.replace(block.search, block.replace, 1)
     found = _find_lines(content, block.search)
     if found is None:
+        diverges = _where_it_diverges(content, block.search)
+        if diverges:
+            raise EditError(f"{block.path}: SEARCH text not found; {diverges}")
         first = next((ln for ln in block.search.splitlines() if ln.strip()), "")
         close = difflib.get_close_matches(first, content.splitlines(), n=3, cutoff=0.5)
         hint = (

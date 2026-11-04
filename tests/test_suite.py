@@ -132,7 +132,10 @@ def test_a_perfect_coder_scores_full_marks(settings: Settings) -> None:
     assert all(r.ready and r.clean for r in report.results)
     assert report.summary()["ready_precision"] == 1.0 and not report.false_ready
     assert all(r.context_files for r in report.results)
-    assert "| ledger-by-payee-sums | file | ready | yes |  | clean | pass |" in report.to_markdown()
+    assert (
+        "| ledger-by-payee-sums | file | coder | ready | yes |  | clean | pass |"
+        in report.to_markdown()
+    )
 
 
 def test_a_cheating_coder_fails_every_hidden_test(settings: Settings) -> None:
@@ -177,3 +180,22 @@ def test_a_move_may_leave_a_wrapper_but_not_a_copy(tmp_path: Path) -> None:
         task, repo, "", LocalSandbox(), files={"textkit/trim.py": trim}, python=PY
     )
     assert not copied
+
+
+def test_cascade_scores_the_deep_retry(settings: Settings) -> None:
+    perfect = _coder(cheat=False).scripts["pablo/coder"]
+    judge = json.dumps({"certainty": 0.9, "summary": "ok", "question": ""})
+    backend = FakeBackend(
+        scripts={
+            "pablo/coder": lambda m, msgs: "I'm not sure what to change.",
+            "pablo/deep": perfect,
+            "pablo/judge": lambda m, msgs: judge,
+        }
+    )
+    one = {"ledger-by-payee-sums"}
+    plain = run_suite(settings, backend, only=one, python=PY, sandbox=LocalSandbox())
+    assert plain.pass_rate() == 0.0 and not plain.results[0].retried  # retries off by default
+    both = run_suite(settings, backend, only=one, python=PY, sandbox=LocalSandbox(), cascade=True)
+    row = both.results[0]
+    assert row.retried and row.final_lane == "deep" and row.hidden_passed
+    assert both.lane == "coder→deep" and both.summary()["retried_and_passed"] == 1

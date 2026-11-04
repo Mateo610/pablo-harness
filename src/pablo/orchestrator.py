@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 from pablo.config import ESCALATION_LANE, Lane, Settings
-from pablo.context import Budget, build_coder_context, clip, context_files
+from pablo.context import Budget, build_coder_context, clip, context_files, numbered
 from pablo.edits import (
     EditError,
     blocks_on_top,
@@ -138,6 +138,9 @@ class Run:
     question: str = ""
     task_id: str | None = None
     escalated_from: str | None = None
+    retried_from: str | None = None  # this run retries that one on another local lane
+    retry_run: str | None = None  # the retry started for this run
+    retry_job: str | None = None  # or the overnight job that will run it
     group: str | None = None  # runs started together by compare()
     applied_hunks: list[str] | None = None  # set when you approve only part of the diff
     repaired: bool = False  # the coder fixed its own diff after git apply failed
@@ -193,9 +196,7 @@ def repo_context(
     repo: Path, task: str, context_tokens: int = 10_500, home: Path | None = None
 ) -> str:
     """The coder's context: task, one skill card, repo map, numbered files, under a budget."""
-    return build_coder_context(
-        repo, task, budget=Budget.for_window(context_tokens), home=home
-    )
+    return build_coder_context(repo, task, budget=Budget.for_window(context_tokens), home=home)
 
 
 class Orchestrator:
@@ -221,6 +222,8 @@ class Orchestrator:
         self.sandbox = sandbox or make_sandbox(settings.sandbox, self.repo)
         self.lookup: LookupClient = lookup or ProcessLookup()
         self.baselines = Baselines()  # checks on the unedited repo, run once per repo state
+        # Run `retry_on` retries in the caller's thread (evals, tests) instead of in the background.
+        self.retry_inline = False
         self.router = Router(settings, backend)
         self.traces = TraceStore(settings.traces_dir)
         self.runs: dict[str, Run] = {}
@@ -341,6 +344,7 @@ class Orchestrator:
         escalate: bool = False,
         escalated_from: str | None = None,
         group: str | None = None,
+        retried_from: str | None = None,
     ) -> Run:
         decision = self.router.route(task, lane=ESCALATION_LANE if escalate else lane)
         lane_cfg = self.settings.lane(decision.lane)
@@ -357,6 +361,7 @@ class Orchestrator:
             task_id=task_id,
             escalated_from=escalated_from,
             group=group,
+            retried_from=retried_from,
         )
         self._save(run)
         self._emit("route", run, reason=decision.reason, confidence=decision.confidence)
@@ -368,7 +373,58 @@ class Orchestrator:
             run.question = f"Run failed: {exc}"
             self._save(run)
             self._emit("error", run, message=str(exc))
+        if run.state == "needs_you":
+            self._retry_elsewhere(run)
         return run
+
+    def _retry_elsewhere(self, run: Run) -> None:
+        """A run that needs you gets a fresh try on its lane's `retry_on` lane (coder → deep).
+
+        Only plain runs retry: not a retry, an escalation, or a compare (which already has its
+        other lanes). The two share a group, so approving one rejects the other.
+        """
+        lane = self.settings.lane(run.lane)
+        target = lane.retry_on
+        if (
+            target is None
+            or lane.retry_when == "off"
+            or run.retried_from
+            or run.escalated_from
+            or run.group
+        ):
+            return
+        run.group = uuid.uuid4().hex[:8]
+        if lane.retry_when == "overnight":
+            from pablo.overnight import JobQueue
+
+            job = JobQueue(self.settings.home).add(
+                run.task, lane=target, task_id=run.task_id, group=run.group, retried_from=run.id
+            )
+            run.retry_job = job.id
+            run.question = f"{run.question} {target.capitalize()} will try it tonight.".strip()
+            self._save(run)
+            self._emit("retry", run, lane=target, when="overnight", job=job.id)
+            return
+        asked = run.question
+        run.question = f"{asked} {target.capitalize()} is trying it now.".strip()
+        self._save(run)
+        self._emit("retry", run, lane=target, when="now")
+
+        def go() -> None:
+            retry = self.start(
+                run.task, lane=target, task_id=run.task_id, group=run.group, retried_from=run.id
+            )
+            run.retry_run = retry.id
+            verdict = "is ready for you" if retry.state == "ready" else "needs you too"
+            run.question = f"{asked} {target.capitalize()} tried it too ({retry.id}): {verdict}."
+            run.question = run.question.strip()
+            self._save(run)
+
+        if self.retry_inline:
+            go()
+        else:
+            # The cockpit gets the coder's result now; deep's arrives on the event stream.
+            threading.Thread(target=go, name=f"retry-{run.id}", daemon=True).start()
 
     def _extract(self, text: str) -> tuple[str, str, str]:
         """(explanation, diff, edit error) from a coder reply in either edit format."""
@@ -512,12 +568,8 @@ class Orchestrator:
             },
         ]
         budget = Budget.for_window(lane.context_tokens)
-        self._emit(
-            "context",
-            run,
-            files=context_files(self.repo, run.task, budget, home=self.settings.home),
-            budget_tokens=budget.total,
-        )
+        shown = context_files(self.repo, run.task, budget, home=self.settings.home)
+        self._emit("context", run, files=shown, budget_tokens=budget.total)
         if wants_diff and lane.symbol_lookup:
             messages, reply = self._lookup_round(run, lane, messages)
         else:
@@ -542,7 +594,11 @@ class Orchestrator:
                 {"role": "system", "content": system},
                 messages[1] if len(messages) > 1 else messages[0],
                 {"role": "assistant", "content": reply.text},
-                {"role": "user", "content": repair.format(error=problem)},
+                {
+                    "role": "user",
+                    "content": repair.format(error=problem)
+                    + unseen_files(self.repo, reply.text, shown, budget.per_file),
+                },
             ]
             reply = self._complete(run, lane, messages)
             explanation, repaired, edit_error = self._extract(reply.text)
@@ -714,3 +770,28 @@ def _better(new: Verdict, old: Verdict) -> bool:
         return sum(c.status not in ("passed", "already failing") for c in v.checks)
 
     return bad(new) < bad(old)
+
+
+def unseen_files(repo: Path, reply: str, shown: list[str], max_tokens: int) -> str:
+    """The files a reply edited that its prompt never showed, numbered, for the repair turn.
+
+    A SEARCH block for an unseen file is written from memory and rarely matches; showing the
+    file once is what lets the repair land (M6: harness-clip-small-caps missed in every run).
+    """
+    if not has_blocks(reply):
+        return ""
+    try:
+        paths = {b.path for b in parse_blocks(reply)}
+    except EditError:
+        return ""
+    parts = []
+    for rel in sorted(paths - set(shown)):
+        path = repo / rel
+        if rel and ".." not in Path(rel).parts and path.is_file():
+            body = path.read_text(encoding="utf-8", errors="replace")
+            parts.append(f"--- {rel}\n{clip(numbered(body), max_tokens)}")
+    if not parts:
+        return ""
+    return "\n\nYou edited files you were not shown. Here they are as they are now:\n\n" + (
+        "\n\n".join(parts)
+    )

@@ -38,6 +38,11 @@ class Lane(BaseModel):
     # After checks get worse, show the coder the failing output this many times and let it fix
     # its change. 0 turns it off. Remote lanes never get extra rounds (each one costs a call).
     fix_rounds: int = 1
+    # When a run here lands in Needs you, try the task again on this local lane (the coder
+    # retries on deep). "now" runs it right after; "overnight" queues it for the window.
+    # Never the escalation lane: the harness does not send work to Claude on its own.
+    retry_on: str | None = None
+    retry_when: Literal["now", "overnight", "off"] = "now"
     # Two-step coding: first list symbols to look up, then edit with those defs/refs in context.
     # One-shot (edit in the first reply) stays the fallback when the model skips the list.
     symbol_lookup: bool = False
@@ -135,6 +140,18 @@ class Settings(BaseModel):
         for required in ("router", "coder", "judge"):
             if required not in self.lanes:
                 raise ValueError(f"lanes.yaml must define a '{required}' lane")
+        for name, lane in self.lanes.items():
+            target = lane.retry_on
+            if target is None:
+                continue
+            if target == ESCALATION_LANE or target not in self.lanes:
+                raise ValueError(
+                    f"lane '{name}' retry_on must be another local lane, not {target!r}"
+                )
+            if target == name or self.lanes[target].kind != "local":
+                raise ValueError(
+                    f"lane '{name}' retry_on must be another local lane, not {target!r}"
+                )
         return self
 
     def lane(self, name: str) -> Lane:

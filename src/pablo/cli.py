@@ -399,6 +399,9 @@ def eval_suite(
     lane: Annotated[str, typer.Option(help="Lane to score")] = "coder",
     only: Annotated[str, typer.Option(help="Comma-separated task ids")] = "",
     repeat: Annotated[int, typer.Option(help="Run the suite N times and report the spread")] = 1,
+    cascade: Annotated[
+        bool, typer.Option(help="Retry Needs-you runs on the lane's retry_on lane (coder → deep)")
+    ] = False,
     fake: FakeOpt = False,
     write: Annotated[
         bool, typer.Option(help="Append to evals/results.jsonl and docs/benchmarks.md")
@@ -429,6 +432,7 @@ def eval_suite(
             sandbox=LocalSandbox() if fake else None,
             swap=None if fake else SwapView(),
             on_task=show,
+            cascade=cascade,
         )
         s = report.summary()
         console.print(

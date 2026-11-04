@@ -59,6 +59,8 @@ class Job:
     status: JobStatus = "queued"
     run_id: str | None = None
     error: str = ""
+    group: str | None = None  # set when this job retries a run, so approving one rejects the other
+    retried_from: str | None = None
     created_at: str = field(default_factory=lambda: now_local().isoformat(timespec="seconds"))
     started_at: str | None = None
     finished_at: str | None = None
@@ -89,8 +91,16 @@ class JobQueue:
         with self._lock:
             return self._read()
 
-    def add(self, task: str, lane: str | None = None, task_id: str | None = None) -> Job:
-        job = Job(task=task, lane=lane, task_id=task_id)
+    def add(
+        self,
+        task: str,
+        lane: str | None = None,
+        task_id: str | None = None,
+        *,
+        group: str | None = None,
+        retried_from: str | None = None,
+    ) -> Job:
+        job = Job(task=task, lane=lane, task_id=task_id, group=group, retried_from=retried_from)
         with self._lock:
             jobs = self._read()
             jobs.append(job)
@@ -149,7 +159,13 @@ class OvernightRunner:
                 )
                 self._emit("queue", job, status="running", text=f"tonight · {job.task[:60]}")
                 try:
-                    run = self.orch.start(job.task, lane=lane, task_id=job.task_id)
+                    run = self.orch.start(
+                        job.task,
+                        lane=lane,
+                        task_id=job.task_id,
+                        group=job.group,
+                        retried_from=job.retried_from,
+                    )
                     job = self.queue.update(
                         job.id,
                         status="done",

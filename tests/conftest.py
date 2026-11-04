@@ -15,6 +15,8 @@ def settings(tmp_path: Path) -> Settings:
     s = load_settings(ROOT / "config" / "lanes.yaml")
     s.home = tmp_path / "home"
     s.sandbox = SandboxConfig()  # local: CI has no container engine
+    for lane in s.lanes.values():
+        lane.retry_when = "off"  # tests that want coder → deep retries turn it on
     return s
 
 

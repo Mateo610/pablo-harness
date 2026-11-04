@@ -18,9 +18,7 @@ def _repo(tmp_path: Path) -> Path:
     (root / "pkg").mkdir(parents=True)
     (root / "pkg" / "__init__.py").write_text("")
     (root / "pkg" / "store.py").write_text(
-        "def remove(sku: str, qty: int) -> None:\n"
-        '    """Drop qty units."""\n'
-        "    pass\n"
+        'def remove(sku: str, qty: int) -> None:\n    """Drop qty units."""\n    pass\n'
     )
     (root / "pkg" / "api.py").write_text("from pkg.store import remove\n\nremove('a', 1)\n")
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)

@@ -58,6 +58,11 @@ export interface Run {
   task_id: string | null;
   escalated_from: string | null;
   group: string | null;
+  /** This run retries that one on another local lane (coder → deep). */
+  retried_from?: string | null;
+  /** The retry started for this run, or the overnight job that will run it. */
+  retry_run?: string | null;
+  retry_job?: string | null;
   applied_hunks: string[] | null;
   created_at: string;
 }

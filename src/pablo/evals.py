@@ -176,6 +176,8 @@ class TaskResult:
     run_id: str = ""
     hidden_tail: str = ""
     question: str = ""  # why it landed in Needs you (an edit error, a reply with no change, ...)
+    retried: bool = False  # the first lane needed you, so the task was retried (cascade)
+    final_lane: str = ""  # the lane whose run was scored
     explanation: str = ""  # the start of the coder's own words
 
     @property
@@ -230,6 +232,8 @@ class SuiteReport:
             else None,
             "false_ready": [r.id for r in self.false_ready],
             "missed": len(self.missed),
+            "retried": sum(r.retried for r in self.results),
+            "retried_and_passed": sum(r.retried and r.hidden_passed for r in self.results),
             "fix_tried": sum(bool(r.fix_outcome) for r in self.results),
             "fix_outcomes": {
                 o: sum(r.fix_outcome == o for r in self.results)
@@ -254,19 +258,21 @@ class SuiteReport:
             f"Hidden-test pass rate {s['pass_rate']:.0%} ({by}) · no diff {s['no_diff']} · "
             f"ready {s['ready']}, of which passed {s['ready_precision'] if s['ready'] else '—'} · "
             f"false ready {len(s['false_ready'])} · missed {s['missed']} · "
+            f"retried on another lane {s['retried']} ({s['retried_and_passed']} passed) · "
             f"fix rounds tried {s['fix_tried']} {s['fix_outcomes'] or ''}, "
             f"kept {s['fixed']} ({s['fixed_and_passed']} passed) · "
             f"certainty passed {s['certainty_when_passed']} "
             f"/ failed {s['certainty_when_failed']} · "
             f"wall {s['wall_s']} s",
             "",
-            "| task | refs | state | diff | fixed | visible | hidden | certainty | wall s |",
-            "|---|---|---|---|---|---|---|---|---|",
+            "| task | refs | lane | state | diff | fixed | visible | hidden | certainty | wall s |",
+            "|---|---|---|---|---|---|---|---|---|---|",
         ]
         for r in self.results:
             cert = "—" if r.certainty is None else f"{r.certainty:.2f}"
             lines.append(
-                f"| {r.id} | {r.refs} | {r.state} | {'yes' if r.has_diff else 'no'} | "
+                f"| {r.id} | {r.refs} | {r.final_lane or self.lane} | {r.state} | "
+                f"{'yes' if r.has_diff else 'no'} | "
                 f"{r.fix_outcome} | "
                 f"{'clean' if r.clean else 'worse'} | {'pass' if r.hidden_passed else 'FAIL'} | "
                 f"{cert} | {r.wall_s:.0f} |"
@@ -295,13 +301,21 @@ def run_suite(
     sandbox: Sandbox | None = None,
     swap: SwapView | None = None,
     on_task: Callable[[TaskResult], None] | None = None,
+    cascade: bool = False,
 ) -> SuiteReport:
-    """Run `lane` on every task (or `only` those ids) and score each against its hidden test."""
+    """Run `lane` on every task (or `only` those ids) and score each against its hidden test.
+
+    `cascade` turns on the lane's `retry_on` (coder → deep) right away; the task is then scored
+    on the retry, which is the run you would review. Without it, retries are off, so a lane's
+    score stays comparable with earlier baselines.
+    """
     results: list[TaskResult] = []
     with tempfile.TemporaryDirectory(prefix="pablo-eval-") as tmp:
         work = Path(tmp)
         # A throwaway home: eval runs and their traces disappear with this directory.
-        isolated = settings.model_copy(update={"home": work / "home"})
+        isolated = settings.model_copy(update={"home": work / "home"}, deep=True)
+        for cfg in isolated.lanes.values():
+            cfg.retry_when = "now" if cascade else "off"
         for task in load_suite(root):
             if only and task.id not in only:
                 continue
@@ -309,8 +323,10 @@ def run_suite(
             box = sandbox or make_sandbox(settings.sandbox, repo)
             checks = {name: with_python(cmd, python) for name, cmd in _repo_checks(repo).items()}
             orch = Orchestrator(isolated, backend, repo=repo, checks=checks, sandbox=box, swap=swap)
+            orch.retry_inline = True
             started = time.perf_counter()
-            run = orch.start(task.task, lane=lane)
+            first = orch.start(task.task, lane=lane)
+            run = orch.get(first.retry_run) if first.retry_run else first
             wall = time.perf_counter() - started
             passed, tail = (
                 hidden_check(task, repo, run.diff, box, python=python)
@@ -339,12 +355,16 @@ def run_suite(
                 hidden_tail="" if passed else tail[-600:],
                 question=run.question[:400],
                 explanation=run.explanation[:300],
+                retried=bool(first.retry_run),
+                final_lane=run.lane,
             )
             results.append(result)
             if on_task:
                 on_task(result)
     return SuiteReport(
-        lane=lane,
+        lane=f"{lane}→{settings.lane(lane).retry_on}"
+        if cascade and settings.lane(lane).retry_on
+        else lane,
         model=settings.lane(lane).model,
         results=results,
         commit=current_commit(root),

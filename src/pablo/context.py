@@ -305,9 +305,7 @@ def pick_files(
 
     # A file that quotes the task (an eval or plan listing it) is the question, not the code.
     quote = " ".join(task.split())[:60]
-    rest = [
-        f for f in readable if f not in picked and quote not in " ".join(text(f).split())
-    ]
+    rest = [f for f in readable if f not in picked and quote not in " ".join(text(f).split())]
     if repo_map is not None:
         rest = repo_map.rank_files(task, rest)
     else:
