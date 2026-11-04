@@ -1235,3 +1235,46 @@ Passed per run [30, 31, 30] · mean 84% ± 2% · false ready over all runs 7
 
 - Flaky (4): harness-certainty-percent, harness-judge-fenced-json, ledger-comments, textkit-slug-max-length
 - Never passed (4): harness-clip-small-caps, harness-memory-units, inventory-remove-too-many, textkit-reading-time
+
+### Coder suite · deep (pablo/deep) · 2026-11-04T03:47:47+00:00 · `a30df2a`
+
+Hidden-test pass rate 94% (file 100% · symbol 87% · none 100%) · no diff 1 · ready 33, of which passed 0.97 · false ready 1 · missed 2 · fix rounds tried 2 {'kept': 2}, kept 2 (2 passed) · certainty passed 0.94 / failed 0.9 · wall 12917.0 s
+
+| task | refs | state | diff | fixed | visible | hidden | certainty | wall s |
+|---|---|---|---|---|---|---|---|---|
+| ledger-by-payee-sums | file | ready | yes |  | clean | pass | 1.00 | 265 |
+| ledger-load-line-commas | symbol | ready | yes |  | clean | pass | 1.00 | 250 |
+| ledger-negative-format | none | ready | yes |  | clean | pass | 1.00 | 283 |
+| ledger-thousands | symbol | ready | yes |  | clean | pass | 1.00 | 452 |
+| ledger-comments | none | ready | yes |  | clean | pass | 1.00 | 236 |
+| ledger-move-format | file | ready | yes |  | clean | pass | 1.00 | 189 |
+| ledger-month-total | symbol | ready | yes |  | clean | pass | 1.00 | 514 |
+| ledger-refunds-parse | none | ready | yes |  | clean | pass | 1.00 | 212 |
+| ledger-largest | file | ready | yes |  | clean | pass | 1.00 | 198 |
+| ledger-month-number | symbol | needs_you | yes |  | clean | pass | 0.30 | 406 |
+| textkit-word-count | symbol | ready | yes |  | clean | pass | 1.00 | 112 |
+| textkit-slug-accents | file | ready | yes |  | clean | pass | 1.00 | 210 |
+| textkit-top-words-punctuation | none | ready | yes |  | clean | pass | 0.80 | 286 |
+| textkit-wrap-max-lines | symbol | ready | yes |  | clean | pass | 0.90 | 895 |
+| textkit-truncate-words | none | ready | yes |  | clean | pass | 0.90 | 451 |
+| textkit-move-truncate | file | ready | yes |  | clean | pass | 1.00 | 112 |
+| textkit-slug-max-length | symbol | ready | yes |  | clean | pass | 0.90 | 650 |
+| textkit-reading-time | symbol | ready | yes |  | clean | pass | 1.00 | 300 |
+| textkit-top-words-ties | file | ready | yes |  | clean | pass | 1.00 | 171 |
+| textkit-slug-separator | none | ready | yes |  | clean | pass | 1.00 | 146 |
+| inventory-value-qty | symbol | ready | yes |  | clean | pass | 1.00 | 168 |
+| inventory-remove-too-many | none | ready | yes |  | clean | pass | 1.00 | 236 |
+| inventory-bulk-threshold | file | ready | yes |  | clean | pass | 1.00 | 111 |
+| inventory-find-any-case | none | ready | yes |  | clean | pass | 1.00 | 324 |
+| inventory-csv-lenient | symbol | ready | yes |  | clean | pass | 1.00 | 280 |
+| inventory-merge-stock | file | ready | yes |  | clean | pass | 1.00 | 126 |
+| inventory-low-stock | symbol | ready | yes |  | clean | pass | 1.00 | 244 |
+| inventory-discount-range | none | ready | yes |  | clean | pass | 1.00 | 235 |
+| inventory-move-bulk | file | needs_you | yes |  | clean | pass | 0.30 | 246 |
+| inventory-store-csv | symbol | ready | yes |  | clean | pass | 1.00 | 432 |
+| harness-judge-fenced-json | none | ready | yes |  | clean | pass | 0.90 | 899 |
+| harness-certainty-percent | symbol | needs_you | no |  | worse | FAIL | — | 408 |
+| harness-memory-units | none | ready | yes | kept | clean | pass | 0.90 | 743 |
+| harness-hunk-stats | symbol | ready | yes | kept | clean | pass | 1.00 | 652 |
+| harness-clip-small-caps | symbol | ready | yes |  | clean | FAIL | 0.90 | 847 |
+| harness-router-unknown-lane | file | ready | yes |  | clean | pass | 1.00 | 630 |
