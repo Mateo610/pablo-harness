@@ -569,6 +569,7 @@ def eval_suite(
 ) -> None:
     """Score a lane on the coder suite against hidden tests (evals/suite)."""
     from pablo.evals import aggregate, aggregate_markdown, append_result, run_suite
+    from pablo.judge_replay import append_cases
     from pablo.sandbox import LocalSandbox
 
     settings = load_settings()
@@ -603,6 +604,8 @@ def eval_suite(
         reports.append(report)
         if write and not fake:
             append_result(report)
+            added = append_cases(report.replay)
+            console.print(f"judge replay: {added} new diffs in evals/judge/replay.jsonl")
     if repeat > 1:
         a = aggregate(reports)
         console.print(
@@ -628,14 +631,36 @@ def eval_judge(
     ] = None,
     write: Annotated[bool, typer.Option(help="Append the table to docs/benchmarks.md")] = False,
     case_set: Annotated[
-        str, typer.Option("--set", help="main (tune on these) or holdout (score only, never tune)")
+        str,
+        typer.Option(
+            "--set",
+            help="main (tune on these), holdout (score only, never tune), or replay "
+            "(real suite diffs labeled by hidden tests; the bake-off number)",
+        ),
     ] = "main",
 ) -> None:
-    """Score the judge on fixed good/bad diffs (evals/judge)."""
+    """Score the judge on fixed good/bad diffs (evals/judge), or replay real suite diffs."""
     from pablo.judge_eval import run_judge_eval
 
     settings = load_settings()
     alias = model or settings.lane("judge").model
+    if case_set == "replay":
+        from pablo.judge_replay import REPLAY, run_replay
+
+        if not REPLAY.is_file():
+            console.print("[yellow]No replay yet: run `pablo eval --write` first.[/]")
+            raise typer.Exit(1)
+        replay = run_replay(
+            _backend(settings, fake), alias, threshold=settings.thresholds.judge_needs_you
+        )
+        table = replay.to_markdown()
+        console.print(table)
+        if write:
+            bench = Path(__file__).resolve().parents[2] / "docs" / "benchmarks.md"
+            with bench.open("a", encoding="utf-8") as fh:
+                fh.write("\n" + table + "\n")
+            console.print(f"appended to {bench}")
+        return
     report = run_judge_eval(
         _backend(settings, fake),
         alias,

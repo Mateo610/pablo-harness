@@ -43,6 +43,10 @@ class Lane(BaseModel):
     # Never the escalation lane: the harness does not send work to Claude on its own.
     retry_on: str | None = None
     retry_when: Literal["now", "overnight", "off"] = "now"
+    # Which Needs-you runs retry. "broken": only when the change itself is bad (run failed, no
+    # diff, edits didn't apply, checks not clean). "needs_you": also clean runs the judge was
+    # unsure about. The 3-run cascade spent most retries re-solving clean, correct runs.
+    retry_if: Literal["broken", "needs_you"] = "broken"
     # Two-step coding: first list symbols to look up, then edit with those defs/refs in context.
     # One-shot (edit in the first reply) stays the fallback when the model skips the list.
     symbol_lookup: bool = False

@@ -48,6 +48,7 @@ lanes:
     symbol_lookup: false         # M6 two-step: not a keep (84% ± 2%, false ready 7 vs 4); code stays
     retry_on: deep               # a coder run that needs you gets a fresh try on deep (M7: 94% vs 82%)
     retry_when: now              # now · overnight (queue it for the window) · off
+    retry_if: broken             # broken: only failed / no diff / didn't apply / checks worse · needs_you: any
 
   coder-candidate:
     role: LoRA candidate under eval; never auto-routed, never training data
@@ -66,6 +67,18 @@ lanes:
     color: "#b9a3ff"
     kind: local
     train_ok: true
+
+  advisor:
+    role: Unfiltered second opinion; talks, never edits, never scores
+    model: pablo/advisor         # Mistral-Small-3.2-24B heretic Q5 (the old judge's weights)
+    color: "#b9a3ff"
+    kind: local
+    train_ok: false              # no-guardrails output never becomes training data
+    writes_code: false
+    routable: false              # only when you pick it (Chat model menu, Advisor tab, voice)
+    fix_rounds: 0
+    temperature: 0.7
+    max_tokens: 2048
 
   deep:
     role: Long, hard reasoning; overnight sweeps

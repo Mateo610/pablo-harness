@@ -393,6 +393,7 @@ class Orchestrator:
             or run.retried_from
             or run.escalated_from
             or run.group
+            or (lane.retry_if == "broken" and not _broken(run))
         ):
             return
         run.group = uuid.uuid4().hex[:8]
@@ -577,6 +578,9 @@ class Orchestrator:
         else:
             reply = self._complete(run, lane, messages)
         run.explanation, run.diff, edit_error = self._extract(reply.text)
+        if not wants_diff:
+            # A talk-only lane (the advisor) never hands back a change, even if it writes blocks.
+            run.explanation, run.diff, edit_error = reply.text, "", ""
         verdict: Verdict | None = None
         if run.diff:
             self._emit("status", run, text=f"{run.lane} · running checks")
@@ -777,6 +781,16 @@ def _better(new: Verdict, old: Verdict) -> bool:
         return sum(c.status not in ("passed", "already failing") for c in v.checks)
 
     return bad(new) < bad(old)
+
+
+def _broken(run: Run) -> bool:
+    """The change itself is bad: the run failed, made no diff, didn't apply, or checks got worse.
+
+    A clean change the judge was merely unsure about is not broken; you read it, deep doesn't.
+    """
+    if run.state == "failed" or not run.diff or not run.verdict:
+        return True
+    return not (run.verdict.get("applied", True) and run.verdict.get("clean", False))
 
 
 def _edited_paths(repo: Path, reply: str) -> list[str]:

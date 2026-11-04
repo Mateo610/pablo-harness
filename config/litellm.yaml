@@ -33,6 +33,12 @@ model_list:
       api_base: http://127.0.0.1:8100/v1
       api_key: "none"
 
+  - model_name: pablo/advisor
+    litellm_params:
+      model: openai/advisor
+      api_base: http://127.0.0.1:8100/v1
+      api_key: "none"
+
   - model_name: pablo/deep
     litellm_params:
       model: openai/deep

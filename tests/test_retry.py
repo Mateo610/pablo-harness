@@ -154,3 +154,35 @@ def test_a_failed_coder_run_is_retried_on_deep(settings: Settings, repo: Path) -
     run = o.start("add sub(a, b)", lane="coder")
     assert run.state == "failed" and run.retry_run
     assert o.get(run.retry_run).state == "ready"
+
+
+def test_a_clean_run_the_judge_doubts_is_not_retried_by_default(
+    settings: Settings, repo: Path
+) -> None:
+    """3-run cascade: most retries re-solved clean, correct runs. Deep only gets broken ones."""
+    settings.lanes["coder"].retry_when = "now"
+    unsure = json.dumps({"certainty": 0.3, "summary": "maybe", "question": "Keep the old name?"})
+    scripts = {
+        "pablo/coder": lambda m, msgs: GOOD,
+        "pablo/deep": lambda m, msgs: GOOD,
+        "pablo/judge": lambda m, msgs: unsure,
+    }
+    o = Orchestrator(settings, FakeBackend(scripts=scripts), repo=repo, checks=PYTEST)
+    o.retry_inline = True
+    run = o.start("add sub(a, b)", lane="coder")
+    assert run.state == "needs_you" and run.verdict and run.verdict["clean"]
+    assert run.retry_run is None and run.group is None
+    settings.lanes["coder"].retry_if = "needs_you"
+    assert o.start("add sub(a, b)", lane="coder").retry_run
+
+
+def test_a_run_whose_checks_got_worse_is_retried(settings: Settings, repo: Path) -> None:
+    broken = (
+        "Done.\n\ncalc.py\n<<<<<<< SEARCH\ndef add(a, b):\n    return a + b\n=======\n"
+        "def add(a, b):\n    return a - b\n>>>>>>> REPLACE\n"
+    )
+    o = orch(settings, repo, broken)
+    o.settings.lanes["coder"].fix_rounds = 0
+    run = o.start("add sub(a, b)", lane="coder")
+    assert run.verdict and not run.verdict["clean"]
+    assert run.retry_run and o.get(run.retry_run).lane == "deep"

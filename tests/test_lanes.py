@@ -85,3 +85,22 @@ def test_each_run_records_which_files_its_prompt_carried(settings: Settings, rep
     context = next(e for e in orch.events(run.id) if e["kind"] == "context")
     assert context["data"]["files"][0] == "calc.py"
     assert context["data"]["budget_tokens"] == settings.lane("deep").context_tokens
+
+
+def test_the_advisor_talks_but_never_hands_back_a_change(settings: Settings, repo: Path) -> None:
+    """The heretic Mistral is a second opinion: not routable, never trained on, no diffs."""
+    from pablo.config import load_settings
+    from pablo.gateway import FakeBackend
+    from pablo.orchestrator import Orchestrator
+
+    advisor = load_settings().lane("advisor")
+    assert not (advisor.routable or advisor.train_ok or advisor.writes_code)
+    settings.lanes["advisor"] = advisor.model_copy()
+    blocks = (
+        "Do this.\n\ncalc.py\n<<<<<<< SEARCH\ndef add(a, b):\n=======\ndef add(a, b, c=0):\n"
+        ">>>>>>> REPLACE\n"
+    )
+    o = Orchestrator(settings, FakeBackend(scripts={"pablo/advisor": lambda m, msgs: blocks}),
+                     repo=repo)  # fmt: skip
+    run = o.start("should add take a third argument?", lane="advisor")
+    assert run.diff == "" and run.verdict is None and "Do this." in run.explanation

@@ -57,6 +57,20 @@ models:
       --jinja
       --alias judge
 
+  # Same weights as the judge until the judge bake-off picks a new judge model.
+  # The advisor keeps the heretic: a no-guardrails second opinion, never a scorer.
+  advisor:
+    ttl: 0
+    proxy: http://127.0.0.1:${PORT}
+    cmd: >-
+      /home/mateo610/pablo-data/engines/llama.cpp/build/bin/llama-server
+      -m /home/mateo610/pablo-data/models/mistral-small-3.2-24b-heretic/Mistral-Small-3.2-24B-Instruct-2506-ultra-uncensored-heretic-Q5_K_M.gguf
+      --host 127.0.0.1 --port ${PORT}
+      -c 16384 -ngl 99
+      --flash-attn on
+      --jinja
+      --alias advisor
+
   deep:
     ttl: 0
     proxy: http://127.0.0.1:${PORT}
@@ -90,4 +104,5 @@ routing:
             - coder
             - coder-candidate
             - judge
+            - advisor
             - deep

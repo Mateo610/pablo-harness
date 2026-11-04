@@ -30,6 +30,7 @@ import yaml
 
 from pablo.config import Settings
 from pablo.gateway import ChatBackend
+from pablo.judge_replay import ReplayCase
 from pablo.orchestrator import Orchestrator
 from pablo.sandbox import Sandbox, make_sandbox
 from pablo.swap import SwapView
@@ -192,6 +193,8 @@ class SuiteReport:
     results: list[TaskResult]
     started_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
     commit: str = ""
+    # Every judged diff, for the judge replay (evals/judge/replay.jsonl). Not in to_json.
+    replay: list[ReplayCase] = field(default_factory=list, repr=False)
 
     def pass_rate(self, refs: str | None = None) -> float:
         rows = [r for r in self.results if refs is None or r.refs == refs]
@@ -310,6 +313,9 @@ def run_suite(
     score stays comparable with earlier baselines.
     """
     results: list[TaskResult] = []
+    replay: list[ReplayCase] = []
+    judge_model = settings.lane("judge").model
+    commit = current_commit(root)
     with tempfile.TemporaryDirectory(prefix="pablo-eval-") as tmp:
         work = Path(tmp)
         # A throwaway home: eval runs and their traces disappear with this directory.
@@ -359,6 +365,20 @@ def run_suite(
                 final_lane=run.lane,
             )
             results.append(result)
+            if run.diff and run.verdict and run.certainty is not None:
+                replay.append(
+                    ReplayCase(
+                        task_id=task.id,
+                        task=task.task,
+                        diff=run.diff,
+                        verdict=run.verdict,
+                        passed=passed,
+                        lane=run.lane,
+                        commit=commit,
+                        judge_model=judge_model,
+                        certainty=run.certainty,
+                    )
+                )
             if on_task:
                 on_task(result)
     return SuiteReport(
@@ -367,7 +387,8 @@ def run_suite(
         else lane,
         model=settings.lane(lane).model,
         results=results,
-        commit=current_commit(root),
+        commit=commit,
+        replay=replay,
     )
 
 
