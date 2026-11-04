@@ -518,6 +518,7 @@ def test_sub():
 
 
 def test_coder_edit_blocks_end_to_end(settings: Settings, repo: Path) -> None:
+    settings.lane("coder").symbol_lookup = False
     backend = FakeBackend(
         scripts={"pablo/coder": [BLOCKS_REPLY], "pablo/judge": [judge_reply(0.9)]}
     )
@@ -551,6 +552,7 @@ def test_unfixable_edits_land_in_needs_you(settings: Settings, repo: Path) -> No
 
 def test_diff_format_lane_still_works(settings: Settings, repo: Path) -> None:
     settings.lane("coder").edit_format = "diff"
+    settings.lane("coder").symbol_lookup = False
     orch = make_orch(settings, repo, coder_reply(GOOD_DIFF), 0.9)
     run = orch.start("add sub", lane="coder")
     assert run.state == "ready"

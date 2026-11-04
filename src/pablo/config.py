@@ -38,6 +38,9 @@ class Lane(BaseModel):
     # After checks get worse, show the coder the failing output this many times and let it fix
     # its change. 0 turns it off. Remote lanes never get extra rounds (each one costs a call).
     fix_rounds: int = 1
+    # Two-step coding: first list symbols to look up, then edit with those defs/refs in context.
+    # One-shot (edit in the first reply) stays the fallback when the model skips the list.
+    symbol_lookup: bool = False
     # Sampling. Most lanes stay at 0.2. A lane sets top_p only when its model card requires it.
     temperature: float = 0.2
     top_p: float | None = None

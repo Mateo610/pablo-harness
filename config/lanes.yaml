@@ -45,6 +45,7 @@ lanes:
     keywords: [code, bug, test, refactor, function, api, diff, fix, implement, python, typescript]
     edit_format: blocks          # find-and-replace blocks; git writes the diff (or: diff)
     writes_code: true
+    symbol_lookup: true          # M6: ask which symbols to fetch, then edit with defs/refs
 
   judge:
     role: Reviews diffs and scores certainty

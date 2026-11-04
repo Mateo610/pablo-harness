@@ -14,7 +14,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pablo.config import ESCALATION_LANE, Lane, Settings
 from pablo.context import Budget, build_coder_context, clip, context_files
@@ -31,6 +31,7 @@ from pablo.gateway import ChatBackend, Completion, Message
 from pablo.hunks import all_ids
 from pablo.hunks import select as select_hunks
 from pablo.judge import judge
+from pablo.lookup import LookupClient, ProcessLookup, parse_symbol_request
 from pablo.router import Router
 from pablo.sandbox import Sandbox, make_sandbox
 from pablo.swap import SwapView, model_id
@@ -76,6 +77,26 @@ Rules:
   line number and | that prefix the files above.
 - Keep blocks small: the lines you change plus one or two around them, not the whole file.
 - Use several blocks for several places. To create a new file, leave SEARCH empty."""
+
+ASK_SYMBOLS_PROMPT = """You are the coder on a small local team. Before editing, name the symbols
+you need to look up (functions, classes, methods). Reply with JSON only: a list of names, like
+["load_line", "Entry"]. Do not write edit blocks or a diff yet."""
+
+EDIT_WITH_LOOKUP_PROMPT = """Here are definitions and references for the symbols you asked for:
+
+{lookup}
+
+Now make the smallest correct change for the task. Include tests when behavior changes.
+A new test must import every name it calls. Reply with a short explanation, then edit blocks:
+
+path/to/file.py
+<<<<<<< SEARCH
+lines copied exactly from the current file
+=======
+the new lines
+>>>>>>> REPLACE
+
+SEARCH must match the file exactly. Keep blocks small. To create a new file, leave SEARCH empty."""
 
 REPAIR_BLOCKS_PROMPT = """Those edits could not be applied: {error}
 
@@ -188,6 +209,7 @@ class Orchestrator:
         checks: dict[str, list[str]] | None = None,
         swap: SwapView | None = None,
         sandbox: Sandbox | None = None,
+        lookup: LookupClient | None = None,
     ) -> None:
         self.settings = settings
         self.backend = backend
@@ -197,6 +219,7 @@ class Orchestrator:
         self.swap = swap
         # Where checks run. lanes.yaml `sandbox:` decides unless the caller picks one.
         self.sandbox = sandbox or make_sandbox(settings.sandbox, self.repo)
+        self.lookup: LookupClient = lookup or ProcessLookup()
         self.baselines = Baselines()  # checks on the unedited repo, run once per repo state
         self.router = Router(settings, backend)
         self.traces = TraceStore(settings.traces_dir)
@@ -340,11 +363,11 @@ class Orchestrator:
         try:
             self._work(run)
         except Exception as exc:
+            # Keep the run so a suite can continue; the cockpit still shows Needs you / failed.
             run.state = "failed"
             run.question = f"Run failed: {exc}"
             self._save(run)
             self._emit("error", run, message=str(exc))
-            raise
         return run
 
     def _extract(self, text: str) -> tuple[str, str, str]:
@@ -415,6 +438,65 @@ class Orchestrator:
         run.explanation = strip_blocks(answer.text) or run.explanation
         return asked, answer, fixed
 
+    def _complete(self, run: Run, lane: Lane, messages: list[Message]) -> Completion:
+        return cast(
+            Completion,
+            self._during_swap(
+                run,
+                run.lane,
+                run.model,
+                f"{run.lane} · thinking",
+                lambda: self.backend.complete(
+                    run.model,
+                    messages,
+                    temperature=lane.temperature,
+                    top_p=lane.top_p,
+                    max_tokens=lane.max_tokens,
+                    timeout_s=lane.timeout_s,
+                ),
+            ),
+        )
+
+    def _lookup_round(
+        self, run: Run, lane: Lane, messages: list[Message]
+    ) -> tuple[list[Message], Completion]:
+        """Ask for symbols, fetch defs/refs in a child process, then ask for edits."""
+        asked: list[Message] = [
+            {"role": "system", "content": ASK_SYMBOLS_PROMPT},
+            messages[1],  # the context user message
+        ]
+        first = self._complete(run, lane, asked)
+        symbols = parse_symbol_request(first.text)
+        # One-shot fallback: the model already wrote edit blocks or a diff.
+        if has_blocks(first.text) or (lane.edit_format == "diff" and "```" in first.text):
+            self._emit("lookup", run, skipped=True, reason="one-shot")
+            edit = CODER_BLOCKS_PROMPT if lane.edit_format == "blocks" else CODER_PROMPT
+            return [{"role": "system", "content": edit}, messages[1]], first
+        if not symbols:
+            self._emit("lookup", run, skipped=True, reason="no symbols")
+            return messages, first
+        self._emit("status", run, text=f"{run.lane} · looking up symbols")
+        result = self.lookup.lookup(self.repo, symbols, home=self.settings.home)
+        self._emit(
+            "lookup",
+            run,
+            symbols=symbols,
+            hits=len(result.hits),
+            error=result.error,
+        )
+        edit_system = CODER_BLOCKS_PROMPT if lane.edit_format == "blocks" else CODER_PROMPT
+        follow: list[Message] = [
+            {"role": "system", "content": edit_system},
+            messages[1],
+            {"role": "assistant", "content": first.text},
+            {
+                "role": "user",
+                "content": EDIT_WITH_LOOKUP_PROMPT.format(lookup=result.render()),
+            },
+        ]
+        second = self._complete(run, lane, follow)
+        return follow, second
+
     def _work(self, run: Run) -> None:
         lane = self.settings.lane(run.lane)
         wants_diff = lane.writes_code or run.lane in ("coder", ESCALATION_LANE)
@@ -436,20 +518,10 @@ class Orchestrator:
             files=context_files(self.repo, run.task, budget, home=self.settings.home),
             budget_tokens=budget.total,
         )
-        reply = self._during_swap(
-            run,
-            run.lane,
-            run.model,
-            f"{run.lane} · thinking",
-            lambda: self.backend.complete(
-                run.model,
-                messages,
-                temperature=lane.temperature,
-                top_p=lane.top_p,
-                max_tokens=lane.max_tokens,
-                timeout_s=lane.timeout_s,
-            ),
-        )
+        if wants_diff and lane.symbol_lookup:
+            messages, reply = self._lookup_round(run, lane, messages)
+        else:
+            reply = self._complete(run, lane, messages)
         run.explanation, run.diff, edit_error = self._extract(reply.text)
         verdict: Verdict | None = None
         if run.diff:
@@ -464,26 +536,15 @@ class Orchestrator:
         if wants_diff and problem:
             self._emit("status", run, text=f"{run.lane} · edits didn't apply, repairing")
             repair = REPAIR_BLOCKS_PROMPT if blocks else REPAIR_PROMPT
+            # Keep repair short: system + original context + last reply + error.
+            # Dropping the lookup turn avoids blowing the 16k window on harness tasks.
             messages = [
-                *messages,
+                {"role": "system", "content": system},
+                messages[1] if len(messages) > 1 else messages[0],
                 {"role": "assistant", "content": reply.text},
                 {"role": "user", "content": repair.format(error=problem)},
             ]
-            reply = self._during_swap(
-                run,
-                run.lane,
-                run.model,
-                f"{run.lane} · thinking",
-                lambda: self.backend.complete(
-                    run.model,
-                    messages,
-                    temperature=lane.temperature,
-                    top_p=lane.top_p,
-                    max_tokens=lane.max_tokens,
-                    timeout_s=lane.timeout_s,
-                ),
-                announce=False,
-            )
+            reply = self._complete(run, lane, messages)
             explanation, repaired, edit_error = self._extract(reply.text)
             if repaired:
                 run.explanation = explanation or run.explanation

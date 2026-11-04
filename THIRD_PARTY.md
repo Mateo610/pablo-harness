@@ -35,7 +35,8 @@ and how it is used. Add a row before adding a dependency or copying code.
 | llama.cpp | MIT | process (engine) | M1 |
 | KTransformers | Apache-2.0 | process (MoE engine) | M3 |
 | colibrì v2.1.0 | Apache-2.0 | process (expert streaming) | M3 |
-| Serena | MIT | process (LSP tools over MCP) | M6 (only if the map alone does not win) |
+| Serena (application) | GPL-3.0-or-later | process only over MCP/CLI, never imported | M6 optional |
+| SolidLSP (Serena's LSP client) | MIT | planned process backend | M6 optional |
 | Langfuse (core) | MIT | process (trace UI) | M7b |
 | Promptfoo | MIT | dev tool (evals) | M7 |
 | Unsloth | Apache-2.0 | dev tool (LoRA training) | M8 |
