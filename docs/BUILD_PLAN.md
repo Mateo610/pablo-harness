@@ -23,7 +23,7 @@ Status: `todo` · `doing` · `done`. Update this table when a gate passes.
 | M8 | Learning loop | LoRA trained on `pablo export-training` output; promoted only if eval score beats baseline | doing (pipeline runs end to end; gate fixed 2026-11-04 to 3+3 same-night runs; first candidate held: 7 examples, 1 run) |
 | M9 | Specialist lanes | Media lane dispatches image and 3D jobs; results come back as evidence cards | todo |
 | M9b | Voice lane | Local speech-to-text (Whisper/Canary class) behind `/api/voice`; hold-to-talk on the phone starts a run | todo |
-| M10 | Ownership | Every model archived with checksums; full offline run with network unplugged; Headscale option documented | todo |
+| M10 | Ownership | Every model archived with checksums; full offline run with network unplugged; Headscale option documented | doing (archive + verify script + Headscale doc + telemetry audit; offline drill after tonight's evals) |
 
 ## Core track (built with Claude, pushed to this repo)
 | # | Milestone | Gate | Status |

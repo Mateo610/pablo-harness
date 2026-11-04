@@ -39,7 +39,7 @@ and how it is used. Add a row before adding a dependency or copying code.
 | SolidLSP (Serena's LSP client) | MIT | planned process backend | M6 optional |
 | Langfuse (core) | MIT | process (trace UI) | M7b |
 | Promptfoo | MIT | dev tool (evals) | M7 |
-| Unsloth | Apache-2.0 | dev tool (LoRA training) | M8 |
+| Unsloth | Apache-2.0 | process (LoRA training in `$PABLO_DATA/engines/unsloth`; `UNSLOTH_DISABLE_STATISTICS=1`) | M8 |
 | MiroFish-Offline | AGPL-3.0 | process only, never imported | later |
 
 ## Model weights (never committed; archived with scripts/archive-model.sh)

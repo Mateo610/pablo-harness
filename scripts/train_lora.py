@@ -23,6 +23,9 @@ DEFAULT_MODEL = os.environ.get("PABLO_TRAIN_MODEL", "unsloth/Qwen3.6-35B-A3B")
 MAX_SEQ = int(os.environ.get("PABLO_TRAIN_MAX_SEQ", "256"))
 LORA_RANK = int(os.environ.get("PABLO_TRAIN_RANK", "8"))
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+# Unsloth phones home by downloading a public README from HF unless this is set
+# (unsloth.models._utils.get_statistics). Ownership rule: no telemetry.
+os.environ.setdefault("UNSLOTH_DISABLE_STATISTICS", "1")
 
 
 def _die(msg: str, code: int = 2) -> None:
@@ -83,9 +86,12 @@ def train(train_rows: list[dict], out_dir: Path, model_name: str) -> Path:
     from unsloth.chat_templates import get_chat_template
 
     print(f"train_lora: base={model_name} rows={len(train_rows)} seq={MAX_SEQ} rank={LORA_RANK}")
-    print(f"train_lora: cuda={torch.cuda.is_available()} "
-          f"free_gib={torch.cuda.mem_get_info()[0] / 1e9:.1f}" if torch.cuda.is_available() else
-          "train_lora: cuda=False")
+    print(
+        f"train_lora: cuda={torch.cuda.is_available()} "
+        f"free_gib={torch.cuda.mem_get_info()[0] / 1e9:.1f}"
+        if torch.cuda.is_available()
+        else "train_lora: cuda=False"
+    )
 
     # MoE + BitsandBytes 4-bit is still rough; Unsloth docs prefer bf16 LoRA for MoE.
     # Try 4-bit first (fits a 3090 for A3B-class MoE); fall back to bf16 on failure.
@@ -135,9 +141,7 @@ def train(train_rows: list[dict], out_dir: Path, model_name: str) -> Path:
     def formatting(examples: dict) -> dict:
         texts = []
         for msgs in examples["messages"]:
-            text = tokenizer.apply_chat_template(
-                msgs, tokenize=False, add_generation_prompt=False
-            )
+            text = tokenizer.apply_chat_template(msgs, tokenize=False, add_generation_prompt=False)
             # Hard-cap characters so tokenization cannot sneak past max_length.
             texts.append(text[: MAX_SEQ * 4])
         return {"text": texts}
