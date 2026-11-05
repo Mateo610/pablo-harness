@@ -139,6 +139,7 @@ class Run:
     task_id: str | None = None
     escalated_from: str | None = None
     retried_from: str | None = None  # this run retries that one on another local lane
+    by: str = ""  # profile that started it ("owner", or a teammate's login); "" = local/CLI
     retry_run: str | None = None  # the retry started for this run
     retry_job: str | None = None  # or the overnight job that will run it
     group: str | None = None  # runs started together by compare()
@@ -345,6 +346,7 @@ class Orchestrator:
         escalated_from: str | None = None,
         group: str | None = None,
         retried_from: str | None = None,
+        by: str = "",
     ) -> Run:
         decision = self.router.route(task, lane=ESCALATION_LANE if escalate else lane)
         lane_cfg = self.settings.lane(decision.lane)
@@ -362,6 +364,7 @@ class Orchestrator:
             escalated_from=escalated_from,
             group=group,
             retried_from=retried_from,
+            by=by,
         )
         self._save(run)
         self._emit("route", run, reason=decision.reason, confidence=decision.confidence)
@@ -415,8 +418,9 @@ class Orchestrator:
 
         def go() -> None:
             retry = self.start(
-                run.task, lane=target, task_id=run.task_id, group=run.group, retried_from=run.id
-            )
+                run.task, lane=target, task_id=run.task_id, group=run.group,
+                retried_from=run.id, by=run.by,
+            )  # fmt: skip
             run.retry_run = retry.id
             verdict = "is ready for you" if retry.state == "ready" else "needs you too"
             run.question = f"{asked} {target.capitalize()} tried it too ({retry.id}): {verdict}."

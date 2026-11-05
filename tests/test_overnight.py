@@ -103,7 +103,7 @@ def test_scheduler_writes_brief_once(settings: Settings, repo: Path) -> None:
 
 
 def test_queue_and_brief_api(settings: Settings, repo: Path) -> None:
-    client = TestClient(create_app(make_orch(settings, repo)))
+    client = TestClient(create_app(make_orch(settings, repo)), client=("127.0.0.1", 50000))
     assert client.post("/api/queue", json={"task": "x", "lane": "claude"}).status_code == 403
     job = client.post("/api/queue", json={"task": "add a demo note", "lane": "coder"}).json()
     assert [j["id"] for j in client.get("/api/queue").json()] == [job["id"]]

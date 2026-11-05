@@ -19,7 +19,7 @@ def client_for(settings: Settings, repo: Path) -> TestClient:
         repo=repo,
         checks={"tests": [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"]},
     )
-    return TestClient(create_app(orch))
+    return TestClient(create_app(orch), client=("127.0.0.1", 50000))
 
 
 def test_health_and_lanes(settings: Settings, repo: Path) -> None:

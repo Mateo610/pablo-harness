@@ -15,10 +15,11 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 from pablo import __version__
+from pablo.access import TOKEN_COOKIE, Access, Caller, Denied
 from pablo.convos import AUTO, OWNER, Chat, Memory, MemoryStatus
 from pablo.orchestrator import Orchestrator, PartialChecksFailed
 from pablo.overnight import (
@@ -86,13 +87,28 @@ def asdict_profile(p: Any) -> dict[str, Any]:
     return dict(p.__dict__)
 
 
+def caller_of(request: Request) -> Caller:
+    caller: Caller = request.state.caller
+    return caller
+
+
 def profile_of(request: Request) -> str:
-    """Who is asking. Everyone is the owner until profiles map Tailscale identities."""
-    del request
-    return OWNER
+    return caller_of(request).profile
 
 
-def create_app(orch: Orchestrator) -> FastAPI:
+def owner_only(request: Request) -> None:
+    if not caller_of(request).is_owner:
+        raise HTTPException(403, "Only the owner can do that.")
+
+
+def _token(request: Request) -> str:
+    auth = request.headers.get("authorization", "")
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return request.cookies.get(TOKEN_COOKIE, "") or request.query_params.get("token", "")
+
+
+def create_app(orch: Orchestrator, access: Access | None = None) -> FastAPI:
     app = FastAPI(title="Pablo harness", version=__version__)
     queue = JobQueue(orch.settings.home)
     runner = OvernightRunner(orch, queue, orch.settings.overnight)
@@ -105,6 +121,39 @@ def create_app(orch: Orchestrator) -> FastAPI:
         allow_headers=["*"],
     )
     repo: Path = orch.repo
+    gate = access or Access(orch.settings.home)
+    app.state.access = gate
+    chat = Chat(orch)
+    store = chat.store
+
+    @app.middleware("http")
+    async def identify(request: Request, call_next: Any) -> Response:
+        path = request.url.path
+        guarded = path.startswith("/api/") and path != "/api/health"
+        if not guarded and "token" not in request.query_params:
+            response: Response = await call_next(request)
+            return response
+        client = request.client.host if request.client else None
+        server = request.scope.get("server")
+        headers = {k.lower(): v for k, v in request.headers.items()}
+        try:
+            caller = await run_in_threadpool(
+                gate.resolve, client, server[0] if server else None, headers, _token(request)
+            )
+        except Denied as exc:
+            if not guarded:
+                response = await call_next(request)
+                return response
+            return JSONResponse({"detail": str(exc)}, status_code=exc.status)
+        request.state.caller = caller
+        if caller.profile != OWNER:
+            await run_in_threadpool(store.ensure_profile, caller.profile, caller.name, caller.role)
+        response = await call_next(request)
+        if caller.is_owner and request.query_params.get("token"):
+            # `pablo token` gives a link; the cookie keeps the browser signed in on this box.
+            response.set_cookie(TOKEN_COOKIE, request.query_params["token"], httponly=True,
+                                samesite="strict")  # fmt: skip
+        return response
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
@@ -122,7 +171,8 @@ def create_app(orch: Orchestrator) -> FastAPI:
             raise HTTPException(404, "no .pablo/plan.yaml; run `pablo init`") from exc
 
     @app.post("/api/plan/tasks/{task_id}")
-    def set_task_status(task_id: str, body: StatusIn) -> dict[str, Any]:
+    def set_task_status(task_id: str, body: StatusIn, request: Request) -> dict[str, Any]:
+        owner_only(request)
         current = Plan.load(repo)
         try:
             task = current.set_status(task_id, body.status)
@@ -132,10 +182,13 @@ def create_app(orch: Orchestrator) -> FastAPI:
         return task.model_dump()
 
     @app.post("/api/runs")
-    async def start_run(body: TaskIn) -> dict[str, Any]:
+    async def start_run(body: TaskIn, request: Request) -> dict[str, Any]:
+        caller = caller_of(request)
+        if body.lane == "claude" and not caller.is_owner:
+            raise HTTPException(403, "Only the owner can send work to Claude.")
         try:
             run = await run_in_threadpool(
-                orch.start, body.task, lane=body.lane, task_id=body.task_id
+                orch.start, body.task, lane=body.lane, task_id=body.task_id, by=caller.profile
             )
         except PermissionError as exc:
             raise HTTPException(403, str(exc)) from exc
@@ -175,7 +228,8 @@ def create_app(orch: Orchestrator) -> FastAPI:
         }
 
     @app.post("/api/promotions/promote")
-    def promotions_promote() -> dict[str, Any]:
+    def promotions_promote(request: Request) -> dict[str, Any]:
+        owner_only(request)
         from pablo.learn import promote_adapter
 
         try:
@@ -184,7 +238,8 @@ def create_app(orch: Orchestrator) -> FastAPI:
             raise HTTPException(409, str(exc)) from exc
 
     @app.post("/api/promotions/reject")
-    def promotions_reject() -> dict[str, Any]:
+    def promotions_reject(request: Request) -> dict[str, Any]:
+        owner_only(request)
         from pablo.learn import reject_promotion
 
         try:
@@ -201,7 +256,10 @@ def create_app(orch: Orchestrator) -> FastAPI:
             raise HTTPException(409, str(exc)) from exc
 
     @app.post("/api/runs/{run_id}/approve")
-    async def approve(run_id: str, body: ApproveIn | None = None) -> dict[str, Any]:
+    async def approve(
+        run_id: str, request: Request, body: ApproveIn | None = None
+    ) -> dict[str, Any]:
+        owner_only(request)
         body = body or ApproveIn()
 
         def go() -> dict[str, Any]:
@@ -237,11 +295,20 @@ def create_app(orch: Orchestrator) -> FastAPI:
         return [r.to_dict() for r in runs]
 
     @app.post("/api/runs/{run_id}/reject")
-    async def reject(run_id: str) -> dict[str, Any]:
+    async def reject(run_id: str, request: Request) -> dict[str, Any]:
+        caller = caller_of(request)
+        if not caller.is_owner:
+            try:
+                mine = orch.get(run_id).by == caller.profile
+            except KeyError as exc:
+                raise HTTPException(404, f"no run {run_id}") from exc
+            if not mine:
+                raise HTTPException(403, "Only the owner can reject someone else's run.")
         return await run_in_threadpool(_decide, "reject", run_id)
 
     @app.post("/api/runs/{run_id}/escalate")
-    async def escalate(run_id: str) -> dict[str, Any]:
+    async def escalate(run_id: str, request: Request) -> dict[str, Any]:
+        owner_only(request)
         return await run_in_threadpool(_decide, "escalate", run_id)
 
     @app.get("/api/resources")
@@ -267,7 +334,8 @@ def create_app(orch: Orchestrator) -> FastAPI:
         return queue.add(body.task, body.lane, body.task_id).to_dict()
 
     @app.delete("/api/queue/{job_id}")
-    def cancel_job(job_id: str) -> dict[str, Any]:
+    def cancel_job(job_id: str, request: Request) -> dict[str, Any]:
+        owner_only(request)
         try:
             return queue.cancel(job_id).to_dict()
         except KeyError as exc:
@@ -276,7 +344,8 @@ def create_app(orch: Orchestrator) -> FastAPI:
             raise HTTPException(409, str(exc)) from exc
 
     @app.post("/api/queue/run")
-    async def run_queue_now() -> list[dict[str, Any]]:
+    async def run_queue_now(request: Request) -> list[dict[str, Any]]:
+        owner_only(request)
         finished = await run_in_threadpool(runner.run_pending, force=True)
         return [j.to_dict() for j in finished]
 
@@ -288,13 +357,11 @@ def create_app(orch: Orchestrator) -> FastAPI:
         return brief
 
     @app.post("/api/brief")
-    def make_brief() -> dict[str, Any]:
+    def make_brief(request: Request) -> dict[str, Any]:
+        owner_only(request)
         brief = build_brief(orch, queue, now_local().date(), orch.repo, since=briefs.last_created())
         briefs.save(brief)
         return brief.to_dict()
-
-    chat = Chat(orch)
-    store = chat.store
 
     def _found(fn: Any, *args: Any) -> Any:
         try:
@@ -304,7 +371,9 @@ def create_app(orch: Orchestrator) -> FastAPI:
 
     @app.get("/api/me")
     def me(request: Request) -> dict[str, Any]:
-        return asdict_profile(store.profile(profile_of(request)))
+        caller = caller_of(request)
+        return {**asdict_profile(store.profile(caller.profile)), **caller.to_dict(),
+                "can_approve": caller.is_owner}  # fmt: skip
 
     @app.get("/api/conversations")
     def list_conversations(request: Request, limit: int = 50) -> list[dict[str, Any]]:
@@ -313,6 +382,8 @@ def create_app(orch: Orchestrator) -> FastAPI:
 
     @app.post("/api/conversations")
     def new_conversation(body: ConversationIn, request: Request) -> dict[str, Any]:
+        if body.lane == "claude":
+            owner_only(request)
         try:
             return chat.start(profile_of(request), body.title, body.lane).__dict__
         except KeyError as exc:
@@ -339,6 +410,9 @@ def create_app(orch: Orchestrator) -> FastAPI:
     @app.post("/api/conversations/{cid}/messages")
     async def say(cid: str, body: SayIn, request: Request) -> dict[str, Any]:
         who = profile_of(request)
+        lane = body.lane or _found(store.conversation, cid, who).lane
+        if lane == "claude":
+            owner_only(request)
         try:
             turn = await run_in_threadpool(
                 chat.say, cid, body.text, profile=who, lane=body.lane, do=body.do,

@@ -175,7 +175,7 @@ def test_search_text_cannot_break_the_query() -> None:
 
 def test_the_api_runs_a_conversation(settings: Settings, repo: Path) -> None:
     chat, _ = make(settings, repo, "Noted.\nREMEMBER: prefers short replies")
-    client = TestClient(create_app(chat.orch))
+    client = TestClient(create_app(chat.orch), client=("127.0.0.1", 50000))
     assert client.get("/api/me").json()["role"] == "owner"
     conv = client.post("/api/conversations", json={"lane": "coder"}).json()
     turn = client.post(f"/api/conversations/{conv['id']}/messages", json={"text": "hi"}).json()

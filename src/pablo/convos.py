@@ -460,7 +460,7 @@ class Chat:
 
         notes = [] if remote else self.store.relevant_memories(profile, conv.project, text)
         if do:
-            run = self._run(text, name, notes)
+            run = self._run(text, name, notes, profile)
             body = self._run_line(run)
             reply = self.store.add_message(cid, "assistant", body, lane=name, run_id=run.id)
             return Turn(conv, user, reply, run=run.to_dict(), shared_memory=bool(notes))
@@ -482,7 +482,7 @@ class Chat:
         ]
         run_obj = None
         if task and do is not False:
-            run_obj = self._run(task, name, notes)
+            run_obj = self._run(task, name, notes, profile)
             visible = f"{visible}\n\n{self._run_line(run_obj)}".strip()
         reply = self.store.add_message(
             cid, "assistant", visible or "(no reply)", lane=name,
@@ -491,12 +491,12 @@ class Chat:
         return Turn(conv, user, reply, run=run_obj.to_dict() if run_obj else None,
                     proposed=proposed, shared_memory=bool(notes) and not remote)  # fmt: skip
 
-    def _run(self, task: str, lane: str, notes: list[str]) -> Run:
+    def _run(self, task: str, lane: str, notes: list[str], profile: str) -> Run:
         if notes:
             task += "\n\nNotes from the user (keep to these):\n" + "\n".join(
                 f"- {n}" for n in notes[:6]
             )
-        return self.orch.start(task, lane=None if lane == AUTO else lane)
+        return self.orch.start(task, lane=None if lane == AUTO else lane, by=profile)
 
     @staticmethod
     def _run_line(run: Run) -> str:

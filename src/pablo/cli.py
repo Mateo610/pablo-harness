@@ -728,6 +728,32 @@ def _memory_store() -> Any:
     return store
 
 
+@app.command("token")
+def token_cmd(port: int = 8710) -> None:
+    """The owner token for local clients, and a link that signs this machine's browser in."""
+    from pablo.access import owner_token
+
+    tok = owner_token(load_settings().home)
+    console.print(tok)
+    console.print(f"[dim]browser on Pablo: http://127.0.0.1:{port}/?token={tok}[/]")
+    console.print("[dim]The TUI and scripts on this machine read it from ~/.pablo/owner.token.[/]")
+
+
+@app.command("whoami")
+def whoami_cmd(
+    url: Annotated[str, typer.Option(help="Harness API")] = "http://127.0.0.1:8710",
+) -> None:
+    """Who Pablo thinks you are, as seen through the API."""
+    from pablo.client import HarnessClient, HarnessError
+
+    try:
+        me = HarnessClient(url)._call("GET", "/api/me")
+    except HarnessError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(1) from exc
+    console.print(f"{me['name']} · {me['role']} · via {me['via']} · approve: {me['can_approve']}")
+
+
 @memory_app.command("list")
 def memory_list(
     status: Annotated[str | None, typer.Option(help="kept, proposed, or rejected")] = None,

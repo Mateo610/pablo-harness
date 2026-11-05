@@ -27,10 +27,30 @@ class HarnessError(RuntimeError):
     pass
 
 
+def local_token(base_url: str) -> str:
+    """The owner token, sent only to Pablo on this machine and only if you can read it."""
+    host = httpx.URL(base_url).host
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        return ""
+    from pablo.config import default_home
+
+    try:
+        return (default_home() / "owner.token").read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
 class HarnessClient:
-    def __init__(self, base_url: str = "http://127.0.0.1:8710", timeout_s: float = 900) -> None:
+    def __init__(
+        self,
+        base_url: str = "http://127.0.0.1:8710",
+        timeout_s: float = 900,
+        token: str | None = None,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
-        self._http = httpx.Client(base_url=self.base_url, timeout=timeout_s)
+        token = local_token(self.base_url) if token is None else token
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        self._http = httpx.Client(base_url=self.base_url, timeout=timeout_s, headers=headers)
 
     def _call(self, method: str, path: str, **kw: Any) -> Any:
         try:
@@ -81,7 +101,7 @@ class HarnessClient:
     def events(self) -> Iterator[Json]:
         """Blocking iterator over server-sent events; reconnect is the caller's job."""
         with (
-            httpx.Client(base_url=self.base_url, timeout=None) as http,
+            httpx.Client(base_url=self.base_url, timeout=None, headers=self._http.headers) as http,
             http.stream("GET", "/api/events") as resp,
         ):
             for line in resp.iter_lines():
