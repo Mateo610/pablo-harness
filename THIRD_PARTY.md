@@ -50,3 +50,6 @@ Record each model's name, source URL, license, and revision in its archive SOURC
 | Mistral-Small-3.2-24B-Instruct-2506 heretic Q5_K_M (`llmfan46` GGUF, Heretic abliteration of `mistralai/Mistral-Small-3.2-24B-Instruct-2506`) | Apache-2.0 | judge |
 | gpt-oss-120b MXFP4 (`ggml-org/gpt-oss-120b-GGUF` of `openai/gpt-oss-120b`, rev `b5c939de8f754692c1647ca79fbf85e8c1e70f8a`) | Apache-2.0 | deep |
 | Qwen3.5-4B Q4_K_M (Unsloth GGUF of `Qwen/Qwen3.5-4B`, rev `e87f176479d0855a907a41277aca2f8ee7a09523`) | Apache-2.0 | router (CPU) |
+| Mistral-Small-3.2-24B-Instruct-2506 Q5_K_M (Unsloth GGUF of `mistralai/Mistral-Small-3.2-24B-Instruct-2506`, GGUF rev `b750ec2299225e492f1bd27cab88a0a595fa848f`, upstream rev `95a6d26c4bfb886c58daf9d3f7332c857cb27b43`) | Apache-2.0 | judge-mistral (bake-off; stock weights, guardrails on) |
+| gpt-oss-20b MXFP4 (`ggml-org/gpt-oss-20b-GGUF` of `openai/gpt-oss-20b`, GGUF rev `15dcfc7e7c608c6161507211ed43c5b590801b4b`, upstream rev `6cee5e81ee83917806bbde320786a8fb61efebee`) | Apache-2.0 | judge-oss20 (bake-off) |
+| Qwen3.8-27B UD-Q4_K_M (Unsloth GGUF of `Qwen/Qwen3.8-27B`, GGUF rev `4ca720788d1e01f1bff70c033e0d0028fd02e502`, upstream rev `1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0`) | Apache-2.0 | judge-qwen-dense (bake-off) |
