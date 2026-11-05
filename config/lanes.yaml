@@ -10,6 +10,10 @@ gateway:
 thresholds:
   judge_needs_you: 0.75   # below this certainty, the item lands in "Needs you"
 
+spec:                     # task-derived checks: tests from your request, written before the diff is seen
+  enabled: false          # turn on once `pablo eval --spec --repeat 3` shows fewer false ready
+  lane: judge             # who writes them (the judge model is already loaded at that moment)
+
 voice:                    # M9b. Both engines are local processes; empty URLs turn voice off.
   stt_url: ""             # whisper.cpp server, e.g. http://127.0.0.1:8090
   stt_api: whisper.cpp    # whisper.cpp (POST /inference) or openai (/v1/audio/transcriptions)

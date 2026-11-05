@@ -53,8 +53,11 @@ class Judgement:
     question: str = ""
 
 
-def judge(backend: ChatBackend, model: str, task: str, diff: str, verdict: Verdict) -> Judgement:
-    evidence = verdict.summary()
+def judge(
+    backend: ChatBackend, model: str, task: str, diff: str, verdict: Verdict, extra: str = ""
+) -> Judgement:
+    """`extra` is more evidence for the prompt, e.g. how task-derived checks went."""
+    evidence = verdict.summary() + (f"\n{extra}" if extra else "")
     messages: list[Message] = [
         {"role": "system", "content": JUDGE_PROMPT},
         {"role": "user", "content": f"Task:\n{task}\n\nEvidence: {evidence}\n\nDiff:\n{diff}"},

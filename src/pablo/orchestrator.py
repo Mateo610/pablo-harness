@@ -30,13 +30,21 @@ from pablo.events import Event, EventBus
 from pablo.gateway import ChatBackend, Completion, Message
 from pablo.hunks import all_ids
 from pablo.hunks import select as select_hunks
-from pablo.judge import judge
+from pablo.judge import Judgement, judge
 from pablo.lookup import LookupClient, ProcessLookup, parse_symbol_request
 from pablo.router import Router
 from pablo.sandbox import Sandbox, make_sandbox
+from pablo.spec import SPEC_CAP, SpecResult, run_spec, write_spec
 from pablo.swap import SwapView, model_id
 from pablo.traces import Trace, TraceStore
-from pablo.verify import Baselines, Verdict, _recount_hunks, apply_diff, verify_diff
+from pablo.verify import (
+    DEFAULT_CHECKS,
+    Baselines,
+    Verdict,
+    _recount_hunks,
+    apply_diff,
+    verify_diff,
+)
 
 RunState = Literal["running", "ready", "needs_you", "approved", "rejected", "failed"]
 
@@ -140,6 +148,7 @@ class Run:
     escalated_from: str | None = None
     retried_from: str | None = None  # this run retries that one on another local lane
     by: str = ""  # profile that started it ("owner", or a teammate's login); "" = local/CLI
+    spec: dict[str, Any] | None = None  # task-derived checks, when spec.enabled
     retry_run: str | None = None  # the retry started for this run
     retry_job: str | None = None  # or the overnight job that will run it
     group: str | None = None  # runs started together by compare()
@@ -411,6 +420,32 @@ class Orchestrator:
             self._retry_elsewhere(run)
         return run
 
+    def _spec(self, run: Run, verdict: Verdict) -> SpecResult | None:
+        """Write tests from the task (not the diff) and run them before and after the change."""
+        cfg = self.settings.spec
+        if not cfg.enabled or not self.settings.lane(run.lane).writes_code:
+            return None
+        writer = self.settings.lane(cfg.lane)
+        try:
+            context = build_coder_context(
+                self.repo, run.task, budget=SPEC_BUDGET, home=self.settings.home
+            )
+            source = self._during_swap(
+                run, cfg.lane, writer.model, "judge · writing checks from your request",
+                lambda: write_spec(self.backend, writer.model, run.task, context),
+            )  # fmt: skip
+            if not source:
+                result = SpecResult("skipped", "nothing concrete to test in the request")
+            else:
+                self._emit("status", run, lane=cfg.lane, text="running checks from your request")
+                result = run_spec(self.repo, run.diff, source, self.checks or DEFAULT_CHECKS,
+                                  self.sandbox, cfg.timeout_s)  # fmt: skip
+        except Exception as exc:  # a spec check is extra evidence; it must never fail a run
+            result = SpecResult("skipped", f"error: {exc}")
+        run.spec = result.to_dict()
+        self._emit("spec", run, status=result.status, failing=result.failing[:3])
+        return result
+
     def _retry_elsewhere(self, run: Run) -> None:
         """A run that needs you (or failed) gets a fresh try on its `retry_on` lane (coder → deep).
 
@@ -674,13 +709,24 @@ class Orchestrator:
             )
 
             judge_model = self.settings.lane("judge").model
+            spec = self._spec(run, checked) if checked.clean else None
+            extra = spec.evidence() if spec else ""
             judgement = self._during_swap(
                 run,
                 "judge",
                 judge_model,
                 "judge · reviewing",
-                lambda: judge(self.backend, judge_model, run.task, run.diff, checked),
+                lambda: judge(self.backend, judge_model, run.task, run.diff, checked, extra),
             )
+            if spec and spec.status == "failed":
+                # Your own words, as a test, fail on this change: you decide, not the judge.
+                judgement = Judgement(
+                    min(judgement.certainty, SPEC_CAP),
+                    judgement.summary,
+                    "A check written from your request fails on this change: "
+                    + (spec.failing[0] if spec.failing else spec.reason)
+                    + ". Is the request or the change right?",
+                )
             run.certainty = judgement.certainty
             run.judge_summary = judgement.summary
             run.question = judgement.question
@@ -816,6 +862,10 @@ def _better(new: Verdict, old: Verdict) -> bool:
         return sum(c.status not in ("passed", "already failing") for c in v.checks)
 
     return bad(new) < bad(old)
+
+
+# Spec writers get the files the task names, small: they test the request, not the repo.
+SPEC_BUDGET = Budget(total=5000, files=3500, tree=500, max_files=4)
 
 
 def _broken(run: Run) -> bool:

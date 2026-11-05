@@ -180,6 +180,7 @@ class TaskResult:
     retried: bool = False  # the first lane needed you, so the task was retried (cascade)
     final_lane: str = ""  # the lane whose run was scored
     explanation: str = ""  # the start of the coder's own words
+    spec: str = ""  # task-derived checks: confirmed · failed · uninformative · broken · skipped
 
     @property
     def ready(self) -> bool:
@@ -247,6 +248,20 @@ class SuiteReport:
             "certainty_when_passed": self.mean_certainty(True),
             "certainty_when_failed": self.mean_certainty(False),
             "wall_s": round(sum(r.wall_s for r in self.results), 1),
+            **self.spec_summary(),
+        }
+
+    def spec_summary(self) -> dict[str, Any]:
+        """How task-derived checks lined up with the hidden tests (empty when they were off)."""
+        ran = [r for r in self.results if r.spec]
+        if not ran:
+            return {}
+        failed = [r for r in ran if r.spec == "failed"]
+        return {
+            "spec": {s: sum(r.spec == s for r in ran) for s in sorted({r.spec for r in ran})},
+            # failed + hidden failed: a bug the spec caught; failed + hidden passed: a false alarm
+            "spec_caught": [r.id for r in failed if not r.hidden_passed],
+            "spec_false_alarm": [r.id for r in failed if r.hidden_passed],
         }
 
     def to_json(self) -> str:
@@ -266,7 +281,13 @@ class SuiteReport:
             f"kept {s['fixed']} ({s['fixed_and_passed']} passed) · "
             f"certainty passed {s['certainty_when_passed']} "
             f"/ failed {s['certainty_when_failed']} · "
-            f"wall {s['wall_s']} s",
+            f"wall {s['wall_s']} s"
+            + (
+                f" · spec {s['spec']}, caught {s['spec_caught']}, "
+                f"false alarms {s['spec_false_alarm']}"
+                if "spec" in s
+                else ""
+            ),
             "",
             "| task | refs | lane | state | diff | fixed | visible | hidden | certainty | wall s |",
             "|---|---|---|---|---|---|---|---|---|---|",
@@ -305,6 +326,7 @@ def run_suite(
     swap: SwapView | None = None,
     on_task: Callable[[TaskResult], None] | None = None,
     cascade: bool = False,
+    spec: bool | None = None,
 ) -> SuiteReport:
     """Run `lane` on every task (or `only` those ids) and score each against its hidden test.
 
@@ -322,6 +344,8 @@ def run_suite(
         isolated = settings.model_copy(update={"home": work / "home"}, deep=True)
         for cfg in isolated.lanes.values():
             cfg.retry_when = "now" if cascade else "off"
+        if spec is not None:
+            isolated.spec.enabled = spec
         for task in load_suite(root):
             if only and task.id not in only:
                 continue
@@ -363,6 +387,7 @@ def run_suite(
                 explanation=run.explanation[:300],
                 retried=bool(first.retry_run),
                 final_lane=run.lane,
+                spec=(run.spec or {}).get("status", ""),
             )
             results.append(result)
             if run.diff and run.verdict and run.certainty is not None:

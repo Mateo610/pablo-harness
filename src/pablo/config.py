@@ -175,12 +175,22 @@ class VoiceConfig(BaseModel):
         return bool(self.stt_url and self.tts_url)
 
 
+class SpecConfig(BaseModel):
+    """Task-derived checks (src/pablo/spec.py): tests written from the task by the `lane` model
+    before it sees the diff. Off until the suite shows they help."""
+
+    enabled: bool = False
+    lane: str = "judge"
+    timeout_s: float = 120.0
+
+
 class Settings(BaseModel):
     gateway: Gateway = Field(default_factory=Gateway)
     thresholds: Thresholds = Field(default_factory=Thresholds)
     overnight: Overnight = Field(default_factory=Overnight)
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
+    spec: SpecConfig = Field(default_factory=SpecConfig)
     lanes: dict[str, Lane]
     home: Path = Field(default_factory=lambda: default_home())
 

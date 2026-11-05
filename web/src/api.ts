@@ -68,6 +68,8 @@ export interface Run {
   applied_hunks: string[] | null;
   /** Who started it: "owner", a teammate's login, or "" (CLI). */
   by?: string;
+  /** Task-derived checks: tests written from the request before the diff was seen. */
+  spec?: { status: "confirmed" | "failed" | "uninformative" | "broken" | "skipped"; reason: string; source: string; changed?: { asserts: string[] } | null } | null;
   /** Your conversation that started this run, if any. */
   conversation_id?: string | null;
   conversation_lane?: string | null;

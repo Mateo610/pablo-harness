@@ -627,6 +627,12 @@ def eval_suite(
     cascade: Annotated[
         bool, typer.Option(help="Retry Needs-you runs on the lane's retry_on lane (coder → deep)")
     ] = False,
+    spec: Annotated[
+        bool | None,
+        typer.Option(
+            "--spec/--no-spec", help="Force task-derived checks on or off (default: config)"
+        ),
+    ] = None,
     fake: FakeOpt = False,
     write: Annotated[
         bool, typer.Option(help="Append to evals/results.jsonl and docs/benchmarks.md")
@@ -659,6 +665,7 @@ def eval_suite(
             swap=None if fake else SwapView(),
             on_task=show,
             cascade=cascade,
+            spec=spec,
         )
         s = report.summary()
         console.print(

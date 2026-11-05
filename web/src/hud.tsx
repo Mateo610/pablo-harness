@@ -161,6 +161,19 @@ export function RunCard({ id, me, initial }: { id: string; me: Me | null; initia
           )}
         </div>
       )}
+      {run.spec && run.spec.status !== "skipped" && (
+        <span
+          className="h-chip"
+          title={run.spec.source}
+          style={{
+            alignSelf: "flex-start",
+            color: run.spec.status === "failed" ? "var(--accent)" : run.spec.status === "confirmed" ? "var(--status-pass)" : "var(--ink-muted)",
+            borderColor: run.spec.status === "failed" ? "#5a3d12" : run.spec.status === "confirmed" ? "#1f5a3c" : "var(--line)",
+          }}
+        >
+          from your request · {run.spec.status === "failed" ? `fails: ${run.spec.changed?.asserts[0] ?? run.spec.reason}` : run.spec.status}
+        </span>
+      )}
       {(run.question || run.judge_summary) && (
         <span style={{ fontSize: 13.5, color: run.state === "needs_you" ? "#f6ead6" : "var(--ink-body)", whiteSpace: "normal" }}>
           {run.question || run.judge_summary}
