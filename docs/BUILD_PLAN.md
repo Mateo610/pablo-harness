@@ -35,6 +35,8 @@ Status: `todo` · `doing` · `done`. Update this table when a gate passes.
 | C3 | Overnight queue + morning brief | Tasks queued for the deep lane run overnight; brief summarizes results at 7:30 | done (runs inside `pablo serve`; real overnight test after M3) |
 | C4 | Hunk review, replay, compare | Accept per hunk; replay a run step by step; same task on two lanes side by side | done |
 | C5 | v0.1 public release | README with demo GIF, architecture diagram, install guide; repo flipped public | todo |
+| C6 | Conversations + memory | Multi-turn chats per profile in `~/.pablo/pablo.db`; RUN lines start ordinary runs; notes kept only when you keep them; FTS search; nothing of memory goes to Claude | done (API + `pablo chat` / `pablo memory`; cockpit v2 Chat UI next) |
+| C7 | Profiles + teammate access | Tailscale identity → profile, owner/member roles, only the owner approves | todo |
 
 ## Order that works
 M0 → M1 unblocks everything real. C1–C2 can be built any time (fake mode). M3 and M4 go

@@ -690,6 +690,74 @@ def export_traces(out: Path = Path("traces-toon")) -> None:
     console.print(f"wrote {len(files)} TOON file(s) to {out}")
 
 
+@app.command("chat")
+def chat_cmd(
+    text: Annotated[str, typer.Argument(help="What you want to say")],
+    conv: Annotated[str | None, typer.Option(help="Conversation id (default: start one)")] = None,
+    lane: Annotated[str | None, typer.Option(help="auto, coder, deep, advisor, claude")] = None,
+    do: Annotated[bool | None, typer.Option("--do/--talk", help="Run it, or only talk")] = None,
+    repo: RepoOpt = Path("."),
+    fake: FakeOpt = False,
+) -> None:
+    """Talk to Pablo in a conversation that remembers. `pablo chat --conv ID ...` continues one."""
+    from pablo.convos import AUTO, Chat
+
+    chat = Chat(_orch(repo.resolve(), fake))
+    cid = conv or chat.start(lane=lane or AUTO).id
+    confirm = False
+    if (lane or chat.store.conversation(cid, "owner").lane) == "claude":
+        confirm = typer.confirm("This leaves Pablo for Claude. Send?")
+        if not confirm:
+            raise typer.Exit(1)
+    turn = chat.say(cid, text, lane=lane, do=do, confirm=confirm)
+    console.print(turn.reply.content)
+    for mem in turn.proposed:
+        console.print(f"[magenta]remember? {mem.text}[/]  pablo memory keep {mem.id}")
+    console.print(f'[dim]conversation {cid} · pablo chat --conv {cid} "..."[/]')
+
+
+memory_app = typer.Typer(help="What Pablo remembers for you. Nothing is kept unless you keep it.")
+app.add_typer(memory_app, name="memory")
+
+
+def _memory_store() -> Any:
+    from pablo.convos import OWNER, Store
+
+    store = Store(load_settings().home / "pablo.db")
+    store.ensure_profile(OWNER, "Owner", "owner")
+    return store
+
+
+@memory_app.command("list")
+def memory_list(
+    status: Annotated[str | None, typer.Option(help="kept, proposed, or rejected")] = None,
+) -> None:
+    for mem in _memory_store().memories("owner", status=status):
+        console.print(f"{mem.id}  {mem.status:<9} {mem.scope:<16} {mem.text}")
+
+
+@memory_app.command("add")
+def memory_add(text: str, scope: str = "profile") -> None:
+    mem = _memory_store().remember("owner", text, scope=scope)
+    console.print(f"kept {mem.id}: {mem.text}")
+
+
+@memory_app.command("keep")
+def memory_keep(memory_id: str) -> None:
+    console.print(f"kept: {_memory_store().decide(memory_id, 'owner', 'kept').text}")
+
+
+@memory_app.command("reject")
+def memory_reject(memory_id: str) -> None:
+    console.print(f"rejected: {_memory_store().decide(memory_id, 'owner', 'rejected').text}")
+
+
+@memory_app.command("forget")
+def memory_forget(memory_id: str) -> None:
+    _memory_store().forget(memory_id, "owner")
+    console.print(f"forgot {memory_id}")
+
+
 sandbox_app = typer.Typer(help="The container checks run in: no network, read-only, limited.")
 app.add_typer(sandbox_app, name="sandbox")
 

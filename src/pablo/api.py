@@ -12,13 +12,14 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from pablo import __version__
+from pablo.convos import AUTO, OWNER, Chat, Memory, MemoryStatus
 from pablo.orchestrator import Orchestrator, PartialChecksFailed
 from pablo.overnight import (
     BriefStore,
@@ -58,6 +59,37 @@ class JobIn(BaseModel):
     task: str
     lane: str | None = None
     task_id: str | None = None
+
+
+class ConversationIn(BaseModel):
+    title: str = ""
+    lane: str = AUTO
+
+
+class RenameIn(BaseModel):
+    title: str
+
+
+class SayIn(BaseModel):
+    text: str
+    lane: str | None = None
+    do: bool | None = None  # True: run it · False: just talk · None: the model decides
+    confirm: bool = False  # required for a lane that leaves Pablo (Claude), every send
+
+
+class MemoryIn(BaseModel):
+    text: str
+    scope: str = "profile"
+
+
+def asdict_profile(p: Any) -> dict[str, Any]:
+    return dict(p.__dict__)
+
+
+def profile_of(request: Request) -> str:
+    """Who is asking. Everyone is the owner until profiles map Tailscale identities."""
+    del request
+    return OWNER
 
 
 def create_app(orch: Orchestrator) -> FastAPI:
@@ -260,6 +292,92 @@ def create_app(orch: Orchestrator) -> FastAPI:
         brief = build_brief(orch, queue, now_local().date(), orch.repo, since=briefs.last_created())
         briefs.save(brief)
         return brief.to_dict()
+
+    chat = Chat(orch)
+    store = chat.store
+
+    def _found(fn: Any, *args: Any) -> Any:
+        try:
+            return fn(*args)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc).strip("'")) from exc
+
+    @app.get("/api/me")
+    def me(request: Request) -> dict[str, Any]:
+        return asdict_profile(store.profile(profile_of(request)))
+
+    @app.get("/api/conversations")
+    def list_conversations(request: Request, limit: int = 50) -> list[dict[str, Any]]:
+        convs = store.conversations(profile_of(request), max(1, min(limit, 200)))
+        return [c.__dict__ for c in convs]
+
+    @app.post("/api/conversations")
+    def new_conversation(body: ConversationIn, request: Request) -> dict[str, Any]:
+        try:
+            return chat.start(profile_of(request), body.title, body.lane).__dict__
+        except KeyError as exc:
+            raise HTTPException(400, str(exc).strip("'")) from exc
+
+    @app.get("/api/conversations/{cid}")
+    def get_conversation(cid: str, request: Request) -> dict[str, Any]:
+        conv = _found(store.conversation, cid, profile_of(request))
+        return {
+            "conversation": conv.__dict__,
+            "messages": [m.__dict__ for m in store.messages(cid)],
+        }
+
+    @app.patch("/api/conversations/{cid}")
+    def rename_conversation(cid: str, body: RenameIn, request: Request) -> dict[str, Any]:
+        _found(store.rename, cid, profile_of(request), body.title)
+        return store.conversation(cid, profile_of(request)).__dict__
+
+    @app.delete("/api/conversations/{cid}")
+    def delete_conversation(cid: str, request: Request) -> dict[str, Any]:
+        _found(store.delete, cid, profile_of(request))
+        return {"deleted": cid}
+
+    @app.post("/api/conversations/{cid}/messages")
+    async def say(cid: str, body: SayIn, request: Request) -> dict[str, Any]:
+        who = profile_of(request)
+        try:
+            turn = await run_in_threadpool(
+                chat.say, cid, body.text, profile=who, lane=body.lane, do=body.do,
+                confirm=body.confirm,
+            )  # fmt: skip
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(404, str(exc).strip("'")) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return turn.to_dict()
+
+    @app.get("/api/memories")
+    def list_memories(request: Request, status: MemoryStatus | None = None) -> list[dict[str, Any]]:
+        return [m.__dict__ for m in store.memories(profile_of(request), status=status)]
+
+    @app.post("/api/memories")
+    def add_memory(body: MemoryIn, request: Request) -> dict[str, Any]:
+        return store.remember(profile_of(request), body.text, scope=body.scope).__dict__
+
+    @app.post("/api/memories/{mid}/keep")
+    def keep_memory(mid: str, request: Request) -> dict[str, Any]:
+        mem: Memory = _found(store.decide, mid, profile_of(request), "kept")
+        return dict(mem.__dict__)
+
+    @app.post("/api/memories/{mid}/reject")
+    def reject_memory(mid: str, request: Request) -> dict[str, Any]:
+        mem: Memory = _found(store.decide, mid, profile_of(request), "rejected")
+        return dict(mem.__dict__)
+
+    @app.delete("/api/memories/{mid}")
+    def forget_memory(mid: str, request: Request) -> dict[str, Any]:
+        store.forget(mid, profile_of(request))
+        return {"forgot": mid}
+
+    @app.get("/api/search")
+    def search(q: str, request: Request) -> dict[str, Any]:
+        return store.search(profile_of(request), q)
 
     @app.get("/api/events")
     async def events() -> StreamingResponse:
