@@ -31,6 +31,7 @@ import yaml
 from pablo.config import Settings
 from pablo.gateway import ChatBackend
 from pablo.judge_replay import ReplayCase
+from pablo.lessons import Lessons
 from pablo.orchestrator import Orchestrator
 from pablo.sandbox import Sandbox, make_sandbox
 from pablo.swap import SwapView
@@ -327,6 +328,8 @@ def run_suite(
     on_task: Callable[[TaskResult], None] | None = None,
     cascade: bool = False,
     spec: bool | None = None,
+    learn: set[str] | None = None,
+    lessons: Path | None = None,
 ) -> SuiteReport:
     """Run `lane` on every task (or `only` those ids) and score each against its hidden test.
 
@@ -346,6 +349,14 @@ def run_suite(
             cfg.retry_when = "now" if cascade else "off"
         if spec is not None:
             isolated.spec.enabled = spec
+        # Learning, measured: turn on `learn` pieces and start from a lessons folder made by
+        # practice on the seed repos (never from real use, never from suite tasks).
+        for piece in learn or set():
+            if piece not in ("examples", "failures", "routing"):
+                raise ValueError(f"unknown learning piece {piece!r}: examples, failures, routing")
+            setattr(isolated.learn, piece, True)
+        if lessons is not None:
+            shutil.copytree(lessons, isolated.home / "lessons", dirs_exist_ok=True)
         # Evals are the only user: no waiting for quiet, and the owner's mode doesn't apply.
         isolated.gpu.idle_s = 0
         isolated.gpu.mode = "balanced"
@@ -357,6 +368,8 @@ def run_suite(
             checks = {name: with_python(cmd, python) for name, cmd in _repo_checks(repo).items()}
             orch = Orchestrator(isolated, backend, repo=repo, checks=checks, sandbox=box, swap=swap)
             orch.retry_inline = True
+            orch.repo_key = task.repo  # lessons belong to the seed repo, not the task's dir
+            orch.lessons = Lessons(isolated.home, frozen=True)
             started = time.perf_counter()
             first = orch.start(task.task, lane=lane)
             run = orch.get(first.retry_run) if first.retry_run else first

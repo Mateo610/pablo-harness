@@ -11,13 +11,13 @@ import re
 import threading
 import uuid
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, cast
 
 from pablo.config import ESCALATION_LANE, Lane, Settings
-from pablo.context import Budget, build_coder_context, clip, context_files, numbered
+from pablo.context import Budget, build_coder_context, clip, context_files, numbered, tokens
 from pablo.edits import (
     EditError,
     blocks_on_top,
@@ -33,11 +33,13 @@ from pablo.gpu import job as gpu_job
 from pablo.hunks import all_ids
 from pablo.hunks import select as select_hunks
 from pablo.judge import Judgement, judge
+from pablo.lessons import Example, Failure, Lessons, Outcome, first_error
 from pablo.lookup import LookupClient, ProcessLookup, parse_symbol_request
 from pablo.router import Router
 from pablo.sandbox import Sandbox, make_sandbox
 from pablo.spec import SPEC_CAP, SpecResult, run_spec, write_spec
 from pablo.swap import SwapView, model_id
+from pablo.tasks import detect_task_type
 from pablo.traces import Trace, TraceStore
 from pablo.verify import (
     DEFAULT_CHECKS,
@@ -245,6 +247,9 @@ class Orchestrator:
         # Run `retry_on` retries in the caller's thread (evals, tests) instead of in the background.
         self.retry_inline = False
         self.router = Router(settings, self.backend)
+        self.lessons = Lessons(settings.home)
+        # Which repo lessons belong to. Evals set the seed's name; one dir per task otherwise.
+        self.repo_key = self.repo.name
         self.traces = TraceStore(settings.traces_dir)
         self.runs: dict[str, Run] = {}
         self._lock = threading.Lock()
@@ -396,6 +401,21 @@ class Orchestrator:
     ) -> Run:
         """Route the task and save the run as running. `finish` does the work."""
         decision = self.router.route(task, lane=ESCALATION_LANE if escalate else lane)
+        reason = decision.reason
+        if (
+            lane is None
+            and not escalate
+            and decision.lane == "coder"
+            and self.settings.learn.routing
+            and "deep" in self.settings.lanes
+        ):
+            kind = detect_task_type(task)
+            if self.lessons.prefer_deep(self.repo_key, kind):
+                record = self.lessons.lane_record(self.repo_key, kind)
+                c, d = record["coder"], record["deep"]
+                decision = replace(decision, lane="deep")
+                reason = (f"learned: deep got {d[0]}/{d[1]} {kind} tasks right here, "
+                          f"the coder {c[0]}/{c[1]}")  # fmt: skip
         lane_cfg = self.settings.lane(decision.lane)
         if lane_cfg.requires_approval and not escalate:
             raise PermissionError(f"lane '{lane_cfg.name}' only runs when you escalate")
@@ -405,7 +425,7 @@ class Orchestrator:
             task=task,
             lane=lane_cfg.name,
             model=lane_cfg.model,
-            route_reason=decision.reason,
+            route_reason=reason,
             complexity=decision.complexity,
             task_id=task_id,
             escalated_from=escalated_from,
@@ -414,7 +434,7 @@ class Orchestrator:
             by=by,
         )
         self._save(run)
-        self._emit("route", run, reason=decision.reason, confidence=decision.confidence)
+        self._emit("route", run, reason=reason, confidence=decision.confidence)
         return run
 
     def finish(self, run: Run) -> Run:
@@ -429,6 +449,28 @@ class Orchestrator:
         if run.state in ("needs_you", "failed"):
             self._retry_elsewhere(run)
         return run
+
+    def _learn(self, run: Run, *, ok: bool, whole: bool) -> None:
+        """Your decision as a lesson: a right answer to show later, and who got it right."""
+        lane = self.settings.lanes.get(run.lane)
+        if not run.diff or lane is None or lane.kind != "local" or not lane.writes_code:
+            return  # nothing from Claude, nothing without a change
+        kind = detect_task_type(run.task)
+        self.lessons.add_outcome(Outcome(self.repo_key, kind, run.lane, ok))
+        if ok and whole and run.lane in ("coder", "deep") and lane.train_ok:
+            files = list((run.verdict or {}).get("files", []))
+            self.lessons.add_example(Example(self.repo_key, run.task, run.diff, run.lane,
+                                             "approved", kind, files))  # fmt: skip
+
+    def _lessons_for(self, task: str) -> str:
+        """Examples and past failures from this repo, when `learn` turns them on."""
+        cfg = self.settings.learn
+        parts = []
+        if cfg.examples:
+            parts.append(self.lessons.examples_section(self.repo_key, task, cfg.example_tokens))
+        if cfg.failures:
+            parts.append(self.lessons.failures_section(self.repo_key, task))
+        return "\n\n".join(p for p in parts if p)
 
     def _spec(self, run: Run, verdict: Verdict) -> SpecResult | None:
         """Write tests from the task (not the diff) and run them before and after the change."""
@@ -645,16 +687,13 @@ class Orchestrator:
         wants_diff = lane.writes_code or run.lane in ("coder", ESCALATION_LANE)
         blocks = lane.edit_format == "blocks"
         system = (CODER_BLOCKS_PROMPT if blocks else CODER_PROMPT) if wants_diff else ANSWER_PROMPT
+        learned = self._lessons_for(run.task) if wants_diff and lane.kind == "local" else ""
+        budget = Budget.for_window(lane.context_tokens).shrunk(tokens(learned))
+        repo_text = build_coder_context(self.repo, run.task, budget=budget, home=self.settings.home)
         messages: list[Message] = [
             {"role": "system", "content": system},
-            {
-                "role": "user",
-                "content": repo_context(
-                    self.repo, run.task, lane.context_tokens, home=self.settings.home
-                ),
-            },
+            {"role": "user", "content": repo_text + (f"\n\n{learned}" if learned else "")},
         ]
-        budget = Budget.for_window(lane.context_tokens)
         shown = context_files(self.repo, run.task, budget, home=self.settings.home)
         self._emit("context", run, files=shown, budget_tokens=budget.total)
         if wants_diff and lane.symbol_lookup:
@@ -722,6 +761,14 @@ class Orchestrator:
                 clean=checked.clean,
             )
 
+            if not checked.clean and lane.kind == "local":
+                worse = next(
+                    (c for c in checked.checks if c.status not in ("passed", "already failing")),
+                    None,
+                )
+                error = first_error(worse.output_tail) if worse else (checked.error or "")
+                self.lessons.add_failure(Failure(self.repo_key, run.task, run.lane, error,
+                                                 list(checked.files)))  # fmt: skip
             judge_model = self.settings.lane("judge").model
             spec = self._spec(run, checked) if checked.clean else None
             extra = spec.evidence() if spec else ""
@@ -818,6 +865,7 @@ class Orchestrator:
         run.state = "approved"
         self.traces.record_decision(run.id, decision)
         self._save(run)
+        self._learn(run, ok=True, whole=decision == "approved")
         self._emit("decided", run, decision=decision)
         if run.group:
             for other in self.recent(200):
@@ -838,6 +886,7 @@ class Orchestrator:
         run.state = "rejected"
         self.traces.record_decision(run.id, "rejected")
         self._save(run)
+        self._learn(run, ok=False, whole=False)
         self._emit("decided", run, decision="rejected")
         return run
 

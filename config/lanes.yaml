@@ -14,6 +14,16 @@ gpu:                      # one GPU, many people (src/pablo/gpu.py)
   mode: balanced          # interactive · balanced · deep; the switch on Home overrides it
   idle_s: 120             # balanced: retries and night work wait this long after live activity
 
+learn:                    # learning without retraining (src/pablo/lessons.py); recording is always on
+  examples: false         # show the coder 1 or 2 right answers from this repo
+  failures: false         # warn the coder what broke on similar changes before
+  routing: false          # send a kind of task to deep when deep clearly does better here
+
+practice:                 # nightly checkable tasks from your repos (src/pablo/practice.py)
+  repos: []               # e.g. [~/code/clipfarmers]; never the eval suite's repos
+  nightly_tasks: 0        # 0 = off
+  teacher: deep           # tries what the coder missed; "" for none
+
 spec:                     # task-derived checks: tests from your request, written before the diff is seen
   enabled: false          # turn on once `pablo eval --spec --repeat 3` shows fewer false ready
   lane: judge             # who writes them (the judge model is already loaded at that moment)
