@@ -19,7 +19,7 @@ and how it is used. Add a row before adding a dependency or copying code.
 | React, React DOM | MIT | dep (web) |
 | cmdk | MIT | dep (web) |
 | Vite | MIT | dev dep (web) |
-| Geist, Geist Mono fonts (@fontsource) | SIL OFL 1.1 | bundled font files |
+| Chakra Petch, IBM Plex Mono fonts (@fontsource) | SIL OFL 1.1 | bundled font files (no font CDN) |
 | llama-swap v269 | MIT | process (lane swapper, `~/pablo-data/engines/llama-swap`) |
 | Podman 4.9.3 (rootless) | Apache-2.0 | process (check sandbox) |
 | gVisor `runsc` 20261026.0 | Apache-2.0 | process (OCI runtime; wrapper adds `--ignore-cgroups`) |

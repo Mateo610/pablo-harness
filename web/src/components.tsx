@@ -5,6 +5,8 @@ const LANE_VAR: Record<string, string> = {
   router: "var(--lane-router)",
   coder: "var(--lane-coder)",
   judge: "var(--lane-judge)",
+  advisor: "var(--lane-advisor)",
+  auto: "var(--sys)",
   deep: "var(--lane-deep)",
   media: "var(--lane-media)",
   claude: "var(--lane-escalate)",

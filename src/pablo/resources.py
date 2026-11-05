@@ -7,6 +7,8 @@ leaves `loaded` empty and does not blank the GPU or RAM numbers.
 
 from __future__ import annotations
 
+import contextlib
+import os
 import shutil
 import subprocess
 from collections.abc import Callable
@@ -33,6 +35,8 @@ class Resources:
     ram_used_mb: int = 0
     ram_total_mb: int = 0
     loaded: list[str] = field(default_factory=list)
+    cpu_pct: float = 0.0  # all threads, since the previous snapshot
+    cpu_threads: int = 0
     error: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -87,12 +91,42 @@ def read_nvidia_smi() -> str:
     ).stdout
 
 
+def parse_proc_stat(text: str) -> tuple[int, int]:
+    """(busy, total) jiffies from the aggregate `cpu` line of /proc/stat."""
+    for line in text.splitlines():
+        if line.startswith("cpu "):
+            nums = [int(x) for x in line.split()[1:]]
+            idle = nums[3] + (nums[4] if len(nums) > 4 else 0)  # idle + iowait
+            return sum(nums) - idle, sum(nums)
+    return 0, 0
+
+
+class CpuMeter:
+    """CPU use between two calls. The first call has nothing to compare with and says 0."""
+
+    def __init__(self, read: Callable[[], str] = lambda: Path("/proc/stat").read_text()) -> None:
+        self.read = read
+        self._last: tuple[int, int] | None = None
+
+    def __call__(self) -> float:
+        busy, total = parse_proc_stat(self.read())
+        last, self._last = self._last, (busy, total)
+        if last is None or total <= last[1]:
+            return 0.0
+        return round(100 * (busy - last[0]) / (total - last[1]), 1)
+
+
+CPU = CpuMeter()
+
+
 def snapshot(
     smi: Callable[[], str] = read_nvidia_smi,
     meminfo: Callable[[], str] = lambda: Path("/proc/meminfo").read_text(),
     running: Callable[[], Any] | None = None,
 ) -> Resources:
     res = Resources()
+    with contextlib.suppress(OSError, ValueError, IndexError):
+        res.cpu_pct, res.cpu_threads = CPU(), os.cpu_count() or 0
     try:
         res.gpus = parse_nvidia_smi(smi())
     except (OSError, subprocess.SubprocessError) as exc:

@@ -58,6 +58,10 @@ create table if not exists memories (
   scope text not null, text text not null, status text not null,
   source_conversation text, created_at text not null, decided_at text
 );
+create table if not exists usage (
+  at text not null, profile_id text not null, lane text not null,
+  tokens_in integer not null, tokens_out integer not null
+);
 create index if not exists conv_by_profile on conversations(profile_id, updated_at);
 create index if not exists msg_by_conv on messages(conversation_id, id);
 create virtual table if not exists messages_fts using fts5(
@@ -285,6 +289,14 @@ class Store:
             mid = int(cur.lastrowid or 0)
         return ChatMessage(mid, cid, role, content, lane, run_id, now)
 
+    def record_usage(self, profile: str, lane: str, tokens_in: int, tokens_out: int) -> None:
+        """Token counts only: chat text is never copied out of the conversation."""
+        self._q("insert into usage values (?, ?, ?, ?, ?)",
+                (_now(), profile, lane, tokens_in, tokens_out))  # fmt: skip
+
+    def usage_since(self, stamp: str) -> list[dict[str, Any]]:
+        return [dict(r) for r in self._q("select * from usage where at >= ?", (stamp,))]
+
     # memory ---------------------------------------------------------------------------------
 
     def remember(
@@ -466,14 +478,16 @@ class Chat:
             return Turn(conv, user, reply, run=run.to_dict(), shared_memory=bool(notes))
 
         messages = self._prompt(profile, conv, cfg, name, history, text, notes, remote)
-        answer = self.orch.backend.complete(
+        done = self.orch.backend.complete(
             cfg.model,
             messages,
             temperature=cfg.temperature,
             top_p=cfg.top_p,
             max_tokens=min(cfg.max_tokens, self.CHAT_MAX_TOKENS),
             timeout_s=cfg.timeout_s,
-        ).text
+        )
+        answer = done.text
+        self.store.record_usage(profile, name, done.prompt_tokens, done.completion_tokens)
         task = next((m.group(1) for m in _RUN.finditer(answer)), "") if can_run else ""
         facts = [m.group(1) for m in _REMEMBER.finditer(answer)]
         visible = _REMEMBER.sub("", _RUN.sub("", answer)).strip()

@@ -1,39 +1,43 @@
-/* Pablo design system tokens (graphite). Source of truth: the Pablo design system.
+/* Pablo cockpit tokens (v2 HUD: deep ground, cyan system, amber only for "your move").
    Fonts are bundled from npm (@fontsource), so the cockpit makes no calls to Google. */
 :root {
-  --ground-000: #0e0d0c;
-  --surface-100: #151413;
-  --surface-200: #1c1a18;
-  --surface-300: #24221f;
-  --line: #2f2c28;
-  --ink: #ede8e1;
-  --ink-muted: #a39c92;
-  --ink-faint: #7a746b;
-  --accent: #f2b44c;
-  --accent-tint: #f2b44c1f;
-  --on-accent: #1a1408;
-  --lane-coder: #4fd1bc;
-  --lane-judge: #b9a3ff;
+  --ground-000: #03070a;
+  --surface-100: #06111a;
+  --surface-200: #081822;
+  --surface-300: #0d2630;
+  --line: #0f2c36;
+  --ink: #e6f6fb;
+  --ink-muted: #8fb0bf;
+  --ink-faint: #6d8c9b;
+  --accent: #ffb547;
+  --accent-tint: #ffb5471f;
+  --on-accent: #120d05;
+  --lane-coder: #4fe0c0;
+  --lane-judge: #8fe3ff;
+  --lane-advisor: #b9a3ff;
+  --sys: #5ee6ff;
+  --sys-line: #1f5566;
+  --sys-wash: #5ee6ff14;
   --lane-router: #8fa7c2;
-  --lane-deep: #f28fa8;
+  --lane-deep: #ff8fb1;
   --lane-media: #c4db72;
   --lane-escalate: #d9cfc2;
-  --status-pass: #73d18f;
-  --status-fail: #f07a62;
+  --status-pass: #6ff0a6;
+  --status-fail: #ff8a8a;
   --status-wait: var(--accent);
 
   /* Washes and lines derived from the colors above */
-  --accent-line: #f2b44c73;
-  --accent-wash: #f2b44c14;
-  --pass-wash: #73d18f14;
-  --fail-wash: #f07a6214;
-  --fail-tint: #f07a621f;
-  --ink-body: #d9d3cb;
-  --scrim: #0e0d0cb8;
+  --accent-line: #ffb54773;
+  --accent-wash: #ffb54714;
+  --pass-wash: #6ff0a614;
+  --fail-wash: #ff8a8a14;
+  --fail-tint: #ff8a8a1f;
+  --ink-body: #cfe6ee;
+  --scrim: #03070ab8;
   --shadow-deep: 0 24px 80px #00000080;
 
-  --font-sans: "Geist", system-ui, sans-serif;
-  --font-mono: "Geist Mono", ui-monospace, monospace;
+  --font-sans: "Chakra Petch", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
 
   --space-1: 4px;
   --space-2: 8px;

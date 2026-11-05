@@ -449,6 +449,22 @@ def create_app(orch: Orchestrator, access: Access | None = None) -> FastAPI:
         store.forget(mid, profile_of(request))
         return {"forgot": mid}
 
+    @app.get("/api/repo")
+    def repo_info() -> dict[str, Any]:
+        from pablo.stats import repo_status
+
+        return repo_status(repo)
+
+    @app.get("/api/stats")
+    def stats(days: int = 1) -> dict[str, Any]:
+        from datetime import UTC, datetime, timedelta
+
+        from pablo.stats import lane_stats
+
+        days = max(1, min(days, 90))
+        since = (datetime.now(UTC) - timedelta(days=days)).isoformat(timespec="seconds")
+        return lane_stats(orch, days, store.usage_since(since))
+
     @app.get("/api/search")
     def search(q: str, request: Request) -> dict[str, Any]:
         return store.search(profile_of(request), q)
