@@ -1,6 +1,6 @@
 // Shared bits for cockpit v2: routing, polling, the event bus, run cards, small formatters.
 import { useEffect, useRef, useState } from "react";
-import { api, ApiError, subscribe, type HarnessEvent, type Me, type Run } from "./api";
+import { api, ApiError, subscribe, type GpuLease, type GpuMode, type GpuState, type HarnessEvent, type Me, type Run } from "./api";
 import { DiffView, laneColor, stateLabel } from "./components";
 
 export type Route = { page: string; id: string };
@@ -205,5 +205,76 @@ export function RunCard({ id, me, initial }: { id: string; me: Me | null; initia
         <span className="h-faint" style={{ fontSize: 12 }}>Only the owner can apply changes to the repo.</span>
       )}
     </div>
+  );
+}
+
+const MODE_NOTE: Record<GpuMode, string> = {
+  interactive: "Coder stays hot. Deep retries wait for tonight.",
+  balanced: "Retries and night work start after a quiet couple of minutes.",
+  deep: "Deep can take the GPU any time. Voice is paused.",
+};
+
+/** The owner's GPU mode switch; teammates see it read-only. */
+export function ModeSwitch({ me, gpu, onChange }: { me: Me | null; gpu: GpuState | null; onChange: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const mode = gpu?.mode ?? "balanced";
+  const owner = Boolean(me?.can_approve);
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+      <div className="h-seg" role="group" aria-label="GPU mode">
+        {(["interactive", "balanced", "deep"] as GpuMode[]).map((m) => (
+          <button
+            key={m}
+            aria-pressed={mode === m}
+            disabled={!owner || busy}
+            title={owner ? MODE_NOTE[m] : "Only the owner changes the GPU mode"}
+            onClick={() => {
+              setBusy(true);
+              api.setGpuMode(m).then(onChange).finally(() => setBusy(false));
+            }}
+          >
+            {m === "deep" ? "DEEP WORK" : m.toUpperCase()}
+          </button>
+        ))}
+      </div>
+      <span className="h-dim" style={{ fontSize: 12, maxWidth: 360 }}>{MODE_NOTE[mode]}</span>
+    </div>
+  );
+}
+
+const PRIORITY_COLOR: Record<string, string> = {
+  voice: "var(--accent)",
+  chat: "var(--sys)",
+  run: "var(--lane-coder)",
+  retry: "var(--lane-deep)",
+  night: "var(--ink-muted)",
+};
+
+/** Who has the GPU and who's waiting, most urgent first. */
+export function GpuQueue({ gpu }: { gpu: GpuState | null }) {
+  if (!gpu) return null;
+  const row = (l: GpuLease, i: number, held: boolean) => (
+    <div key={`${held}-${i}`} className="h-mono" style={{ display: "flex", gap: 10, fontSize: 12, alignItems: "baseline" }}>
+      <span style={{ color: held ? "var(--status-pass)" : "var(--ink-faint)", width: 54 }}>{held ? "● has it" : "waiting"}</span>
+      <span style={{ color: PRIORITY_COLOR[l.priority], width: 44 }}>{l.priority}</span>
+      <span style={{ flex: 1 }}>{l.model.replace("pablo/", "")}</span>
+      <span className="h-dim">{l.who ? (l.who === "owner" ? "you" : l.who.replace(/@.*/, "")) : "pablo"}</span>
+      <span className="h-faint">{Math.round(l.for_s)}s</span>
+    </div>
+  );
+  return (
+    <section className="h-frame h-pad" aria-label="GPU queue">
+      <h2 className="h-cap">GPU · {gpu.mode === "deep" ? "deep work" : gpu.mode}</h2>
+      {gpu.holders.length === 0 && gpu.waiting.length === 0 && (
+        <span className="h-dim" style={{ fontSize: 12 }}>
+          Free{gpu.resident ? ` · ${gpu.resident.replace("pablo/", "")} still loaded` : ""}.
+        </span>
+      )}
+      {gpu.holders.map((l, i) => row(l, i, true))}
+      {gpu.waiting.map((l, i) => row(l, i, false))}
+      <span className="h-faint" style={{ fontSize: 11.5 }}>
+        Background work {gpu.background_ok ? "may start now" : gpu.mode === "interactive" ? "waits for tonight" : `waits for ${Math.round(gpu.idle_needed_s)} s of quiet`}.
+      </span>
+    </section>
   );
 }

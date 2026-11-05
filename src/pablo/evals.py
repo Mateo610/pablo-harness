@@ -346,6 +346,9 @@ def run_suite(
             cfg.retry_when = "now" if cascade else "off"
         if spec is not None:
             isolated.spec.enabled = spec
+        # Evals are the only user: no waiting for quiet, and the owner's mode doesn't apply.
+        isolated.gpu.idle_s = 0
+        isolated.gpu.mode = "balanced"
         for task in load_suite(root):
             if only and task.id not in only:
                 continue

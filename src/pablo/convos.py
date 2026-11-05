@@ -29,6 +29,8 @@ from typing import TYPE_CHECKING, Any, Literal
 from pablo.config import Lane
 from pablo.context import Budget, build_coder_context, clip, tokens
 from pablo.gateway import Delta, stream_complete
+from pablo.gpu import Priority
+from pablo.gpu import job as gpu_job
 from pablo.repomap import load_or_build
 
 if TYPE_CHECKING:
@@ -510,11 +512,12 @@ class Chat:
             "max_tokens": min(cfg.max_tokens, self.CHAT_MAX_TOKENS),
             "timeout_s": cfg.timeout_s,
         }
-        done = (
-            stream_complete(self.orch.backend, cfg.model, messages, on_delta, **sampling)
-            if on_delta
-            else self.orch.backend.complete(cfg.model, messages, **sampling)
-        )
+        with gpu_job(Priority.VOICE if spoken else Priority.CHAT, profile):
+            done = (
+                stream_complete(self.orch.backend, cfg.model, messages, on_delta, **sampling)
+                if on_delta
+                else self.orch.backend.complete(cfg.model, messages, **sampling)
+            )
         answer = done.text
         self.store.record_usage(profile, name, done.prompt_tokens, done.completion_tokens)
         task = next((m.group(1) for m in _RUN.finditer(answer)), "") if can_run else ""

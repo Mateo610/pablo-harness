@@ -17,6 +17,7 @@ def settings(tmp_path: Path) -> Settings:
     s.sandbox = SandboxConfig()  # local: CI has no container engine
     for lane in s.lanes.values():
         lane.retry_when = "off"  # tests that want coder → deep retries turn it on
+    s.gpu.idle_s = 0  # tests are the only user; test_gpu sets its own
     return s
 
 

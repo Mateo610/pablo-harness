@@ -34,6 +34,8 @@ export function Voice({ me }: { me: Me | null }) {
   const [lines, setLines] = useState<Line[]>([]);
   const [error, setError] = useState("");
   const [status] = usePoll(api.voiceStatus, 30000);
+  const [gpu] = usePoll(api.gpu, 10000);
+  const paused = gpu?.mode === "deep";
   const spokes = useRef<(HTMLElement | null)[]>([]);
   const rec = useRef<Recorder | null>(null);
   const player = useRef<Player | null>(null);
@@ -43,7 +45,7 @@ export function Voice({ me }: { me: Me | null }) {
   const cur = WHO[who];
 
   const secure = window.isSecureContext;
-  const ready = Boolean(status?.enabled && status.stt && status.tts && secure);
+  const ready = Boolean(status?.enabled && status.stt && status.tts && secure && !paused);
 
   // The ring follows whatever is sounding: your mic while you talk, Pablo while it answers.
   useEffect(() => {
@@ -233,7 +235,11 @@ export function Voice({ me }: { me: Me | null }) {
             </a>
           )}
           <span style={{ marginLeft: "auto" }}>
-            <VoiceHealth ready={ready} secure={secure} status={status} />
+            {paused ? (
+              <span className="h-chip" style={{ color: "var(--lane-deep)", borderColor: "#5a2a3c" }}>Deep Work mode: voice paused so deep keeps the GPU</span>
+            ) : (
+              <VoiceHealth ready={ready} secure={secure} status={status} />
+            )}
           </span>
         </header>
 

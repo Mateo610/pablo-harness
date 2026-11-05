@@ -20,6 +20,8 @@ from typing import Any, Literal
 
 from pablo.config import Overnight
 from pablo.events import Event
+from pablo.gpu import Priority
+from pablo.gpu import job as gpu_job
 from pablo.orchestrator import Orchestrator, Run
 from pablo.plan import Plan
 
@@ -159,13 +161,14 @@ class OvernightRunner:
                 )
                 self._emit("queue", job, status="running", text=f"tonight · {job.task[:60]}")
                 try:
-                    run = self.orch.start(
-                        job.task,
-                        lane=lane,
-                        task_id=job.task_id,
-                        group=job.group,
-                        retried_from=job.retried_from,
-                    )
+                    with gpu_job(Priority.NIGHT):  # yields to anyone working, even at night
+                        run = self.orch.start(
+                            job.task,
+                            lane=lane,
+                            task_id=job.task_id,
+                            group=job.group,
+                            retried_from=job.retried_from,
+                        )
                     job = self.queue.update(
                         job.id,
                         status="done",

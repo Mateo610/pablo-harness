@@ -28,6 +28,8 @@ from pablo.edits import (
 )
 from pablo.events import Event, EventBus
 from pablo.gateway import ChatBackend, Completion, Message
+from pablo.gpu import GpuScheduler, Priority, ScheduledBackend, off_gpu_models
+from pablo.gpu import job as gpu_job
 from pablo.hunks import all_ids
 from pablo.hunks import select as select_hunks
 from pablo.judge import Judgement, judge
@@ -221,9 +223,17 @@ class Orchestrator:
         swap: SwapView | None = None,
         sandbox: Sandbox | None = None,
         lookup: LookupClient | None = None,
+        gpu: GpuScheduler | None = None,
     ) -> None:
         self.settings = settings
-        self.backend = backend
+        # One GPU: every GPU-lane call takes the scheduler's lease (src/pablo/gpu.py).
+        self.gpu = gpu or GpuScheduler(
+            home=settings.home,
+            idle_s=settings.gpu.idle_s,
+            overnight=settings.overnight,
+            default_mode=settings.gpu.mode,
+        )
+        self.backend: ChatBackend = ScheduledBackend(backend, self.gpu, off_gpu_models(settings))
         self.repo = repo.resolve()
         self.bus = bus or EventBus()
         self.checks = checks
@@ -234,7 +244,7 @@ class Orchestrator:
         self.baselines = Baselines()  # checks on the unedited repo, run once per repo state
         # Run `retry_on` retries in the caller's thread (evals, tests) instead of in the background.
         self.retry_inline = False
-        self.router = Router(settings, backend)
+        self.router = Router(settings, self.backend)
         self.traces = TraceStore(settings.traces_dir)
         self.runs: dict[str, Run] = {}
         self._lock = threading.Lock()
@@ -466,7 +476,10 @@ class Orchestrator:
         ):
             return
         run.group = uuid.uuid4().hex[:8]
-        if lane.retry_when == "overnight":
+        when = lane.retry_when
+        if when == "now" and self.gpu.mode == "interactive":
+            when = "overnight"  # interactive mode keeps the coder hot; deep tries it tonight
+        if when == "overnight":
             from pablo.overnight import JobQueue
 
             job = JobQueue(self.settings.home).add(
@@ -483,10 +496,11 @@ class Orchestrator:
         self._emit("retry", run, lane=target, when="now")
 
         def go() -> None:
-            retry = self.start(
-                run.task, lane=target, task_id=run.task_id, group=run.group,
-                retried_from=run.id, by=run.by,
-            )  # fmt: skip
+            with gpu_job(Priority.RETRY, run.by):  # waits for a quiet GPU in balanced mode
+                retry = self.start(
+                    run.task, lane=target, task_id=run.task_id, group=run.group,
+                    retried_from=run.id, by=run.by,
+                )  # fmt: skip
             run.retry_run = retry.id
             verdict = "is ready for you" if retry.state == "ready" else "needs you too"
             run.question = f"{asked} {target.capitalize()} tried it too ({retry.id}): {verdict}."

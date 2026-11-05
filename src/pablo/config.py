@@ -53,6 +53,8 @@ class Lane(BaseModel):
     # Sampling. Most lanes stay at 0.2. A lane sets top_p only when its model card requires it.
     temperature: float = 0.2
     top_p: float | None = None
+    # Runs on the GPU (takes the scheduler's lease). The router runs on the CPU.
+    gpu: bool = True
 
     @model_validator(mode="after")
     def _remote_never_trains(self) -> Lane:
@@ -184,6 +186,14 @@ class SpecConfig(BaseModel):
     timeout_s: float = 120.0
 
 
+class GpuConfig(BaseModel):
+    """The GPU scheduler (src/pablo/gpu.py). `mode` is the starting mode; the owner's switch
+    on Home overrides it (saved in ~/.pablo/gpu-mode.json)."""
+
+    mode: Literal["interactive", "balanced", "deep"] = "balanced"
+    idle_s: float = 120.0  # balanced: background work waits this long after the last live call
+
+
 class Settings(BaseModel):
     gateway: Gateway = Field(default_factory=Gateway)
     thresholds: Thresholds = Field(default_factory=Thresholds)
@@ -191,6 +201,7 @@ class Settings(BaseModel):
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     spec: SpecConfig = Field(default_factory=SpecConfig)
+    gpu: GpuConfig = Field(default_factory=GpuConfig)
     lanes: dict[str, Lane]
     home: Path = Field(default_factory=lambda: default_home())
 

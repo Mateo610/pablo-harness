@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { api, type Lane, type LaneStat, type Resources } from "./api";
 import { laneColor } from "./components";
-import { ago, kTokens, STATE_COLOR, useEvents, usePoll } from "./hud";
+import { ago, GpuQueue, kTokens, STATE_COLOR, useEvents, usePoll } from "./hud";
 
 const EMPTY: LaneStat = { runs: 0, approved: 0, ready: 0, needs_you: 0, failed: 0, tokens_in: 0, tokens_out: 0, chat_tokens_in: 0, chat_tokens_out: 0, latency_s: 0, calls: 0 };
 
@@ -11,6 +11,7 @@ export function Agents({ lanes, res }: { lanes: Lane[]; res: Resources | null })
   const [stats, reloadStats] = usePoll(() => api.stats(days), 15000, [days]);
   const [runs, reloadRuns] = usePoll(() => api.runs(30), 15000);
   const [repo] = usePoll(api.repo, 30000);
+  const [gpu] = usePoll(api.gpu, 3000);
   const [doing, setDoing] = useState<Record<string, string>>({});
 
   useEvents((e) => {
@@ -147,6 +148,7 @@ export function Agents({ lanes, res }: { lanes: Lane[]; res: Resources | null })
         </section>
 
         <aside className="h-col-side">
+          <GpuQueue gpu={gpu} />
           <section className="h-frame h-pad" aria-label="Token spend by lane">
             <h2 className="h-cap">Token spend · {days === 1 ? "today" : `${days} days`}</h2>
             {spend.map((s) => (

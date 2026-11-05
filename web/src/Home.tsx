@@ -1,7 +1,7 @@
 // Home: the machine, your conversations, what needs you, what Pablo remembers, the repo.
 import { api, type Conversation, type Me, type Resources, type Run } from "./api";
 import { laneColor } from "./components";
-import { ago, gb, go, kTokens, pct, STATE_COLOR, usePoll, useEvents } from "./hud";
+import { ago, gb, go, kTokens, ModeSwitch, pct, STATE_COLOR, usePoll, useEvents } from "./hud";
 
 export function Home({ me, res }: { me: Me | null; res: Resources | null }) {
   const [convs] = usePoll(api.conversations, 15000);
@@ -11,6 +11,7 @@ export function Home({ me, res }: { me: Me | null; res: Resources | null }) {
   const [stats] = usePoll(() => api.stats(7), 30000);
   const [repo] = usePoll(api.repo, 60000);
   const [jobs] = usePoll(api.queue, 30000);
+  const [sched, reloadSched] = usePoll(api.gpu, 5000);
   useEvents((e) => {
     if (["needs_you", "judged", "decided"].includes(e.kind)) reloadInbox();
   });
@@ -37,6 +38,7 @@ export function Home({ me, res }: { me: Me | null; res: Resources | null }) {
             {me ? `${me.role} · via ${me.via}` : "connecting…"}
           </span>
         </div>
+        <ModeSwitch me={me} gpu={sched} onChange={reloadSched} />
         <span className="h-mono h-dim" style={{ marginLeft: "auto", fontSize: 12 }}>
           loaded: {res?.loaded.length ? res.loaded.join(" · ") : "—"}
         </span>

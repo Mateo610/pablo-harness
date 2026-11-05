@@ -260,6 +260,23 @@ export type VoiceEvent =
   | { type: "done"; turn: Turn; tts_error?: string }
   | { type: "error"; status?: number; detail?: string };
 
+export type GpuMode = "interactive" | "balanced" | "deep";
+export interface GpuLease {
+  model: string;
+  priority: "voice" | "chat" | "run" | "retry" | "night";
+  who: string;
+  for_s: number;
+}
+export interface GpuState {
+  mode: GpuMode;
+  resident: string | null;
+  holders: GpuLease[];
+  waiting: GpuLease[];
+  idle_s: number | null;
+  background_ok: boolean;
+  idle_needed_s: number;
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -316,6 +333,8 @@ export const api = {
   brief: () => call<Brief>("/api/brief").catch(() => null),
   makeBrief: () => call<Brief>("/api/brief", { method: "POST" }),
   me: () => call<Me>("/api/me"),
+  gpu: () => call<GpuState>("/api/gpu"),
+  setGpuMode: (mode: GpuMode) => call<GpuState>("/api/gpu/mode", { method: "POST", body: JSON.stringify({ mode }) }),
   runs: (limit = 50) => call<Run[]>(`/api/runs?limit=${limit}`),
   repo: () => call<RepoStatus>("/api/repo"),
   stats: (days = 1) => call<Stats>(`/api/stats?days=${days}`),
