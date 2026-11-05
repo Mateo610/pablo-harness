@@ -26,22 +26,35 @@ HTTPS (or localhost).
    Restart `pablo serve --host $(tailscale ip -4)`. Open `https://pablo.<tailnet>.ts.net:8710` from
    the laptop and confirm `pablo whoami --url https://pablo.<tailnet>.ts.net:8710` says owner.
    Add a monthly systemd timer that runs `pablo cert` (certs last about 90 days) and restarts serve.
-3. Speech-to-text: whisper.cpp's `whisper-server` (MIT), built from a pinned tag.
-   Measure two setups on 5-second and 15-second clips. Record the time to transcribe and the
-   transcript quality:
-   - CPU, `small.en` (or `base.en` if small is too slow).
-   - GPU (CUDA build), `large-v3-turbo` quantized, while the coder is loaded. Check `nvidia-smi` headroom
-     with the coder resident (~19.6 GB), and with the advisor (~17 GB) and deep loaded.
-   Pick the faster setup that never pushes VRAM past ~23 GB with any lane loaded. Run it as
-   `pablo-stt.service` on 127.0.0.1:8090. Set `voice.stt_url: http://127.0.0.1:8090` and
-   `stt_api: whisper.cpp`.
-4. Text-to-speech: a local server that speaks the OpenAI `POST /v1/audio/speech` API. First
-   candidate is Kokoro-82M (weights Apache-2.0) behind an OpenAI-compatible server. Confirm the
-   server's license, and that it runs on CPU without network access. If nothing fits, propose an
-   alternative before installing it. Run it as `pablo-tts.service` on 127.0.0.1:8880. Set
-   `voice.tts_url`, `tts_model`, and `tts_format: wav`.
-5. Voices: pick a distinct voice for `coder`, `advisor`, and `deep` (`voice.voices`), so you can tell
-   who's talking with your eyes closed. Matt picks; play him three options for each.
+3. Speech-to-text: whisper.cpp's `whisper-server` (MIT), built from a pinned tag, **on the CPU**.
+   The GPU's spare room goes to the voice. Measure `small.en` and `large-v3-turbo` (quantized) on
+   5-second and 15-second clips with code words in them ("rename load_line in ledger").
+   Pablo now sends a `prompt` with the repo's file and function names. Note whether the names come
+   back spelled right. Pick turbo if it transcribes a 5 s clip in under ~1 s on the cores you give it,
+   else small.en. Run it as `pablo-stt.service` on 127.0.0.1:8090. Set
+   `voice.stt_url: http://127.0.0.1:8090` and `stt_api: whisper.cpp`.
+4. Text-to-speech: **Qwen3-TTS** (Apache-2.0; Matt picked it by ear), served by an
+   OpenAI-compatible server on `POST /v1/audio/speech`. The first candidate is
+   `groxaxo/Qwen3-TTS-Openai-Fastapi` (Apache-2.0 additions; confirm, and pin a commit). Check that it
+   makes no network calls once the weights are downloaded, then archive the weights.
+   - Start with **0.6B CustomVoice on the GPU**. Measure VRAM with the coder resident (~19.6 GB) and
+     with the advisor (~17 GB). Measure the time to synthesize a 12-word sentence.
+   - Then try **1.7B CustomVoice**. Keep it only if it fits under ~23 GB total with the coder loaded,
+     and it isn't slower to first audio.
+   - With deep loaded there's probably no room. Check it. If it doesn't fit, voice with deep falls
+     back to the CPU build of 0.6B (measure it) or isn't offered. Report which.
+   - FlashAttention is optional. Its build needs a lot of RAM (`MAX_JOBS=4`), so only build it if
+     it measurably helps.
+   Run it as `pablo-tts.service` on 127.0.0.1:8880. Set `voice.tts_url`, `tts_model`, and
+   `tts_format: wav`.
+5. Voices:
+   - Pick a distinct preset for `coder`, `advisor`, and `deep` (`voice.voices`, e.g. the English
+     presets). Matt picks; play him the same sentence in each.
+   - **Signature voice (optional, once):** with the **1.7B VoiceDesign** model, offline, generate a
+     voice from a written description Matt writes. It must be an original voice, not a real person's.
+     Save a 3–10 s clip, register it as a clone profile on the server (served by **0.6B Base**), and
+     use `clone:<name>` for the orchestrator. Only Matt's own voice, or someone who agreed, may be
+     cloned. Unload VoiceDesign when done.
 6. CPU placement: the sandbox owns threads 12–15, and llama.cpp uses the first cores. Pin STT and TTS
    with `taskset` (or `CPUAffinity=` in the units) so a voice turn doesn't slow a deep run, or the
    reverse. Write down which threads you used and why.

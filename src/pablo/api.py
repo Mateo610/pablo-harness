@@ -33,7 +33,15 @@ from pablo.overnight import (
 from pablo.plan import Plan, Status
 from pablo.resources import snapshot
 from pablo.swap import read_running
-from pablo.voice import SentenceCutter, Speaker, Transcriber, VoiceOff, engines, reachable
+from pablo.voice import (
+    SentenceCutter,
+    Speaker,
+    Transcriber,
+    VoiceOff,
+    engines,
+    reachable,
+    vocabulary,
+)
 
 
 class TaskIn(BaseModel):
@@ -230,8 +238,9 @@ def create_app(
             raise HTTPException(413, "that recording is too long")
         stt, _ = _voice()
         mime = request.headers.get("content-type", "audio/wav")
+        hint = await run_in_threadpool(vocabulary, repo, orch.settings.home)
         try:
-            return str(await run_in_threadpool(stt.transcribe, audio, mime))
+            return str(await run_in_threadpool(stt.transcribe, audio, mime, hint))
         except Exception as exc:  # the engine is a separate process; say what broke
             raise HTTPException(502, f"speech-to-text failed: {exc}") from exc
 

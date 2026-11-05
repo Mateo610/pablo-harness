@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import subprocess
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -31,10 +32,10 @@ REPLY = (
 class FakeSTT:
     def __init__(self, text: str) -> None:
         self.text = text
-        self.got: list[tuple[bytes, str]] = []
+        self.got: list[tuple[bytes, str, str]] = []
 
-    def transcribe(self, audio: bytes, mime: str) -> str:
-        self.got.append((audio, mime))
+    def transcribe(self, audio: bytes, mime: str, prompt: str = "") -> str:
+        self.got.append((audio, mime, prompt))
         return self.text
 
 
@@ -147,9 +148,44 @@ def test_engine_clients_send_what_the_servers_expect(monkeypatch: pytest.MonkeyP
         return httpx.Response(200, content=b"RIFFaudio", request=req)
 
     monkeypatch.setattr(httpx, "post", post)
-    assert WhisperCppSTT("http://127.0.0.1:8090/").transcribe(b"W", "audio/wav") == "hello there"
+    stt = WhisperCppSTT("http://127.0.0.1:8090/")
+    assert stt.transcribe(b"W", "audio/wav", "Project words: load_line.") == "hello there"
     assert sent[0]["url"] == "http://127.0.0.1:8090/inference"
     assert sent[0]["data"]["response_format"] == "json"
+    assert sent[0]["data"]["prompt"] == "Project words: load_line."
     assert OpenAITTS("http://127.0.0.1:8880", "kokoro").speak("Hi.", "af") == b"RIFFaudio"
     body = {"input": "Hi.", "response_format": "wav", "model": "kokoro", "voice": "af"}
     assert sent[1]["json"] == body
+
+
+def test_a_call_keeps_the_same_system_prompt_so_the_cache_hits(
+    settings: Settings, repo: Path
+) -> None:
+    """Voice turns skip per-message file picking and recall; text chat keeps both."""
+    c, backend, _ = setup(settings, repo)
+    first = events(c.post("/api/voice/turn?lane=coder", content=b"W"))
+    cid = first[0]["id"]
+    events(c.post(f"/api/voice/turn?lane=coder&conversation={cid}", content=b"W"))
+    one, two = (
+        msgs[0]["content"] for m, msgs in backend.calls if CHAT_PROMPT in msgs[0]["content"]
+    )
+    assert one == two
+    assert "The repo at a glance" in one and "def add(a, b)" in one
+    assert "The repo, for this message" not in one and "From earlier conversations" not in one
+
+
+def test_speech_to_text_hears_the_projects_words(settings: Settings, repo: Path) -> None:
+    from pablo.voice import vocabulary
+
+    (repo / "ledger.py").write_text(
+        "class LedgerBook:\n    pass\n\n\ndef load_line(raw):\n    return raw\n"
+    )
+    subprocess.run(["git", "add", "ledger.py"], cwd=repo, check=True)
+    hint = vocabulary(repo, settings.home)
+    assert hint.startswith("Project words:") and "load_line" in hint and "LedgerBook" in hint
+    assert "ledger" in hint and "test_add" not in hint and len(hint) < 800
+    stt = FakeSTT("rename load line")
+    orch = Orchestrator(settings, FakeBackend(), repo=repo, checks=CHECKS)
+    app = create_app(orch, voice_engines=(stt, FakeTTS()))
+    TestClient(app, client=("127.0.0.1", 5000)).post("/api/voice", content=b"W")
+    assert "load_line" in stt.got[0][2]

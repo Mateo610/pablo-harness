@@ -11,11 +11,13 @@ streams, and each finished sentence is spoken while the next is still being writ
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Protocol
 
 import httpx
 
 from pablo.config import VoiceConfig
+from pablo.repomap import load_or_build
 
 
 class VoiceOff(RuntimeError):
@@ -23,7 +25,7 @@ class VoiceOff(RuntimeError):
 
 
 class Transcriber(Protocol):
-    def transcribe(self, audio: bytes, mime: str) -> str: ...
+    def transcribe(self, audio: bytes, mime: str, prompt: str = "") -> str: ...
 
 
 class Speaker(Protocol):
@@ -36,11 +38,14 @@ class WhisperCppSTT:
     def __init__(self, url: str, language: str = "en", timeout_s: float = 60.0) -> None:
         self.url, self.language, self.timeout_s = url.rstrip("/"), language, timeout_s
 
-    def transcribe(self, audio: bytes, mime: str) -> str:
+    def transcribe(self, audio: bytes, mime: str, prompt: str = "") -> str:
+        data = {"response_format": "json", "language": self.language, "temperature": "0"}
+        if prompt:
+            data["prompt"] = prompt  # whisper reads it as earlier speech: spell our words
         resp = httpx.post(
             f"{self.url}/inference",
             files={"file": ("speech.wav", audio, mime or "audio/wav")},
-            data={"response_format": "json", "language": self.language, "temperature": "0"},
+            data=data,
             timeout=self.timeout_s,
         )
         resp.raise_for_status()
@@ -54,11 +59,14 @@ class OpenAISTT:
         self.url, self.model = url.rstrip("/"), model or "whisper-1"
         self.language, self.timeout_s = language, timeout_s
 
-    def transcribe(self, audio: bytes, mime: str) -> str:
+    def transcribe(self, audio: bytes, mime: str, prompt: str = "") -> str:
+        data = {"model": self.model, "language": self.language, "response_format": "json"}
+        if prompt:
+            data["prompt"] = prompt
         resp = httpx.post(
             f"{self.url}/v1/audio/transcriptions",
             files={"file": ("speech.wav", audio, mime or "audio/wav")},
-            data={"model": self.model, "language": self.language, "response_format": "json"},
+            data=data,
             timeout=self.timeout_s,
         )
         resp.raise_for_status()
@@ -91,6 +99,43 @@ def engines(cfg: VoiceConfig) -> tuple[Transcriber, Speaker]:
         else OpenAISTT(cfg.stt_url, cfg.stt_model, cfg.language, cfg.timeout_s)
     )
     return stt, OpenAITTS(cfg.tts_url, cfg.tts_model, cfg.tts_format, cfg.timeout_s)
+
+
+VOCAB_CHARS = 700  # whisper keeps ~224 prompt tokens; stay well inside it
+_vocab_cache: dict[str, str] = {}
+
+
+def vocabulary(repo: Path, home: Path | None = None) -> str:
+    """Your project's words, as a hint for speech-to-text: files, classes, functions.
+
+    So "rename load line in ledger" comes back as `load_line` in `ledger`. Cached per repo
+    snapshot; empty if the repo can't be mapped.
+    """
+    try:
+        repo_map = load_or_build(repo, home)
+    except Exception:
+        return ""
+    if repo_map.key in _vocab_cache:
+        return _vocab_cache[repo_map.key]
+    order = {"class": 0, "function": 1, "method": 2}
+    names: list[str] = []
+    stems: list[str] = []
+    for sym in sorted(repo_map.symbols, key=lambda s: (order.get(s.kind, 3), s.path, s.line)):
+        if "test" in Path(sym.path).stem or sym.path.startswith(("tests/", "test/")):
+            continue
+        if not sym.name.startswith(("_", "test")) and sym.name not in names:
+            names.append(sym.name)
+        stem = Path(sym.path).stem
+        if stem not in stems and not stem.startswith(("_", "test")):
+            stems.append(stem)
+    words: list[str] = []
+    for word in [*stems[:30], *names]:
+        if len(", ".join([*words, word])) > VOCAB_CHARS:
+            break
+        words.append(word)
+    hint = ("Project words: " + ", ".join(words) + ".") if words else ""
+    _vocab_cache[repo_map.key] = hint
+    return hint
 
 
 def reachable(url: str) -> bool:

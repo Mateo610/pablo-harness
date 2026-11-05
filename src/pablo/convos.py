@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from pablo.config import Lane
 from pablo.context import Budget, build_coder_context, clip, tokens
 from pablo.gateway import Delta, stream_complete
+from pablo.repomap import load_or_build
 
 if TYPE_CHECKING:
     from pablo.gateway import Message
@@ -492,7 +493,10 @@ class Chat:
             reply = self.store.add_message(cid, "assistant", f"Kept: {mem.text}", lane=name)
             return Turn(conv, user, reply, kept=[mem])
 
-        notes = [] if remote else self.store.relevant_memories(profile, conv.project, text)
+        # Spoken turns rank notes without the message, so the list (and the prompt) stays put.
+        notes = [] if remote else self.store.relevant_memories(
+            profile, conv.project, "" if spoken else text
+        )  # fmt: skip
         if do:
             run = self._run(text, name, notes, profile)
             body = self._run_line(run)
@@ -545,6 +549,16 @@ class Chat:
         cert = f" · certainty {run.certainty:.2f}" if run.certainty is not None else ""
         return f"[run {run.id} · {run.lane} · {run.state.replace('_', ' ')}{cert}]"
 
+    GLANCE_TOKENS = 1200
+
+    def repo_glance(self) -> str:
+        """The repo map, clipped: the same text until the repo changes."""
+        try:
+            repo_map = load_or_build(self.orch.repo, self.orch.settings.home)
+        except Exception:  # the map is a nicety; a voice turn must not fail on it
+            return "(map unavailable)"
+        return clip(repo_map.render(limit=160), self.GLANCE_TOKENS)
+
     def _prompt(
         self,
         profile: str,
@@ -564,12 +578,19 @@ class Chat:
             if notes:
                 parts.append(f"What {who} has told you to keep in mind:\n" + "\n".join(
                     f"- {n}" for n in notes))  # fmt: skip
-            recalled = self.store.recall(profile, text, exclude=conv.id)
-            if recalled:
-                parts.append("From earlier conversations:\n" + "\n".join(
-                    f"- ({h['title']}) {h['role']}: {clip(h['content'], 80)}" for h in recalled
-                ))  # fmt: skip
-            if name == AUTO or cfg.writes_code:
+            if spoken:
+                # A voice call keeps the system prompt identical turn to turn, so llama.cpp
+                # reuses its cache and the first word comes sooner: no per-message recall or
+                # file picking, just a compact map of the repo. A run still gets full context.
+                if name == AUTO or cfg.writes_code:
+                    parts.append("The repo at a glance:\n" + self.repo_glance())
+            else:
+                recalled = self.store.recall(profile, text, exclude=conv.id)
+                if recalled:
+                    parts.append("From earlier conversations:\n" + "\n".join(
+                        f"- ({h['title']}) {h['role']}: {clip(h['content'], 80)}" for h in recalled
+                    ))  # fmt: skip
+            if (name == AUTO or cfg.writes_code) and not spoken:
                 context = build_coder_context(
                     self.orch.repo, text, budget=self.CONTEXT, home=self.orch.settings.home
                 )
