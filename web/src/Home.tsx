@@ -189,7 +189,10 @@ function Vital(props: { label: string; device: string; value: string; unit: stri
 
 function NeedsRow({ run }: { run: Run }) {
   return (
-    <a href="#/work" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+    <a
+      href={run.conversation_id ? `#/${run.conversation_lane === "advisor" ? "advisor" : "chat"}/${run.conversation_id}` : "#/work"}
+      style={{ display: "flex", flexDirection: "column", gap: 4 }}
+    >
       <span style={{ color: "#f6ead6", fontSize: 14.5, lineHeight: 1.4 }}>{run.task.split("\n")[0].slice(0, 90)}</span>
       <span className="h-mono" style={{ fontSize: 12, color: STATE_COLOR[run.state] }}>
         {run.lane}

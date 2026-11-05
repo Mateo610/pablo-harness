@@ -30,7 +30,27 @@ new file mode 100644
 
 
 def _coder(model: str, messages: Sequence[Message]) -> str:
+    if messages and messages[0]["content"].startswith(("You are Pablo,", "You are the advisor")):
+        return _chat(messages[-1]["content"])
     return "Added a demo note so you can try approve and reject.\n\n```diff\n" + DEMO_DIFF + "```"
+
+
+def _chat(said: str) -> str:
+    """What a chat model would say, so a demo of the cockpit reads like the real thing."""
+    words = said.lower()
+    if any(w in words for w in ("add", "fix", "change", "make", "write", "rename", "remove")):
+        return (
+            "Sure. I'll hand that to the coder and you'll see the diff and the checks here.\n"
+            f"RUN: {said.strip()}"
+        )
+    return (
+        "These are **fake models**, so this is a canned answer. On Pablo, the coder reads the "
+        "files that matter and answers here.\n\n"
+        "- Ask a question and it just talks.\n"
+        "- Ask for a change and it starts a run you approve.\n\n"
+        "```python\ndef add(a, b):\n    return a + b\n```\n"
+        "REMEMBER: tried the demo cockpit"
+    )
 
 
 def _judge(model: str, messages: Sequence[Message]) -> str:
@@ -54,6 +74,10 @@ def demo_backend() -> FakeBackend:
             "pablo/escalate": _coder,
             "pablo/judge": _judge,
             "pablo/router": _router,
+            "pablo/advisor": lambda m, msgs: (
+                "Blunt take, from a fake advisor: ship the smallest version, then measure."
+            ),
+            "pablo/deep": _coder,
         }
     )
 

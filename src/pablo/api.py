@@ -76,6 +76,7 @@ class SayIn(BaseModel):
     lane: str | None = None
     do: bool | None = None  # True: run it · False: just talk · None: the model decides
     confirm: bool = False  # required for a lane that leaves Pablo (Claude), every send
+    stream: bool = False  # reply as NDJSON: {"type": "delta"} pieces, then "done" or "error"
 
 
 class MemoryIn(BaseModel):
@@ -85,6 +86,16 @@ class MemoryIn(BaseModel):
 
 def asdict_profile(p: Any) -> dict[str, Any]:
     return dict(p.__dict__)
+
+
+def _say_error(exc: Exception) -> tuple[int, str]:
+    if isinstance(exc, PermissionError):
+        return 403, str(exc)
+    if isinstance(exc, KeyError):
+        return 404, str(exc).strip("'")
+    if isinstance(exc, ValueError):
+        return 400, str(exc)
+    return 502, f"the model call failed: {exc}"
 
 
 def caller_of(request: Request) -> Caller:
@@ -123,7 +134,7 @@ def create_app(orch: Orchestrator, access: Access | None = None) -> FastAPI:
     repo: Path = orch.repo
     gate = access or Access(orch.settings.home)
     app.state.access = gate
-    chat = Chat(orch)
+    chat = Chat(orch, background=True)
     store = chat.store
 
     @app.middleware("http")
@@ -197,8 +208,8 @@ def create_app(orch: Orchestrator, access: Access | None = None) -> FastAPI:
         return run.to_dict()
 
     @app.get("/api/runs")
-    def list_runs(limit: int = 30) -> list[dict[str, Any]]:
-        return [r.to_dict() for r in orch.recent(max(1, min(limit, 200)))]
+    def list_runs(request: Request, limit: int = 30) -> list[dict[str, Any]]:
+        return [linked(r, request) for r in orch.recent(max(1, min(limit, 200)))]
 
     @app.post("/api/voice")
     async def voice() -> dict[str, Any]:
@@ -206,16 +217,16 @@ def create_app(orch: Orchestrator, access: Access | None = None) -> FastAPI:
         raise HTTPException(501, "Voice lane is not set up yet. Type the task for now.")
 
     @app.get("/api/runs/{run_id}")
-    def get_run(run_id: str) -> dict[str, Any]:
+    def get_run(run_id: str, request: Request) -> dict[str, Any]:
         try:
-            return orch.get(run_id).to_dict()
+            return linked(orch.get(run_id), request)
         except KeyError as exc:
             raise HTTPException(404, f"no run {run_id}") from exc
 
     @app.get("/api/inbox")
-    def inbox() -> list[dict[str, Any]]:
+    def inbox(request: Request) -> list[dict[str, Any]]:
         items = sorted(orch.inbox(), key=lambda r: (r.state != "needs_you", r.created_at))
-        return [r.to_dict() for r in items]
+        return [linked(r, request) for r in items]
 
     @app.get("/api/promotions")
     def promotions() -> dict[str, Any]:
@@ -363,6 +374,13 @@ def create_app(orch: Orchestrator, access: Access | None = None) -> FastAPI:
         briefs.save(brief)
         return brief.to_dict()
 
+    def linked(run: Any, request: Request) -> dict[str, Any]:
+        """The run, plus the conversation that started it if that conversation is yours."""
+        data: dict[str, Any] = run.to_dict()
+        hit = store.conversation_for_run(run.id, profile_of(request))
+        data["conversation_id"], data["conversation_lane"] = hit if hit else (None, None)
+        return data
+
     def _found(fn: Any, *args: Any) -> Any:
         try:
             return fn(*args)
@@ -407,24 +425,47 @@ def create_app(orch: Orchestrator, access: Access | None = None) -> FastAPI:
         _found(store.delete, cid, profile_of(request))
         return {"deleted": cid}
 
-    @app.post("/api/conversations/{cid}/messages")
-    async def say(cid: str, body: SayIn, request: Request) -> dict[str, Any]:
+    @app.post("/api/conversations/{cid}/messages", response_model=None)
+    async def say(cid: str, body: SayIn, request: Request) -> dict[str, Any] | StreamingResponse:
         who = profile_of(request)
         lane = body.lane or _found(store.conversation, cid, who).lane
         if lane == "claude":
             owner_only(request)
-        try:
-            turn = await run_in_threadpool(
-                chat.say, cid, body.text, profile=who, lane=body.lane, do=body.do,
-                confirm=body.confirm,
-            )  # fmt: skip
-        except PermissionError as exc:
-            raise HTTPException(403, str(exc)) from exc
-        except KeyError as exc:
-            raise HTTPException(404, str(exc).strip("'")) from exc
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
-        return turn.to_dict()
+        kw: dict[str, Any] = {"profile": who, "lane": body.lane, "do": body.do,
+                              "confirm": body.confirm}  # fmt: skip
+        if not body.stream:
+            try:
+                turn = await run_in_threadpool(chat.say, cid, body.text, **kw)
+            except (PermissionError, KeyError, ValueError) as exc:
+                status, detail = _say_error(exc)
+                raise HTTPException(status, detail) from exc
+            return turn.to_dict()
+
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+
+        def put(item: dict[str, Any]) -> None:
+            loop.call_soon_threadsafe(queue.put_nowait, item)
+
+        def work() -> None:
+            try:
+                delta = lambda t: put({"type": "delta", "text": t})  # noqa: E731
+                turn = chat.say(cid, body.text, on_delta=delta, **kw)
+                put({"type": "done", "turn": turn.to_dict()})
+            except Exception as exc:  # the stream must always end with done or error
+                status, detail = _say_error(exc)
+                put({"type": "error", "status": status, "detail": detail})
+
+        loop.run_in_executor(None, work)
+
+        async def lines() -> AsyncIterator[str]:
+            while True:
+                item = await queue.get()
+                yield json.dumps(item) + "\n"
+                if item["type"] != "delta":
+                    break
+
+        return StreamingResponse(lines(), media_type="application/x-ndjson")
 
     @app.get("/api/memories")
     def list_memories(request: Request, status: MemoryStatus | None = None) -> list[dict[str, Any]]:

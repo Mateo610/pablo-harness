@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, type ChatMessage, type Conversation, type Lane, type Me, type Memory, type SearchHits } from "./api";
 import { laneColor } from "./components";
 import { ago, go, RunCard, useEvents, usePoll } from "./hud";
+import { Markdown } from "./Markdown";
 
 type Mode = "chat" | "advisor";
 type Act = "auto" | "talk" | "do";
@@ -38,6 +39,7 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
   const [conv, setConv] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [pending, setPending] = useState<string | null>(null);
+  const [streamed, setStreamed] = useState("");
   const [status, setStatus] = useState("");
   const [lane, setLane] = useState(advisor ? "advisor" : "auto");
   const [act, setAct] = useState<Act>("auto");
@@ -81,7 +83,7 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
   useEffect(() => {
     // Braces matter: newer browsers return a Promise here, and React would call it as cleanup.
     void bottom.current?.scrollIntoView({ block: "end" });
-  }, [messages, pending]);
+  }, [messages, pending, streamed, proposed]);
 
   useEvents((e) => {
     if (pending !== null && e.kind === "status" && typeof e.data.text === "string") setStatus(e.data.text);
@@ -96,6 +98,7 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
     setConfirm(null);
     setError("");
     setPending(text);
+    setStreamed("");
     setStatus("");
     setDraft("");
     try {
@@ -106,7 +109,9 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
         go(advisor ? "advisor" : "chat", cid);
       }
       const doIt = advisor || lane === "claude" ? null : act === "do" ? true : act === "talk" ? false : null;
-      const turn = await api.say(cid, text, { lane, do: doIt, confirm: confirmed });
+      const turn = await api.sayStream(cid, text, { lane, do: doIt, confirm: confirmed }, (piece) =>
+        setStreamed((s) => s + piece),
+      );
       setConv(turn.conversation);
       // Reload rather than append: a new conversation's page may already have fetched these.
       const fresh = await api.conversation(cid);
@@ -119,6 +124,7 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
       setDraft(text);
     } finally {
       setPending(null);
+      setStreamed("");
       setStatus("");
       box.current?.focus();
     }
@@ -231,7 +237,7 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
                   <span className="h-mono h-faint" style={{ fontSize: 11 }}>
                     {m.lane} · {ago(m.created_at)}
                   </span>
-                  <span>{m.run_id ? m.content.replace(/\n*\[run [^\]]+\]\s*$/, "") : m.content}</span>
+                  <Markdown text={m.run_id ? m.content.replace(/\n*\[run [^\]]+\]\s*$/, "") : m.content} />
                   {m.run_id && <RunCard id={m.run_id} me={me} />}
                 </div>
               </div>
@@ -241,8 +247,19 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
             <>
               <div className="h-user">{pending}</div>
               <div className="h-bot">
-                <span className="h-bot-mark" aria-hidden="true">P</span>
-                <span className="h-thinking">{status || (lane === "deep" ? "deep is thinking (this takes a while)…" : "thinking…")}</span>
+                <span className={`h-bot-mark ${lane === "advisor" ? "orb" : ""}`} aria-hidden="true">
+                  {lane === "advisor" ? "" : "P"}
+                </span>
+                <div className="h-bot-body" aria-live="polite">
+                  {visibleWhileStreaming(streamed) ? (
+                    <div>
+                      <Markdown text={visibleWhileStreaming(streamed)} />
+                      <span className="h-caret" aria-hidden="true" />
+                    </div>
+                  ) : (
+                    <span className="h-thinking">{status || (lane === "deep" ? "deep is thinking (this takes a while)…" : "thinking…")}</span>
+                  )}
+                </div>
               </div>
             </>
           )}
@@ -378,4 +395,13 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
       </aside>
     </div>
   );
+}
+
+/** While a reply streams, hide the RUN: and REMEMBER: lines the harness acts on afterwards. */
+function visibleWhileStreaming(text: string): string {
+  return text
+    .split("\n")
+    .filter((line) => !/^\s*(RUN|REMEMBER):/.test(line) && !/^\s*(R|RU|RE|REM|REME|REMEM|REMEMB|REMEMBE)$/.test(line))
+    .join("\n")
+    .trim();
 }

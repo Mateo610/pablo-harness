@@ -184,8 +184,8 @@ export function RunCard({ id, me, initial }: { id: string; me: Me | null; initia
             REJECT
           </button>
         )}
-        <a className="h-btn" href={`#/work`} title="Hunks, replay, and compare live in the Workbench">
-          WORKBENCH
+        <a className="h-btn" href={`#/work`} title="Hunk-by-hunk review, replay, and compare live in Work">
+          REVIEW HUNKS
         </a>
       </div>
       {open_ && !me?.can_approve && (

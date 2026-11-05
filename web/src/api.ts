@@ -68,6 +68,9 @@ export interface Run {
   applied_hunks: string[] | null;
   /** Who started it: "owner", a teammate's login, or "" (CLI). */
   by?: string;
+  /** Your conversation that started this run, if any. */
+  conversation_id?: string | null;
+  conversation_lane?: string | null;
   created_at: string;
 }
 
@@ -318,6 +321,42 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ text, lane: opts.lane ?? null, do: opts.do ?? null, confirm: opts.confirm ?? false }),
     }),
+  /** Same as `say`, but the reply arrives piece by piece through `onDelta`. */
+  sayStream: async (
+    id: string,
+    text: string,
+    opts: { lane?: string; do?: boolean | null; confirm?: boolean },
+    onDelta: (piece: string) => void,
+  ): Promise<Turn> => {
+    const res = await fetch(`/api/conversations/${id}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, lane: opts.lane ?? null, do: opts.do ?? null, confirm: opts.confirm ?? false, stream: true }),
+    });
+    if (!res.ok || !res.body) {
+      const body = (await res.json().catch(() => ({}))) as { detail?: string };
+      throw new ApiError(body.detail ?? `${res.status} ${res.statusText}`, res.status);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+      let nl = buffer.indexOf("\n");
+      while (nl >= 0) {
+        const line = buffer.slice(0, nl).trim();
+        buffer = buffer.slice(nl + 1);
+        nl = buffer.indexOf("\n");
+        if (!line) continue;
+        const item = JSON.parse(line) as { type: string; text?: string; turn?: Turn; status?: number; detail?: string };
+        if (item.type === "delta" && item.text) onDelta(item.text);
+        if (item.type === "done" && item.turn) return item.turn;
+        if (item.type === "error") throw new ApiError(item.detail ?? "failed", item.status ?? 500);
+      }
+      if (done) throw new ApiError("The reply stopped before it finished.", 502);
+    }
+  },
   memories: (status?: Memory["status"]) => call<Memory[]>(`/api/memories${status ? `?status=${status}` : ""}`),
   remember: (text: string) => call<Memory>("/api/memories", { method: "POST", body: JSON.stringify({ text }) }),
   keepMemory: (id: string) => call<Memory>(`/api/memories/${id}/keep`, { method: "POST" }),

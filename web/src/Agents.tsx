@@ -114,7 +114,15 @@ export function Agents({ lanes, res }: { lanes: Lane[]; res: Resources | null })
                 return (
                   <tr key={r.id}>
                     <td className="h-faint">{r.id.slice(0, 6)}</td>
-                    <td className="task" title={r.task}>{r.task.split("\n")[0]}</td>
+                    <td className="task" title={r.task}>
+                      {r.conversation_id ? (
+                        <a href={`#/chat/${r.conversation_id}`} style={{ color: "var(--ink)", textDecoration: "underline", textDecorationColor: "var(--sys-line)" }}>
+                          {r.task.split("\n")[0]}
+                        </a>
+                      ) : (
+                        r.task.split("\n")[0]
+                      )}
+                    </td>
                     <td>{r.by ? (r.by === "owner" ? "you" : r.by.replace(/@.*/, "")) : "cli"}</td>
                     <td style={{ color: laneColor(r.lane) }}>{r.lane}</td>
                     <td className="h-diffstat">{v ? <><span className="add">+{v.added}</span> <span className="del">−{v.removed}</span></> : "—"}</td>

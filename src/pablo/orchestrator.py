@@ -348,6 +348,34 @@ class Orchestrator:
         retried_from: str | None = None,
         by: str = "",
     ) -> Run:
+        return self.finish(
+            self.begin(
+                task, lane=lane, task_id=task_id, escalate=escalate,
+                escalated_from=escalated_from, group=group, retried_from=retried_from, by=by,
+            )
+        )  # fmt: skip
+
+    def start_background(self, task: str, *, lane: str | None = None, by: str = "") -> Run:
+        """Route and save the run now; do the work on a thread. Events report its progress."""
+        run = self.begin(task, lane=lane, by=by)
+        if self.retry_inline:  # tests and evals: no threads
+            return self.finish(run)
+        threading.Thread(target=self.finish, args=(run,), name=f"run-{run.id}", daemon=True).start()
+        return run
+
+    def begin(
+        self,
+        task: str,
+        *,
+        lane: str | None = None,
+        task_id: str | None = None,
+        escalate: bool = False,
+        escalated_from: str | None = None,
+        group: str | None = None,
+        retried_from: str | None = None,
+        by: str = "",
+    ) -> Run:
+        """Route the task and save the run as running. `finish` does the work."""
         decision = self.router.route(task, lane=ESCALATION_LANE if escalate else lane)
         lane_cfg = self.settings.lane(decision.lane)
         if lane_cfg.requires_approval and not escalate:
@@ -368,6 +396,9 @@ class Orchestrator:
         )
         self._save(run)
         self._emit("route", run, reason=decision.reason, confidence=decision.confidence)
+        return run
+
+    def finish(self, run: Run) -> Run:
         try:
             self._work(run)
         except Exception as exc:

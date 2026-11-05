@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pablo.config import Lane
 from pablo.context import Budget, build_coder_context, clip, tokens
+from pablo.gateway import Delta, stream_complete
 
 if TYPE_CHECKING:
     from pablo.gateway import Message
@@ -294,6 +295,15 @@ class Store:
         self._q("insert into usage values (?, ?, ?, ?, ?)",
                 (_now(), profile, lane, tokens_in, tokens_out))  # fmt: skip
 
+    def conversation_for_run(self, run_id: str, profile: str) -> tuple[str, str] | None:
+        """(conversation id, lane) of your conversation that started this run, if any."""
+        rows = self._q(
+            "select c.id, c.lane from messages m join conversations c on c.id = m.conversation_id "
+            "where m.run_id = ? and c.profile_id = ? limit 1",
+            (run_id, profile),
+        )
+        return (rows[0]["id"], rows[0]["lane"]) if rows else None
+
     def usage_since(self, stamp: str) -> list[dict[str, Any]]:
         return [dict(r) for r in self._q("select * from usage where at >= ?", (stamp,))]
 
@@ -421,8 +431,12 @@ class Chat:
     MESSAGE_MAX = 3000
     CONTEXT = Budget(total=5000, files=3200, tree=700, max_files=4)
 
-    def __init__(self, orch: Orchestrator, store: Store | None = None) -> None:
+    def __init__(
+        self, orch: Orchestrator, store: Store | None = None, *, background: bool = False
+    ) -> None:
+        """`background`: runs a turn starts are worked on a thread (the API); else inline."""
         self.orch = orch
+        self.background = background
         self.store = store or Store(orch.settings.home / "pablo.db")
         self.store.ensure_profile(OWNER, "Owner", "owner")
         self.project = orch.repo.name
@@ -443,6 +457,7 @@ class Chat:
         lane: str | None = None,
         do: bool | None = None,
         confirm: bool = False,
+        on_delta: Delta | None = None,
     ) -> Turn:
         """`do`: True starts a run with your words as the task, False only talks, None lets
         the model decide (a RUN line). `confirm` is required for a remote lane, every time."""
@@ -478,13 +493,16 @@ class Chat:
             return Turn(conv, user, reply, run=run.to_dict(), shared_memory=bool(notes))
 
         messages = self._prompt(profile, conv, cfg, name, history, text, notes, remote)
-        done = self.orch.backend.complete(
-            cfg.model,
-            messages,
-            temperature=cfg.temperature,
-            top_p=cfg.top_p,
-            max_tokens=min(cfg.max_tokens, self.CHAT_MAX_TOKENS),
-            timeout_s=cfg.timeout_s,
+        sampling: dict[str, Any] = {
+            "temperature": cfg.temperature,
+            "top_p": cfg.top_p,
+            "max_tokens": min(cfg.max_tokens, self.CHAT_MAX_TOKENS),
+            "timeout_s": cfg.timeout_s,
+        }
+        done = (
+            stream_complete(self.orch.backend, cfg.model, messages, on_delta, **sampling)
+            if on_delta
+            else self.orch.backend.complete(cfg.model, messages, **sampling)
         )
         answer = done.text
         self.store.record_usage(profile, name, done.prompt_tokens, done.completion_tokens)
@@ -510,7 +528,10 @@ class Chat:
             task += "\n\nNotes from the user (keep to these):\n" + "\n".join(
                 f"- {n}" for n in notes[:6]
             )
-        return self.orch.start(task, lane=None if lane == AUTO else lane, by=profile)
+        target = None if lane == AUTO else lane
+        if self.background:
+            return self.orch.start_background(task, lane=target, by=profile)
+        return self.orch.start(task, lane=target, by=profile)
 
     @staticmethod
     def _run_line(run: Run) -> str:
