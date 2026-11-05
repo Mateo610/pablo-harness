@@ -84,7 +84,7 @@ export function Shell() {
         {page === "home" && <Home me={me} res={res} />}
         {page === "chat" && <ChatPage key="chat" mode="chat" id={route.id} me={me} lanes={lanes} />}
         {page === "advisor" && <ChatPage key="advisor" mode="advisor" id={route.id} me={me} lanes={lanes} />}
-        {page === "voice" && <Voice />}
+        {page === "voice" && <Voice me={me} />}
         {page === "agents" && <Agents lanes={lanes} res={res} />}
         {page === "work" && <App />}
       </main>

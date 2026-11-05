@@ -236,8 +236,17 @@ def serve(
     host: Annotated[str, typer.Option(help="127.0.0.1, or your Tailscale IP")] = "127.0.0.1",
     port: int = 8710,
     fake: FakeOpt = False,
+    tls_cert: Annotated[
+        Path | None, typer.Option(help="TLS certificate (default: ~/.pablo/tls/pablo.crt)")
+    ] = None,
+    tls_key: Annotated[
+        Path | None, typer.Option(help="TLS key (default: ~/.pablo/tls/pablo.key)")
+    ] = None,
 ) -> None:
-    """Run the harness API (and the built cockpit, if web/dist exists)."""
+    """Run the harness API (and the built cockpit, if web/dist exists).
+
+    With a certificate (`pablo cert`), it serves HTTPS, which browsers require for the mic.
+    """
     import uvicorn
     from fastapi.staticfiles import StaticFiles
 
@@ -253,10 +262,66 @@ def serve(
     if dist.is_dir():
         api.mount("/", StaticFiles(directory=dist, html=True), name="cockpit")
     api.state.scheduler.start()
-    cfg = load_settings().overnight
-    console.print(f"Pablo on http://{host}:{port}" + ("  (fake models)" if fake else ""))
+    settings = load_settings()
+    cfg = settings.overnight
+    tls = settings.home / "tls"
+    cert = tls_cert or (tls / "pablo.crt")
+    key = tls_key or (tls / "pablo.key")
+    secure = cert.is_file() and key.is_file()
+    name = (tls / "name").read_text().strip() if secure and (tls / "name").is_file() else host
+    scheme = "https" if secure else "http"
+    console.print(f"Pablo on {scheme}://{name}:{port}" + ("  (fake models)" if fake else ""))
+    if not secure:
+        console.print("[dim]HTTP: the browser won't allow the mic. `pablo cert` fixes that.[/]")
     console.print(f"Overnight queue runs {cfg.start}–{cfg.end}; brief after {cfg.brief_at}.")
-    uvicorn.run(api, host=host, port=port, log_level="warning")
+    uvicorn.run(
+        api,
+        host=host,
+        port=port,
+        log_level="warning",
+        ssl_certfile=str(cert) if secure else None,
+        ssl_keyfile=str(key) if secure else None,
+    )
+
+
+@app.command("cert")
+def cert_cmd() -> None:
+    """Get a TLS certificate for Pablo's tailnet name (tailscale cert), for HTTPS and the mic.
+
+    The certificate is for `pablo.<your-tailnet>.ts.net` only; it expires in about 90 days, so
+    run this again monthly (or from a timer). Keys stay in ~/.pablo/tls (mode 0700).
+    """
+    import json as _json
+
+    try:
+        status = _json.loads(
+            subprocess.run(
+                ["tailscale", "status", "--json", "--peers=false"],
+                capture_output=True, text=True, timeout=10, check=True,
+            ).stdout
+        )  # fmt: skip
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        console.print(f"[red]tailscale isn't answering: {exc}[/]")
+        raise typer.Exit(1) from exc
+    name = str((status.get("Self") or {}).get("DNSName", "")).rstrip(".")
+    if not name:
+        console.print("[red]This machine has no tailnet DNS name. Turn on MagicDNS and HTTPS.[/]")
+        raise typer.Exit(1)
+    tls = load_settings().home / "tls"
+    tls.mkdir(parents=True, exist_ok=True)
+    tls.chmod(0o700)
+    cmd = ["tailscale", "cert", "--cert-file", str(tls / "pablo.crt"),
+           "--key-file", str(tls / "pablo.key"), name]  # fmt: skip
+    done = subprocess.run(cmd, capture_output=True, text=True)
+    if done.returncode != 0:
+        console.print(f"[red]{done.stderr.strip()}[/]")
+        console.print("If that's a permission error, run it once with sudo, then chown the files:")
+        console.print("  sudo " + " ".join(cmd))
+        console.print(f"  sudo chown -R $USER {tls}")
+        raise typer.Exit(1)
+    (tls / "name").write_text(name + "\n")
+    console.print(f"Certificate for {name} in {tls}. Restart `pablo serve`, then open")
+    console.print(f"  https://{name}:8710")
 
 
 queue_app = typer.Typer(help="Overnight queue: slow work that runs while you sleep.")

@@ -23,7 +23,7 @@ Status: `todo` · `doing` · `done`. Update this table when a gate passes.
 | M7c | Judge bake-off | `pablo eval-judge --set replay` on real suite diffs labeled by hidden tests; new judge has fewer false ready than the heretic at its best threshold. Heretic becomes the `advisor` lane | todo (replay + advisor lane in core; prompt `docs/cursor-prompts/M7c-judge-bakeoff.md`) |
 | M8 | Learning loop | LoRA trained on `pablo export-training` output; promoted only if eval score beats baseline | doing (pipeline runs end to end; gate fixed 2026-11-04 to 3+3 same-night runs; first candidate held: 7 examples, 1 run) |
 | M9 | Specialist lanes | Media lane dispatches image and 3D jobs; results come back as evidence cards | todo |
-| M9b | Voice lane | Local speech-to-text (Whisper/Canary class) behind `/api/voice`; hold-to-talk on the phone starts a run | todo |
+| M9b | Voice lane | Talk to the orchestrator, advisor, or deep in the browser: local speech-to-text and text-to-speech, replies spoken as they stream, turns land in a conversation, first word under 2.5 s on the orchestrator | doing (harness, API, Voice page, HTTPS via `pablo cert` done; engines on Pablo: `docs/cursor-prompts/M9b-voice.md`) |
 | M10 | Ownership | Every model archived with checksums; full offline run with network unplugged; Headscale option documented | doing (archive + verify script + Headscale doc + telemetry audit; offline drill after tonight's evals) |
 
 ## Core track (built with Claude, pushed to this repo)

@@ -54,14 +54,15 @@ def test_claude_lane_forbidden_without_escalate(settings: Settings, repo: Path) 
     assert client.post("/api/runs", json={"task": "x", "lane": "claude"}).status_code == 403
 
 
-def test_recent_runs_and_voice_stub(settings: Settings, repo: Path) -> None:
+def test_recent_runs_and_voice_off(settings: Settings, repo: Path) -> None:
     client = client_for(settings, repo)
     first = client.post("/api/runs", json={"task": "one", "lane": "coder"}).json()
     client.post(f"/api/runs/{first['id']}/reject")
     second = client.post("/api/runs", json={"task": "two", "lane": "coder"}).json()
     listed = client.get("/api/runs", params={"limit": 5}).json()
     assert {r["id"] for r in listed} == {first["id"], second["id"]}
-    assert client.post("/api/voice", content=b"audio").status_code == 501
+    off = client.post("/api/voice", content=b"audio")  # no voice engines configured
+    assert off.status_code == 503 and "isn't set up" in off.json()["detail"]
 
 
 def test_inbox_survives_restart(settings: Settings, repo: Path) -> None:

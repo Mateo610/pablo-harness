@@ -33,6 +33,7 @@ from pablo.overnight import (
 from pablo.plan import Plan, Status
 from pablo.resources import snapshot
 from pablo.swap import read_running
+from pablo.voice import SentenceCutter, Speaker, Transcriber, VoiceOff, engines, reachable
 
 
 class TaskIn(BaseModel):
@@ -119,7 +120,11 @@ def _token(request: Request) -> str:
     return request.cookies.get(TOKEN_COOKIE, "") or request.query_params.get("token", "")
 
 
-def create_app(orch: Orchestrator, access: Access | None = None) -> FastAPI:
+def create_app(
+    orch: Orchestrator,
+    access: Access | None = None,
+    voice_engines: tuple[Transcriber, Speaker] | None = None,
+) -> FastAPI:
     app = FastAPI(title="Pablo harness", version=__version__)
     queue = JobQueue(orch.settings.home)
     runner = OvernightRunner(orch, queue, orch.settings.overnight)
@@ -211,10 +216,129 @@ def create_app(orch: Orchestrator, access: Access | None = None) -> FastAPI:
     def list_runs(request: Request, limit: int = 30) -> list[dict[str, Any]]:
         return [linked(r, request) for r in orch.recent(max(1, min(limit, 200)))]
 
+    def _voice() -> tuple[Transcriber, Speaker]:
+        try:
+            return voice_engines or engines(orch.settings.voice)
+        except VoiceOff as exc:
+            raise HTTPException(503, str(exc)) from exc
+
+    async def _hear(request: Request) -> str:
+        audio = await request.body()
+        if not audio:
+            raise HTTPException(400, "no audio in the request")
+        if len(audio) > 25 * 1024 * 1024:
+            raise HTTPException(413, "that recording is too long")
+        stt, _ = _voice()
+        mime = request.headers.get("content-type", "audio/wav")
+        try:
+            return str(await run_in_threadpool(stt.transcribe, audio, mime))
+        except Exception as exc:  # the engine is a separate process; say what broke
+            raise HTTPException(502, f"speech-to-text failed: {exc}") from exc
+
+    @app.get("/api/voice/status")
+    async def voice_status() -> dict[str, Any]:
+        cfg = orch.settings.voice
+        if voice_engines:
+            return {"enabled": True, "stt": True, "tts": True, "voices": cfg.voices}
+        stt, tts = await asyncio.gather(
+            run_in_threadpool(reachable, cfg.stt_url), run_in_threadpool(reachable, cfg.tts_url)
+        )
+        return {"enabled": cfg.enabled, "stt": stt, "tts": tts, "voices": cfg.voices}
+
     @app.post("/api/voice")
-    async def voice() -> dict[str, Any]:
-        # Audio stays on Pablo: M-voice adds a local speech-to-text lane behind this.
-        raise HTTPException(501, "Voice lane is not set up yet. Type the task for now.")
+    async def voice(request: Request) -> dict[str, Any]:
+        """Phone hold-to-talk: what you said becomes a run (the phone shows its card)."""
+        text = await _hear(request)
+        if not text:
+            raise HTTPException(422, "Didn't catch that. Try again?")
+        run = await run_in_threadpool(orch.start_background, text, by=profile_of(request))
+        return {"text": text, "run": linked(run, request)}
+
+    @app.post("/api/voice/turn", response_model=None)
+    async def voice_turn(
+        request: Request, lane: str = "coder", conversation: str = ""
+    ) -> StreamingResponse:
+        """One turn of a voice call: audio in; NDJSON out.
+
+        conversation · heard · delta (text as it's written) · audio (one per sentence,
+        base64, in order) · done (the turn) or error.
+        """
+        who = profile_of(request)
+        cfg = orch.settings.lanes.get(lane)
+        if cfg is None or cfg.kind != "local" or cfg.requires_approval:
+            raise HTTPException(400, "Voice talks to a local model on Pablo.")
+        if conversation:
+            conv = _found(store.conversation, conversation, who)
+        else:
+            conv = chat.start(who, lane=lane)
+        text = await _hear(request)
+        _, tts = _voice()
+        voice_name = orch.settings.voice.voices.get(lane, "")
+        mime = "audio/mpeg" if orch.settings.voice.tts_format == "mp3" else "audio/wav"
+
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+
+        def put(item: dict[str, Any]) -> None:
+            loop.call_soon_threadsafe(queue.put_nowait, item)
+
+        def work() -> None:
+            import base64
+            import queue as q
+            import threading
+
+            sentences: q.Queue[str | None] = q.Queue()
+            spoke: dict[str, Any] = {"n": 0, "error": ""}
+
+            def speaker() -> None:  # synthesis overlaps generation
+                while (line := sentences.get()) is not None:
+                    try:
+                        audio = tts.speak(line, voice_name)
+                    except Exception as exc:
+                        spoke["error"] = str(exc)
+                        continue
+                    put({"type": "audio", "seq": spoke["n"], "mime": mime, "text": line,
+                         "data": base64.b64encode(audio).decode()})  # fmt: skip
+                    spoke["n"] += 1
+
+            voice_thread = threading.Thread(target=speaker, daemon=True)
+            voice_thread.start()
+            cutter = SentenceCutter()
+
+            def delta(piece: str) -> None:
+                put({"type": "delta", "text": piece})
+                for line in cutter.feed(piece):
+                    sentences.put(line)
+
+            try:
+                turn = chat.say(conv.id, text, profile=who, lane=lane, on_delta=delta, spoken=True)
+                if not turn.reply.run_id and turn.kept:  # "remember: ..." had no stream
+                    sentences.put(turn.reply.content)
+                for line in cutter.flush():
+                    sentences.put(line)
+                sentences.put(None)
+                voice_thread.join()
+                put({"type": "done", "turn": turn.to_dict(), "tts_error": spoke["error"]})
+            except Exception as exc:
+                sentences.put(None)
+                status, detail = _say_error(exc)
+                put({"type": "error", "status": status, "detail": detail})
+
+        async def lines() -> AsyncIterator[str]:
+            yield json.dumps({"type": "conversation", "id": conv.id}) + "\n"
+            yield json.dumps({"type": "heard", "text": text}) + "\n"
+            if not text:
+                yield json.dumps({"type": "error", "status": 422,
+                                  "detail": "Didn't catch that. Try again?"}) + "\n"  # fmt: skip
+                return
+            loop.run_in_executor(None, work)
+            while True:
+                item = await queue.get()
+                yield json.dumps(item) + "\n"
+                if item["type"] in ("done", "error"):
+                    break
+
+        return StreamingResponse(lines(), media_type="application/x-ndjson")
 
     @app.get("/api/runs/{run_id}")
     def get_run(run_id: str, request: Request) -> dict[str, Any]:

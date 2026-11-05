@@ -94,6 +94,12 @@ ADVISOR_PROMPT = """You are the advisor: a blunt second opinion with no stake in
 choices. Say what you actually think, including what the user doesn't want to hear. You never
 write or change code and you never score anything. Keep it short unless asked to go deep."""
 
+SPOKEN = """
+
+This turn is a voice call: your reply is read aloud. Talk like a person on a call: one to three
+short sentences, no code, no lists, no markdown, no file paths unless asked. The RUN and
+REMEMBER lines still work and are never read aloud."""
+
 _RUN = re.compile(r"^\s*RUN:\s*(.+?)\s*$", re.M)
 _REMEMBER = re.compile(r"^\s*REMEMBER:\s*(.+?)\s*$", re.M)
 _SAID_REMEMBER = re.compile(r"^\s*remember(?:\s+that)?\s*[:,-]?\s+(.+)$", re.I | re.S)
@@ -458,6 +464,7 @@ class Chat:
         do: bool | None = None,
         confirm: bool = False,
         on_delta: Delta | None = None,
+        spoken: bool = False,
     ) -> Turn:
         """`do`: True starts a run with your words as the task, False only talks, None lets
         the model decide (a RUN line). `confirm` is required for a remote lane, every time."""
@@ -492,7 +499,7 @@ class Chat:
             reply = self.store.add_message(cid, "assistant", body, lane=name, run_id=run.id)
             return Turn(conv, user, reply, run=run.to_dict(), shared_memory=bool(notes))
 
-        messages = self._prompt(profile, conv, cfg, name, history, text, notes, remote)
+        messages = self._prompt(profile, conv, cfg, name, history, text, notes, remote, spoken)
         sampling: dict[str, Any] = {
             "temperature": cfg.temperature,
             "top_p": cfg.top_p,
@@ -548,9 +555,10 @@ class Chat:
         text: str,
         notes: list[str],
         remote: bool,
+        spoken: bool = False,
     ) -> list[Message]:
         system = ADVISOR_PROMPT if not (name == AUTO or cfg.writes_code) else CHAT_PROMPT
-        parts = [system]
+        parts = [system + (SPOKEN if spoken else "")]
         if not remote:
             who = self.store.profile(profile).name
             if notes:

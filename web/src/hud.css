@@ -135,9 +135,8 @@
 .h-aura { position: absolute; inset: -30px; border-radius: 50%; filter: blur(28px); animation: h-aura 4.5s ease-in-out infinite; }
 .h-core { position: absolute; left: 50%; top: 50%; width: 168px; height: 168px; margin: -84px 0 0 -84px; border-radius: 50%; }
 .h-spoke { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }
-.h-spoke > i { position: absolute; left: -1.5px; bottom: 0; width: 3px; height: 28px; border-radius: 2px; transform-origin: 50% 100%; transform: scaleY(.18); opacity: .5; }
-.h-orb.live .h-spoke > i { animation: h-wave var(--d, .8s) ease-in-out var(--delay, 0s) infinite; opacity: .95; }
-.h-orb.live .h-aura { animation-duration: 2.2s; }
+.h-spoke > i { position: absolute; left: -1.5px; bottom: 0; width: 3px; height: 30px; border-radius: 2px; transform-origin: 50% 100%; transform: scaleY(.18); opacity: .5; }
+.h-orb:disabled { opacity: .55; }
 @keyframes h-wave { 0%, 100% { transform: scaleY(.22); } 50% { transform: scaleY(1); } }
 @keyframes h-aura { 0%, 100% { opacity: .25; transform: scale(.95); } 50% { opacity: .6; transform: scale(1.04); } }
 

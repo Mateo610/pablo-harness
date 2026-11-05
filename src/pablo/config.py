@@ -125,11 +125,62 @@ class SandboxConfig(BaseModel):
         return self
 
 
+def _private_url(url: str) -> bool:
+    """Loopback or a Tailscale address: audio and text never leave your machines."""
+    import ipaddress
+    from urllib.parse import urlparse
+
+    host = urlparse(url).hostname or ""
+    if host == "localhost":
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return host.endswith(".ts.net")  # MagicDNS names resolve inside the tailnet only
+    return (
+        ip.is_loopback
+        or ip in ipaddress.ip_network("100.64.0.0/10")
+        or ip in (ipaddress.ip_network("fd7a:115c:a1e0::/48"))
+    )
+
+
+class VoiceConfig(BaseModel):
+    """Speech in and out, both separate processes on Pablo (see docs/cursor-prompts/M9b-voice.md).
+
+    `stt_api`: "whisper.cpp" (POST /inference) or "openai" (POST /v1/audio/transcriptions).
+    TTS speaks the OpenAI-style POST /v1/audio/speech. Empty URLs mean voice is off.
+    """
+
+    stt_url: str = ""
+    stt_api: Literal["whisper.cpp", "openai"] = "whisper.cpp"
+    stt_model: str = ""
+    tts_url: str = ""
+    tts_model: str = ""
+    tts_format: Literal["wav", "mp3"] = "wav"
+    voices: dict[str, str] = Field(default_factory=dict)  # lane -> voice name; "" = default
+    language: str = "en"
+    timeout_s: float = 60.0
+
+    @model_validator(mode="after")
+    def _stays_on_pablo(self) -> VoiceConfig:
+        for name, url in (("stt_url", self.stt_url), ("tts_url", self.tts_url)):
+            if url and not _private_url(url):
+                raise ValueError(
+                    f"voice {name} must be on this machine or your tailnet, got {url!r}"
+                )
+        return self
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.stt_url and self.tts_url)
+
+
 class Settings(BaseModel):
     gateway: Gateway = Field(default_factory=Gateway)
     thresholds: Thresholds = Field(default_factory=Thresholds)
     overnight: Overnight = Field(default_factory=Overnight)
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
+    voice: VoiceConfig = Field(default_factory=VoiceConfig)
     lanes: dict[str, Lane]
     home: Path = Field(default_factory=lambda: default_home())
 

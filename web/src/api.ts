@@ -250,6 +250,14 @@ export interface Stats {
   claude: number;
 }
 
+export type VoiceEvent =
+  | { type: "conversation"; id: string }
+  | { type: "heard"; text: string }
+  | { type: "delta"; text: string }
+  | { type: "audio"; seq: number; mime: string; text: string; data: string }
+  | { type: "done"; turn: Turn; tts_error?: string }
+  | { type: "error"; status?: number; detail?: string };
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -355,6 +363,42 @@ export const api = {
         if (item.type === "error") throw new ApiError(item.detail ?? "failed", item.status ?? 500);
       }
       if (done) throw new ApiError("The reply stopped before it finished.", 502);
+    }
+  },
+  voiceStatus: () => call<{ enabled: boolean; stt: boolean; tts: boolean; voices: Record<string, string> }>("/api/voice/status"),
+  /** One voice turn: WAV in; heard text, reply pieces, and spoken sentences out, in order. */
+  voiceTurn: async (
+    wav: Blob,
+    lane: string,
+    conversation: string,
+    onEvent: (e: VoiceEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<void> => {
+    const q = new URLSearchParams({ lane, conversation });
+    const res = await fetch(`/api/voice/turn?${q}`, { method: "POST", headers: { "Content-Type": "audio/wav" }, body: wav, signal });
+    if (!res.ok || !res.body) {
+      const body = (await res.json().catch(() => ({}))) as { detail?: string };
+      throw new ApiError(body.detail ?? `${res.status} ${res.statusText}`, res.status);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+      let nl = buffer.indexOf("\n");
+      while (nl >= 0) {
+        const line = buffer.slice(0, nl).trim();
+        buffer = buffer.slice(nl + 1);
+        nl = buffer.indexOf("\n");
+        if (line) {
+          const event = JSON.parse(line) as VoiceEvent;
+          onEvent(event);
+          if (event.type === "error") throw new ApiError(event.detail ?? "voice failed", event.status ?? 500);
+          if (event.type === "done") return;
+        }
+      }
+      if (done) return;
     }
   },
   memories: (status?: Memory["status"]) => call<Memory[]>(`/api/memories${status ? `?status=${status}` : ""}`),
