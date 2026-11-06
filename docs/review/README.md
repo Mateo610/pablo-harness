@@ -25,7 +25,7 @@ Tags: **[measured]** a number says so · **[observed]** seen in use, not counted
 | Area | Health | Biggest weakness | Next step |
 |---|---|---|---|
 | [Models](models.md) | measured on our suite | the base coder runs with thinking off at Q4; we never measured either choice | eval coder with thinking on, on a few hard tasks |
-| [Evals](evals.md) | solid, small | 36 small tasks flatter local models; no held-out set | write 10–15 harder, multi-file tasks we never tune on |
+| [Evals](evals.md) | solid, small; harder sets built | 36 small tasks flatter local models | first runs of holdout, build set, chat set, and Claude (M7e) |
 | [Context](context.md) | measured, mixed | the coder sees ~10.5k tokens; the repo map didn't beat the spread | measure what the misses were missing |
 | [Editing](editing.md) | strong | fix-on-red never cleared the noise floor | per-task view of what fix rounds change |
 | [Verification](verification.md) | strong core, blind spot | checks pass when the coder writes a test that agrees with its own bug | spec checks with assertion-only failures, measured off-suite |

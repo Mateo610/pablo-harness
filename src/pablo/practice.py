@@ -97,8 +97,11 @@ def suite_names() -> set[str]:
         from pablo.evals import load_suite
     except Exception:
         return set()
+    from pablo.evals import HOLDOUT
+
     names: set[str] = set()
-    for task in load_suite():
+    holdout = load_suite(HOLDOUT) if (HOLDOUT / "tasks.yaml").is_file() else []
+    for task in [*load_suite(), *holdout]:
         text = task.task + "\n" + "\n".join(task.solution.values())
         names.update(re.findall(r"[A-Za-z_][A-Za-z0-9_]{2,}", text))
     return names
@@ -248,11 +251,13 @@ class Practice:
     ) -> list[PracticeResult]:
         """Up to `n` checkable tasks from `repo`. `key` names the repo in the lessons."""
         from pablo.demo import load_checks
-        from pablo.evals import SUITE
+        from pablo.evals import HOLDOUT, SUITE
 
         repo = repo.resolve()
         if not allow_suite and (SUITE.resolve() in repo.parents or repo == SUITE.resolve()):
             raise ValueError("practice never runs on the eval suite's repos")
+        if HOLDOUT.resolve() in repo.parents or repo == HOLDOUT.resolve():
+            raise ValueError("practice never runs on the holdout suite, not even with allow_suite")
         self.key = key or repo.name
         checks = load_checks(repo)
         targets = find_targets(repo, self.exclude)

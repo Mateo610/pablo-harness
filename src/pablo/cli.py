@@ -651,8 +651,22 @@ def eval_suite(
     write: Annotated[
         bool, typer.Option(help="Append to evals/results.jsonl and docs/benchmarks.md")
     ] = False,
+    suite_set: Annotated[
+        str,
+        typer.Option(
+            "--set",
+            help="main (evals/suite) or holdout (harder tasks; totals only, never studied)",
+        ),
+    ] = "main",
+    allow_remote: Annotated[
+        bool,
+        typer.Option(
+            help="Let a remote lane (claude) be scored: every suite task leaves the box, and it "
+            "costs API calls. Nothing from your repos is sent."
+        ),
+    ] = False,
 ) -> None:
-    """Score a lane on the coder suite against hidden tests (evals/suite)."""
+    """Score a lane on the coder suite against hidden tests (evals/suite or evals/holdout)."""
     from contextlib import nullcontext
 
     from pablo.gpu import GpuScheduler
@@ -665,7 +679,25 @@ def eval_suite(
                        unload_url=settings.gpu.unload_url)  # fmt: skip
     hold = nullcontext() if fake else gpu.mode_for("deep")
 
+    lane_cfg = load_settings().lane(lane)
+    if (lane_cfg.kind == "remote" or lane_cfg.requires_approval) and not allow_remote:
+        raise typer.BadParameter(
+            f"'{lane}' leaves the box: add --allow-remote to send the suite's tasks to it"
+        )
+    if cascade and lane_cfg.kind == "remote":
+        raise typer.BadParameter("a remote lane doesn't cascade")
+    if suite_set not in ("main", "holdout"):
+        raise typer.BadParameter("--set is main or holdout")
+    sealed = suite_set == "holdout"
+    if sealed and only:
+        raise typer.BadParameter("the holdout runs whole: --only would point at single tasks")
+    done = [0]
+
     def show(r: Any) -> None:
+        if sealed:  # totals only: which task passed is exactly what we mustn't study
+            done[0] += 1
+            console.print(f"  task {done[0]} done", end="\r")
+            return
         mark = "[green]pass[/]" if r.hidden_passed else "[red]FAIL[/]"
         cert = "—" if r.certainty is None else f"{r.certainty:.2f}"
         fix = f"  fix: {r.fix_outcome}" if r.fix_outcome else ""
@@ -675,8 +707,10 @@ def eval_suite(
         if not fake:
             _eval_preflight(settings, backend, gpu, lane, cascade)
         reports, stopped = _eval_runs(settings, backend, lane, only, repeat, cascade, spec, learn,
-                             lessons, fake, write, show)  # fmt: skip
-    if reports:
+                             lessons, fake, write, show, sealed)  # fmt: skip
+    if reports and sealed:
+        _sealed_report(reports, write, fake)
+    elif reports:
         _eval_report(reports, len(reports), write, fake)
     if stopped:
         raise typer.Exit(3)
@@ -719,8 +753,9 @@ def _eval_runs(
     fake: bool,
     write: bool,
     show: Any,
+    sealed: bool = False,
 ) -> tuple[list[Any], bool]:
-    from pablo.evals import InfraError, append_result, run_suite
+    from pablo.evals import HOLDOUT, SUITE, InfraError, append_result, append_sealed, run_suite
     from pablo.judge_replay import append_cases
     from pablo.sandbox import LocalSandbox
 
@@ -741,24 +776,42 @@ def _eval_runs(
                 spec=spec,
                 learn={x.strip() for x in learn.split(",") if x.strip()} or None,
                 lessons=lessons,
+                root=HOLDOUT if sealed else SUITE,
             )
         except InfraError as exc:
             console.print(f"[red]stopped: the box failed, not the model[/] {exc}")
             console.print(f"Runs finished before this one are kept ({len(reports)}). This one "
                           "isn't written: its numbers would be noise.")  # fmt: skip
             return reports, True
+        reports.append(report)
+        if sealed:
+            if write and not fake:
+                append_sealed(report)  # totals only, and no judge replay from the holdout
+            continue
         s = report.summary()
         console.print(
             f"pass {s['pass_rate']:.0%} {s['pass_rate_by_refs']} · ready {s['ready']} "
             f"(precision {s['ready_precision']}) · false ready {s['false_ready']} · "
             f"fix tried {s['fix_tried']} {s['fix_outcomes']} · wall {s['wall_s']}s"
         )
-        reports.append(report)
         if write and not fake:
             append_result(report)
             added = append_cases(report.replay)
             console.print(f"judge replay: {added} new diffs in evals/judge/replay.jsonl")
     return reports, False
+
+
+def _sealed_report(reports: list[Any], write: bool, fake: bool) -> None:
+    from pablo.evals import sealed_markdown
+
+    text = sealed_markdown(reports)
+    console.print(text.split("\n\n", 1)[1])
+    if write and not fake:
+        docs = Path("docs/benchmarks.md")
+        if docs.is_file():
+            with docs.open("a", encoding="utf-8") as fh:
+                fh.write("\n" + text + "\n")
+        console.print("appended totals to evals/holdout-results.jsonl and docs/benchmarks.md")
 
 
 def _eval_report(reports: list[Any], repeat: int, write: bool, fake: bool) -> None:
@@ -779,6 +832,89 @@ def _eval_report(reports: list[Any], repeat: int, write: bool, fake: bool) -> No
                 if repeat > 1:
                     fh.write("\n" + aggregate_markdown(reports) + "\n")
         console.print("appended to evals/results.jsonl and docs/benchmarks.md")
+
+
+@app.command("eval-build")
+def eval_build(
+    lane: Annotated[str, typer.Option(help="auto (Hybrid), coder, deep, ...")] = "auto",
+    only: Annotated[str, typer.Option(help="Comma-separated project ids")] = "",
+    fake: FakeOpt = False,
+    write: Annotated[
+        bool, typer.Option(help="Append to evals/build-results.jsonl and docs/benchmarks.md")
+    ] = False,
+) -> None:
+    """Plan mode end to end: plan a small tool, build it step by step, run its acceptance test."""
+    from contextlib import nullcontext
+
+    from pablo.build_eval import append_build, build_markdown, build_summary, run_build
+    from pablo.evals import current_commit
+    from pablo.gpu import GpuScheduler
+    from pablo.sandbox import LocalSandbox
+
+    settings = _settings(fake)
+    backend = _backend(settings, fake)
+    gpu = GpuScheduler(home=settings.home, residents_cfg=settings.gpu.residents,
+                       unload_url=settings.gpu.unload_url)  # fmt: skip
+    hold = nullcontext() if fake else gpu.mode_for("deep")
+
+    def show(r: Any) -> None:
+        mark = "[green]pass[/]" if r.accepted else "[red]FAIL[/]"
+        how = "no plan" if not r.planned else f"{r.steps} steps, {r.approved} approved"
+        err = f"  [red]{r.error}[/]" if r.error else ""
+        console.print(f"  {r.id:<20} {mark}  {how}  {r.wall_s:.0f}s{err}")
+
+    with hold:
+        if not fake:
+            _eval_preflight(settings, backend, gpu, "coder" if lane == "auto" else lane,
+                            lane == "auto")  # fmt: skip
+        results = run_build(
+            settings, backend, lane=lane,
+            only={x.strip() for x in only.split(",") if x.strip()} or None,
+            sandbox=LocalSandbox() if fake else None, on_result=show,
+        )  # fmt: skip
+    summary = build_summary(results, lane=lane, commit=current_commit(Path(".")))
+    text = build_markdown(summary)
+    console.print(text.split("\n\n")[1])
+    if write and not fake:
+        append_build(summary)
+        docs = Path("docs/benchmarks.md")
+        if docs.is_file():
+            with docs.open("a", encoding="utf-8") as fh:
+                fh.write("\n" + text + "\n")
+        console.print("appended to evals/build-results.jsonl and docs/benchmarks.md")
+
+
+@app.command("eval-chat")
+def eval_chat(
+    lane: Annotated[str, typer.Option(help="auto (Hybrid), coder, deep, advisor")] = "auto",
+    spoken: Annotated[bool, typer.Option(help="Ask as a voice call would")] = False,
+    fake: FakeOpt = False,
+    write: Annotated[
+        bool, typer.Option(help="Append to evals/chat-results.jsonl and docs/benchmarks.md")
+    ] = False,
+) -> None:
+    """Does the chat model talk, start one change, or plan, when it should? (evals/chat)"""
+    from pablo.chat_eval import append_chat, chat_markdown, chat_summary, run_chat_eval
+    from pablo.evals import current_commit
+
+    settings = _settings(fake)
+
+    def show(c: Any) -> None:
+        mark = "[green]ok[/]  " if c.chose == c.label else "[red]MISS[/]"
+        console.print(f"  {mark} wanted {c.label:<4} chose {c.chose:<4} {c.text[:60]}")
+
+    cases = run_chat_eval(settings, _backend(settings, fake), lane=lane, spoken=spoken,
+                          on_case=show)  # fmt: skip
+    summary = chat_summary(cases, lane=lane, spoken=spoken, commit=current_commit(Path(".")))
+    text = chat_markdown(summary)
+    console.print(text.split("\n\n", 1)[1])
+    if write and not fake:
+        append_chat(summary)
+        docs = Path("docs/benchmarks.md")
+        if docs.is_file():
+            with docs.open("a", encoding="utf-8") as fh:
+                fh.write("\n" + text + "\n")
+        console.print("appended to evals/chat-results.jsonl and docs/benchmarks.md")
 
 
 @app.command("eval-judge")

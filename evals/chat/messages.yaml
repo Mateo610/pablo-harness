@@ -1,0 +1,33 @@
+# The chat-behavior set: does the chat model pick the right move for a message?
+#
+#   talk  answer in words; change nothing
+#   run   one change: a RUN line
+#   plan  several changes: PLAN and STEP lines, and nothing built yet
+#
+# Each message is sent in a fresh conversation about the `ledger` seed repo (the suite's), in a
+# throwaway home. Runs and plans are recorded, never carried out. Labels are what a sensible
+# colleague would do; argue with them in decisions.md, not by tuning the prompt to this file.
+repo: ledger
+messages:
+- {label: talk, text: "What does load_line do?"}
+- {label: talk, text: "How are amounts stored, in cents or dollars?"}
+- {label: talk, text: "Is there anything risky about how money is parsed?"}
+- {label: talk, text: "Which function would I change to support euros?"}
+- {label: talk, text: "Explain the difference between total and monthly."}
+- {label: talk, text: "Do we have tests for by_payee?"}
+- {label: talk, text: "What would a CSV export involve? Don't change anything yet."}
+- {label: talk, text: "thanks, that's helpful"}
+- {label: run, text: "Rename by_payee to totals_by_payee and update everything that uses it."}
+- {label: run, text: "Make load skip blank lines."}
+- {label: run, text: "Add a docstring to format_cents."}
+- {label: run, text: "format_cents should put the minus sign before the dollar sign for negative amounts. Fix it."}
+- {label: run, text: "Add a test for monthly when nothing happened that month."}
+- {label: run, text: "Make parse_dollars accept amounts without the dollar sign, like 1.50."}
+- {label: run, text: "Sort the by_payee result by payee name."}
+- {label: run, text: "Add type hints everywhere in report.py."}
+- {label: plan, text: "Let's add budgets: a monthly budget per payee, a warning when a month goes over, and a budget section in the report."}
+- {label: plan, text: "I want a command-line tool for this: load a file, print the monthly total and the top payees, and export to CSV."}
+- {label: plan, text: "Add multi-currency support: entries in USD or EUR, a table of conversion rates, and reports in USD."}
+- {label: plan, text: "Turn this into a small web API with endpoints to add entries and get monthly totals, with tests."}
+- {label: plan, text: "Add recurring entries like rent every month, a way to list the upcoming ones, and include them in monthly reports."}
+- {label: plan, text: "Build an importer for my bank's CSV export, with column mapping and duplicate detection."}
