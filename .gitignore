@@ -21,3 +21,4 @@ models/
 *.safetensors
 .env
 config/.env
+!evals/build/
