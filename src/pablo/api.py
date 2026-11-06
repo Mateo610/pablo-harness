@@ -31,6 +31,7 @@ from pablo.overnight import (
     now_local,
 )
 from pablo.plan import Plan, Status
+from pablo.plans import PlanBusy, Plans
 from pablo.projects import Workspace
 from pablo.resources import snapshot
 from pablo.swap import read_running
@@ -163,7 +164,8 @@ def create_app(
     app.state.access = gate
     ws = workspace or Workspace(orch)
     app.state.workspace = ws
-    chat = Chat(orch, background=True, workspace=ws)
+    plans = Plans(ws, background=not orch.retry_inline)
+    chat = Chat(orch, background=True, workspace=ws, plans=plans)
     store = chat.store
 
     @app.middleware("http")
@@ -204,11 +206,25 @@ def create_app(
         return [lane.model_dump() for lane in orch.settings.lanes.values()]
 
     @app.get("/api/plan")
-    def plan() -> dict[str, Any]:
+    def plan(project: str = "") -> dict[str, Any]:
         try:
-            return Plan.load(repo).model_dump(mode="json")
-        except FileNotFoundError as exc:
-            raise HTTPException(404, "no .pablo/plan.yaml; run `pablo init`") from exc
+            found = plans.get(project)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc).strip("'\"")) from exc
+        if found is None:
+            raise HTTPException(404, "no plan yet: describe what you want built in Chat")
+        return found.model_dump(mode="json")
+
+    @app.post("/api/plan/go")
+    async def plan_go(request: Request, project: str = "") -> dict[str, Any]:
+        """Build the plan: the next step runs; each one waits for the owner's approval."""
+        try:
+            started = await run_in_threadpool(plans.go, project, by=profile_of(request))
+        except KeyError as exc:
+            raise HTTPException(404, str(exc).strip("'\"")) from exc
+        except (ValueError, PlanBusy) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return started.model_dump(mode="json")
 
     @app.post("/api/plan/tasks/{task_id}")
     def set_task_status(task_id: str, body: StatusIn, request: Request) -> dict[str, Any]:
@@ -442,7 +458,10 @@ def create_app(
 
     def _decide(fn_name: str, run_id: str) -> dict[str, Any]:
         try:
-            return dict(getattr(ws.for_run(run_id), fn_name)(run_id).to_dict())
+            done = getattr(ws.for_run(run_id), fn_name)(run_id)
+            if fn_name == "reject":
+                plans.after(done)  # a rejected plan step pauses its plan
+            return dict(done.to_dict())
         except KeyError as exc:
             raise HTTPException(404, f"no run {run_id}") from exc
         except (ValueError, RuntimeError) as exc:
@@ -457,7 +476,9 @@ def create_app(
 
         def go() -> dict[str, Any]:
             try:
-                return ws.for_run(run_id).approve(run_id, body.hunks, force=body.force).to_dict()
+                done = ws.for_run(run_id).approve(run_id, body.hunks, force=body.force)
+                plans.after(done)  # an approved plan step starts the next one
+                return done.to_dict()
             except KeyError as exc:
                 raise HTTPException(404, f"no run {run_id}") from exc
             except PartialChecksFailed as exc:

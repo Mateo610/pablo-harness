@@ -14,6 +14,7 @@ import yaml
 from pydantic import BaseModel, Field
 
 Status = Literal["queued", "active", "needs_you", "done", "blocked"]
+PlanState = Literal["draft", "running", "paused", "done"]
 PLAN_PATH = Path(".pablo") / "plan.yaml"
 
 
@@ -23,6 +24,8 @@ class Task(BaseModel):
     status: Status = "queued"
     lane: str | None = None
     notes: str = ""
+    detail: str = ""  # the full task the coder gets (plan mode); the title is its first words
+    run: str | None = None  # the run doing this step, once it has started
 
 
 class Phase(BaseModel):
@@ -43,6 +46,12 @@ class Plan(BaseModel):
     project: str
     goal: str = ""
     phases: list[Phase] = Field(default_factory=list)
+    # Plan mode: a draft you talk through, then running one step at a time, each waiting for
+    # your approval; paused when a step is rejected or fails; done when every step is.
+    state: PlanState = "draft"
+    lane: str = "auto"  # which model builds it: "auto" is Hybrid
+    by: str = ""  # who started it
+    conversation: str = ""  # where it was planned, so progress can be reported there
 
     @classmethod
     def load(cls, root: Path) -> Plan:

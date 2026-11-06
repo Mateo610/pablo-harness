@@ -31,6 +31,8 @@ from pablo.context import Budget, build_coder_context, clip, tokens
 from pablo.gateway import Delta, stream_complete
 from pablo.gpu import Priority
 from pablo.gpu import job as gpu_job
+from pablo.plan import Plan
+from pablo.plans import PlanBusy, Plans, plan_text
 from pablo.repomap import load_or_build
 
 if TYPE_CHECKING:
@@ -91,6 +93,19 @@ short sentence and then a line:
 RUN: <a complete task for the coder: what to change, where, and how to know it's done>
 The harness runs it, checks it, and shows the user the diff. Only one RUN line per reply.
 
+When the work takes several changes (a new project, a feature with parts), plan it instead of
+using RUN. One line each:
+PLAN: <what done looks like, in one sentence>
+STEP: <a complete task for the coder that builds on the steps before it>
+Write 3 to 8 STEP lines; the first is the smallest thing that runs and can be tested. The user
+reviews the plan with you; to change it, write the whole plan again. When the user says to go
+ahead and build it, add a line: BUILD: go
+Each step waits for the user's approval before the next one starts.
+
+When the user says to apply the change that is waiting for them, add a line: APPLY: it
+When they say to throw it away, add a line: DISCARD: it
+Never write APPLY or DISCARD unless the user just said so.
+
 When the user tells you something lasting about how they work or what the project needs,
 add a line: REMEMBER: <the fact, in a few words>. They decide whether it's kept."""
 
@@ -105,6 +120,25 @@ short sentences, no code, no lists, no markdown, no file paths unless asked. The
 REMEMBER lines still work and are never read aloud."""
 
 _RUN = re.compile(r"^\s*RUN:\s*(.+?)\s*$", re.M)
+_PLAN = re.compile(r"^\s*PLAN:\s*(.+?)\s*$", re.M)
+_STEP = re.compile(r"^\s*STEP:\s*(.+?)\s*$", re.M)
+_BUILD = re.compile(r"^\s*BUILD:.*$", re.M)
+_APPLY = re.compile(r"^\s*APPLY:.*$", re.M)
+_DISCARD = re.compile(r"^\s*DISCARD:.*$", re.M)
+_CONTROL = re.compile(r"^\s*(PLAN|STEP|BUILD|APPLY|DISCARD):.*$\n?", re.M)
+# The model acts on these only when the user's own words say so: a model that writes APPLY on
+# its own can't merge anything.
+_SAYS_GO = re.compile(
+    r"\b(go|go ahead|start|build( it)?|do it|yes|yeah|yep|sure|ok(ay)?|let'?s"
+    r"|ship it|sounds good)\b",
+    re.I,
+)
+_SAYS_APPLY = re.compile(
+    r"\b(apply|approve|merge|ship|accept|keep|land|commit|yes|yeah|yep|do it|go ahead"
+    r"|looks good|looks great|perfect|great)\b",
+    re.I,
+)
+_SAYS_DISCARD = re.compile(r"\b(discard|reject|throw|toss|drop|scrap|undo|no|nope|don'?t)\b", re.I)
 _REMEMBER = re.compile(r"^\s*REMEMBER:\s*(.+?)\s*$", re.M)
 _SAID_REMEMBER = re.compile(r"^\s*remember(?:\s+that)?\s*[:,-]?\s+(.+)$", re.I | re.S)
 _WORD = re.compile(r"[A-Za-z0-9_]{3,}")
@@ -428,6 +462,8 @@ class Turn:
     proposed: list[Memory] = field(default_factory=list)
     kept: list[Memory] = field(default_factory=list)
     shared_memory: bool = False  # whether notes and recall went into the prompt
+    plan: dict[str, Any] | None = None  # the plan, when this turn drafted or started one
+    decided: dict[str, Any] | None = None  # the run applied or discarded by this turn
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -448,11 +484,13 @@ class Chat:
         *,
         background: bool = False,
         workspace: Workspace | None = None,
+        plans: Plans | None = None,
     ) -> None:
         """`background`: runs a turn starts are worked on a thread (the API); else inline.
         `workspace`: conversations in other projects talk to that project's orchestrator."""
         self.orch = orch
         self.workspace = workspace
+        self.plans = plans
         self.background = background
         self.store = store or Store(orch.settings.home / "pablo.db")
         self.store.ensure_profile(OWNER, "Owner", "owner")
@@ -559,20 +597,140 @@ class Chat:
         self.store.record_usage(profile, name, done.prompt_tokens, done.completion_tokens)
         task = next((m.group(1) for m in _RUN.finditer(answer)), "") if can_run else ""
         facts = [m.group(1) for m in _REMEMBER.finditer(answer)]
-        visible = _REMEMBER.sub("", _RUN.sub("", answer)).strip()
+        visible = _CONTROL.sub("", _REMEMBER.sub("", _RUN.sub("", answer))).strip()
         proposed = [
             self.store.remember(profile, f, status="proposed", source=cid) for f in facts[:3]
         ]
+        extra: list[str] = []
+        plan_obj: Plan | None = None
+        decided: Run | None = None
+        if can_run and do is not False:
+            plan_obj = self._planning(conv, name, profile, answer, extra)
+            if plan_obj is not None:
+                task = ""  # a plan takes the place of a single run
+            if _APPLY.search(answer) and _SAYS_APPLY.search(text):
+                decided = self._decide_waiting(conv, profile, approve=True, out=extra)
+            elif _DISCARD.search(answer) and _SAYS_DISCARD.search(text):
+                decided = self._decide_waiting(conv, profile, approve=False, out=extra)
+            if self.plans and _BUILD.search(answer) and _SAYS_GO.search(text):
+                plan_obj = self._build(conv, profile, extra) or plan_obj
         run_obj = None
         if task and do is not False:
             run_obj = self._run(task, name, notes, profile, orch, unfiltered)
-            visible = f"{visible}\n\n{self._run_line(run_obj)}".strip()
+            extra.append(self._run_line(run_obj))
+        visible = "\n\n".join(x for x in [visible, *extra] if x).strip()
         reply = self.store.add_message(
             cid, "assistant", visible or "(no reply)", lane=name,
             run_id=run_obj.id if run_obj else None,
         )  # fmt: skip
         return Turn(conv, user, reply, run=run_obj.to_dict() if run_obj else None,
-                    proposed=proposed, shared_memory=bool(notes) and not remote)  # fmt: skip
+                    proposed=proposed, shared_memory=bool(notes) and not remote,
+                    plan=plan_obj.model_dump(mode="json") if plan_obj else None,
+                    decided=decided.to_dict() if decided else None)  # fmt: skip
+
+    # plan mode and spoken approvals ------------------------------------------------------
+
+    def _planning(
+        self, conv: Conversation, lane: str, profile: str, answer: str, out: list[str]
+    ) -> Plan | None:
+        steps = [m.group(1) for m in _STEP.finditer(answer)]
+        if not steps or self.plans is None:
+            return None
+        goal = next((m.group(1) for m in _PLAN.finditer(answer)), "")
+        try:
+            plan = self.plans.draft(conv.project, goal, steps, lane=lane, by=profile,
+                                    conversation=conv.id)  # fmt: skip
+        except (PlanBusy, ValueError) as exc:
+            out.append(f"(The plan wasn't changed: {exc}.)")
+            return None
+        out.append(plan_text(plan))
+        return plan
+
+    def _build(self, conv: Conversation, profile: str, out: list[str]) -> Plan | None:
+        assert self.plans is not None
+        try:
+            plan = self.plans.go(conv.project, by=profile)
+        except (KeyError, ValueError, PlanBusy) as exc:
+            out.append(f"(Not building yet: {str(exc).strip(chr(39))}.)")
+            return None
+        step = next((t for t in Plans.steps(plan) if t.status in ("active", "needs_you")), None)
+        if step is not None:
+            out.append(
+                f"Building step {step.id}: {step.title}. It'll wait for you when it's ready."
+            )
+        return plan
+
+    def _state_note(self, conv: Conversation, cfg: Lane, name: str, remote: bool) -> str:
+        """The project's plan and what waits for the user, ahead of their message. It rides on
+        the message (not the system prompt) so the cached prefix stays the same."""
+        if remote or not (name == AUTO or cfg.writes_code):
+            return ""
+        parts = []
+        if self.plans is not None:
+            try:
+                summary = self.plans.summary(conv.project)
+            except KeyError:
+                summary = ""
+            if summary:
+                parts.append("The project's plan:\n" + summary)
+        waiting = self._waiting(conv)
+        if waiting:
+            parts.append("Waiting for the user's decision: " + "; ".join(
+                f"run {r.id} ({r.state.replace('_', ' ')}"
+                + (f", certainty {r.certainty:.2f}" if r.certainty is not None else "")
+                + f"): {clip(r.task.splitlines()[0], 16)}" for r in waiting[:3]))  # fmt: skip
+        if not parts:
+            return ""
+        return "[Pablo, not the user: " + "\n".join(parts) + "]\n\n"
+
+    def _waiting(self, conv: Conversation) -> list[Run]:
+        """Changes waiting for a decision that this conversation (or its plan) started."""
+        orch = self.orch_for(conv)
+        ids = [m.run_id for m in reversed(self.store.messages(conv.id)) if m.run_id]
+        if self.plans is not None:
+            try:
+                plan = self.plans.get(conv.project)
+            except KeyError:
+                plan = None
+            if plan is not None:
+                ids = [t.run for t in Plans.steps(plan) if t.run and t.status == "needs_you"] + ids
+        seen: list[Run] = []
+        recent = orch.recent(200)
+        for rid in ids:
+            try:
+                run = orch.get(rid)
+            except KeyError:
+                continue
+            family = [run] + [
+                r for r in recent if run.group and r.group == run.group and r is not run
+            ]
+            for r in family:
+                if r.state in ("ready", "needs_you") and r not in seen:
+                    seen.append(r)
+        return sorted(seen, key=lambda r: r.state != "ready")  # a ready one first
+
+    def _decide_waiting(
+        self, conv: Conversation, profile: str, *, approve: bool, out: list[str]
+    ) -> Run | None:
+        if profile != OWNER:
+            out.append("(Only the owner can apply or discard changes.)")
+            return None
+        waiting = self._waiting(conv)
+        if not waiting:
+            out.append("(Nothing is waiting for you here.)")
+            return None
+        run = waiting[0]
+        orch = self.workspace.for_run(run.id) if self.workspace else self.orch
+        try:
+            done = orch.approve(run.id) if approve else orch.reject(run.id)
+        except (ValueError, RuntimeError) as exc:
+            out.append(f"(Couldn't {'apply' if approve else 'discard'} it: {exc}.)")
+            return None
+        word = "Applied" if approve else "Discarded"
+        out.append(f"{word}: {clip(run.task.splitlines()[0], 20)} [run {run.id}].")
+        if self.plans is not None:
+            self.plans.after(done)
+        return done
 
     def _run(
         self,
@@ -665,5 +823,8 @@ class Chat:
             {"role": "system", "content": sys_text},
             *kept,
             # A pasted log can't overflow the window; the stored message stays whole.
-            {"role": "user", "content": clip(text, self.MESSAGE_MAX)},
+            {
+                "role": "user",
+                "content": self._state_note(conv, cfg, name, remote) + clip(text, self.MESSAGE_MAX),
+            },
         ]

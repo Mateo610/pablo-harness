@@ -85,6 +85,8 @@ export interface PlanTask {
   title: string;
   status: TaskStatus;
   lane: string | null;
+  detail?: string;
+  run?: string | null;
 }
 
 export interface Phase {
@@ -98,6 +100,11 @@ export interface Plan {
   project: string;
   goal: string;
   phases: Phase[];
+  /** plan mode: a draft you talk through, running one step at a time, paused, or done */
+  state?: "draft" | "running" | "paused" | "done";
+  lane?: string;
+  by?: string;
+  conversation?: string;
 }
 
 export interface HarnessEvent {
@@ -326,7 +333,9 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   lanes: () => call<Lane[]>("/api/lanes"),
-  plan: () => call<Plan>("/api/plan"),
+  plan: (project = "") => call<Plan>(`/api/plan${project ? `?project=${encodeURIComponent(project)}` : ""}`),
+  planGo: (project = "") =>
+    call<Plan>(`/api/plan/go${project ? `?project=${encodeURIComponent(project)}` : ""}`, { method: "POST" }),
   inbox: () => call<Run[]>("/api/inbox"),
   run: (id: string) => call<Run>(`/api/runs/${id}`),
   start: (task: string, lane?: string, taskId?: string) =>

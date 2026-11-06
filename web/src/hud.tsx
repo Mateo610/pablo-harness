@@ -1,6 +1,6 @@
 // Shared bits for cockpit v2: routing, polling, the event bus, run cards, small formatters.
 import { useEffect, useRef, useState } from "react";
-import { api, ApiError, subscribe, type GpuLease, type GpuMode, type GpuState, type HarnessEvent, type Me, type Project, type Run } from "./api";
+import { api, ApiError, subscribe, type GpuLease, type GpuMode, type GpuState, type HarnessEvent, type Me, type Plan, type Project, type Run } from "./api";
 import { DiffView, laneColor, stateLabel, laneName } from "./components";
 
 export type Route = { page: string; id: string };
@@ -326,6 +326,63 @@ export function GpuQueue({ gpu }: { gpu: GpuState | null }) {
       <span className="h-faint" style={{ fontSize: 11.5 }}>
         Background work {gpu.background_ok ? "may start now" : gpu.mode === "interactive" ? "waits for tonight" : `waits for ${Math.round(gpu.idle_needed_s)} s of quiet`}.
       </span>
+    </section>
+  );
+}
+
+const STEP_MARK: Record<string, string> = { done: "✓", active: "…", needs_you: "◆", blocked: "!", queued: "·" };
+const STEP_WORD: Record<string, string> = { done: "done", active: "building", needs_you: "waiting for you", blocked: "stopped", queued: "next" };
+
+/** Plan mode: the project's plan, the step waiting for you, and Build. Polls while it builds. */
+export function PlanCard({ project, me, onChange }: { project: string; me: Me | null; onChange?: () => void }) {
+  const [plan, reload] = usePoll<Plan | null>(() => api.plan(project).catch(() => null), 4000, [project]);
+  const [error, setError] = useState("");
+  useEvents((e) => {
+    if (["decided", "judged", "needs_you"].includes(e.kind)) reload();
+  });
+  if (!plan || !plan.state) return null;
+  const steps = plan.phases.flatMap((p) => p.tasks);
+  const waiting = steps.find((t) => t.status === "needs_you" && t.run);
+  const canBuild = plan.state === "draft" || plan.state === "paused";
+  const build = () =>
+    api
+      .planGo(project)
+      .then(() => (setError(""), reload(), onChange?.()))
+      .catch((e: Error) => setError(e.message));
+  return (
+    <section className="h-frame h-pad" aria-label="Plan" style={{ gap: 10 }}>
+      <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
+        <span className="h-cap" style={{ color: "var(--sys)" }}>Plan</span>
+        <span style={{ fontSize: 14.5, fontWeight: 600, flex: 1, minWidth: 0 }}>{plan.goal || "Untitled"}</span>
+        <span className="h-mono h-dim" style={{ fontSize: 11 }}>
+          {plan.state} · {steps.filter((t) => t.status === "done").length}/{steps.length}
+        </span>
+      </div>
+      <ol style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 6 }}>
+        {steps.map((t) => (
+          <li key={t.id} style={{ display: "flex", gap: 10, alignItems: "baseline", fontSize: 13.5 }}>
+            <span className="h-mono" style={{ width: 16, color: t.status === "needs_you" ? "var(--accent)" : t.status === "done" ? "var(--status-pass)" : t.status === "blocked" ? "var(--status-fail)" : "var(--ink-muted)" }} aria-hidden="true">
+              {STEP_MARK[t.status] ?? "·"}
+            </span>
+            <span style={{ flex: 1, minWidth: 0, color: t.status === "done" ? "var(--ink-muted)" : undefined }}>
+              {t.id}. {t.title}
+            </span>
+            <span className="h-mono h-faint" style={{ fontSize: 11 }}>{STEP_WORD[t.status] ?? t.status}</span>
+          </li>
+        ))}
+      </ol>
+      {waiting?.run && <RunCard id={waiting.run} me={me} />}
+      {error && <span style={{ color: "var(--status-fail)", fontSize: 13 }}>{error}</span>}
+      {canBuild && (
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <button className="h-btn solid" onClick={build}>
+            {plan.state === "draft" ? "BUILD IT" : "KEEP GOING"}
+          </button>
+          <span className="h-dim" style={{ fontSize: 12 }}>
+            {plan.state === "draft" ? "Each step waits for your approval before the next starts." : "Retries the stopped step, then carries on."}
+          </span>
+        </div>
+      )}
     </section>
   );
 }

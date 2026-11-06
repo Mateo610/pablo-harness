@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, type ChatMessage, type Conversation, type Lane, type Me, type Memory, type SearchHits } from "./api";
 import { laneColor, laneName } from "./components";
-import { ago, go, pickProject, ProjectPicker, RunCard, useEvents, usePoll, useProject } from "./hud";
+import { ago, go, pickProject, PlanCard, ProjectPicker, RunCard, useEvents, usePoll, useProject } from "./hud";
 import { Markdown } from "./Markdown";
 
 type Mode = "chat" | "advisor";
@@ -69,6 +69,7 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
   const startIn = pickProject(projects, chosen);
   // An open conversation keeps its own project; a new one starts in the chosen project.
   const unfiltered = conv ? convUnfiltered : startIn?.mode === "unfiltered";
+  const projectName = conv ? conv.project : startIn?.name ?? "";
   const options = useMemo(() => {
     if (!unfiltered) return modelOptions(lanes, me);
     const raw = lanes.find((l) => l.name === "advisor");
@@ -303,6 +304,7 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
             </div>
           )}
           {error && <div className="h-error">{error}</div>}
+          {!advisor && projectName && <PlanCard project={projectName} me={me} />}
           <div ref={bottom} />
         </div>
 
@@ -424,11 +426,12 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
   );
 }
 
-/** While a reply streams, hide the RUN: and REMEMBER: lines the harness acts on afterwards. */
+/** While a reply streams, hide the control lines (RUN:, PLAN:, …) the harness acts on afterwards. */
+export const CONTROL = /^\s*(RUN|REMEMBER|PLAN|STEP|BUILD|APPLY|DISCARD):/;
 function visibleWhileStreaming(text: string): string {
   return text
     .split("\n")
-    .filter((line) => !/^\s*(RUN|REMEMBER):/.test(line) && !/^\s*(R|RU|RE|REM|REME|REMEM|REMEMB|REMEMBE)$/.test(line))
+    .filter((line) => !CONTROL.test(line) && !/^\s*[A-Z]{1,8}$/.test(line)) // a control word still arriving
     .join("\n")
     .trim();
 }

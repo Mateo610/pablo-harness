@@ -150,7 +150,7 @@ def reachable(url: str) -> bool:
 
 
 _FENCE = re.compile(r"```.*?(```|$)", re.S)
-_HARNESS_LINE = re.compile(r"^\s*(RUN|REMEMBER):.*$", re.M)
+_HARNESS_LINE = re.compile(r"^\s*(RUN|REMEMBER|PLAN|STEP|BUILD|APPLY|DISCARD):.*$", re.M)
 _MARKS = re.compile(r"[*_`#>]+")
 _LINK = re.compile(r"\[([^\]]+)\]\([^)]+\)")
 

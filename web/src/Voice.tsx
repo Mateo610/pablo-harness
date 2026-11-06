@@ -102,7 +102,7 @@ export function Voice({ me }: { me: Me | null }) {
         if (e.type === "heard") setLines((l) => [...l, { role: "user", text: e.text, lane: who, at }, { role: "assistant", text: "", lane: who, at }]);
         if (e.type === "delta") {
           reply += e.text;
-          const shown = reply.split("\n").filter((x) => !/^\s*(RUN|REMEMBER):/.test(x)).join("\n");
+          const shown = reply.split("\n").filter((x) => !/^\s*(RUN|REMEMBER|PLAN|STEP|BUILD|APPLY|DISCARD):/.test(x)).join("\n");
           setLines((l) => [...l.slice(0, -1), { ...l[l.length - 1], text: shown }]);
         }
         if (e.type === "audio") {
