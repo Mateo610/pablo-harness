@@ -51,6 +51,8 @@ tests, ignoring a stated constraint). Swapping from the coder costs ~7.6 s; a ju
   cut off at 300 tokens. Replayed, `finish_reason` was `length` and the text opened
   `{"certainty": 0.3, "summary": ...` then spent the budget deliberating inside the summary, so
   the object never closed and did not parse. Not prose before the JSON.
+  Fixed: the reply budget is 600 tokens, and a reply cut off after its score keeps the score,
+  capped at 0.7 so it always asks you.
 
 ## Ideas
 

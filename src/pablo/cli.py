@@ -934,7 +934,7 @@ def eval_judge(
     ] = "main",
     max_tokens: Annotated[
         int, typer.Option(help="Room for the reply; a judge that reasons needs ~4096")
-    ] = 300,
+    ] = 600,
 ) -> None:
     """Score the judge on fixed good/bad diffs (evals/judge), or replay real suite diffs."""
     from pablo.judge_eval import run_judge_eval

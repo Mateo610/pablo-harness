@@ -179,7 +179,7 @@ def run_replay(
     threshold: float = 0.75,
     path: Path = REPLAY,
     only: set[str] | None = None,
-    max_tokens: int = 300,
+    max_tokens: int = 600,
 ) -> ReplayReport:
     rows = []
     for case in load_cases(path):

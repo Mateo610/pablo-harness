@@ -16,6 +16,7 @@ from pablo.gateway import ChatBackend, Message
 from pablo.verify import Verdict
 
 FAILED_CAP = 0.3
+CUT_CAP = 0.7  # under every judge threshold we use
 
 JUDGE_PROMPT = (
     "You review changes for a small team of models. Be strict and brief.\n"
@@ -60,7 +61,7 @@ def judge(
     diff: str,
     verdict: Verdict,
     extra: str = "",
-    max_tokens: int = 300,
+    max_tokens: int = 600,
 ) -> Judgement:
     """`extra` is more evidence for the prompt, e.g. how task-derived checks went.
     `max_tokens`: a judge that reasons spends tokens thinking first; give it room."""
@@ -80,9 +81,19 @@ def judge(
     return judgement
 
 
+_CERTAINTY = re.compile(r'"certainty"\s*:\s*([0-9]*\.?[0-9]+)')
+
+
 def parse_judgement(text: str) -> Judgement:
     match = re.search(r"\{.*\}", text, re.S)
     if not match:
+        # A reply cut off mid-summary still said its certainty first. Keep it, but below
+        # "ready" (CUT_CAP): a judge that ran out of room mid-thought should ask you.
+        cut = _CERTAINTY.search(text)
+        if cut:
+            certainty = max(0.0, min(CUT_CAP, float(cut.group(1))))
+            return Judgement(certainty, "judge reply was cut off after its score",
+                             "The judge's note was cut off. Review it?")  # fmt: skip
         return Judgement(0.0, "judge reply was not JSON", "Judge could not score this. Review it?")
     try:
         data = json.loads(match.group(0))
