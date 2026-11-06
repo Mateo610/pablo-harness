@@ -307,4 +307,4 @@ def test_claude_is_scored_only_by_hand_and_as_an_escalation(settings: Settings) 
     assert {m for m, _ in backend.calls} == {"pablo/escalate", "pablo/judge"}  # no local coder
 
     refused = CliRunner().invoke(app, ["eval", "--lane", "claude", "--fake"])
-    assert refused.exit_code != 0 and "allow-remote" in refused.output
+    assert refused.exit_code == 2  # a usage error: the message asks for --allow-remote
