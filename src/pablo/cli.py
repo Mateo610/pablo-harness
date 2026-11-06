@@ -661,7 +661,9 @@ def eval_suite(
     backend = _backend(settings, fake)
     # A real eval owns the GPU: hold Deep Work in the real home so `pablo serve` doesn't wake
     # the voice server (or start night work) mid-suite. The owner's mode comes back after.
-    hold = nullcontext() if fake else GpuScheduler(home=settings.home).mode_for("deep")
+    gpu = GpuScheduler(home=settings.home, residents_cfg=settings.gpu.residents,
+                       unload_url=settings.gpu.unload_url)  # fmt: skip
+    hold = nullcontext() if fake else gpu.mode_for("deep")
 
     def show(r: Any) -> None:
         mark = "[green]pass[/]" if r.hidden_passed else "[red]FAIL[/]"
@@ -670,9 +672,38 @@ def eval_suite(
         console.print(f"  {r.id:<32} {r.refs:<6} {r.state:<9} {mark}  {cert}  {r.wall_s:.0f}s{fix}")
 
     with hold:
-        reports = _eval_runs(settings, backend, lane, only, repeat, cascade, spec, learn,
+        if not fake:
+            _eval_preflight(settings, backend, gpu, lane, cascade)
+        reports, stopped = _eval_runs(settings, backend, lane, only, repeat, cascade, spec, learn,
                              lessons, fake, write, show)  # fmt: skip
-    _eval_report(reports, repeat, write, fake)
+    if reports:
+        _eval_report(reports, len(reports), write, fake)
+    if stopped:
+        raise typer.Exit(3)
+
+
+def _eval_preflight(
+    settings: Settings, backend: ChatBackend, gpu: Any, lane: str, cascade: bool
+) -> None:
+    """Every model the suite needs answers once before an hour-long run starts.
+
+    Deep first (its lease pauses the voice server, so this also proves that works), then the
+    judge, then the lane, so the lane is loaded for the first task.
+    """
+    from pablo.evals import preflight
+    from pablo.gpu import ScheduledBackend, off_gpu_models
+
+    retry = settings.lane(lane).retry_on if cascade else None
+    models = [settings.lane(n).model for n in (retry, "judge", lane) if n]
+    console.print("preflight: " + " · ".join(models))
+    problems = preflight(ScheduledBackend(backend, gpu, off_gpu_models(settings)), models)
+    if problems:
+        for line in problems:
+            console.print(f"[red]preflight failed[/] {line}")
+        console.print("Nothing was run. Fix the model above, then start the eval again.")
+        raise typer.Exit(3)
+    for r in gpu.snapshot()["residents"]:
+        console.print(f"  resident {r['name']}: {r['state']}")
 
 
 def _eval_runs(
@@ -688,28 +719,34 @@ def _eval_runs(
     fake: bool,
     write: bool,
     show: Any,
-) -> list[Any]:
-    from pablo.evals import append_result, run_suite
+) -> tuple[list[Any], bool]:
+    from pablo.evals import InfraError, append_result, run_suite
     from pablo.judge_replay import append_cases
     from pablo.sandbox import LocalSandbox
 
-    reports = []
+    reports: list[Any] = []
     for i in range(max(1, repeat)):
         if repeat > 1:
             console.print(f"[bold]run {i + 1} of {repeat}[/]")
-        report = run_suite(
-            settings,
-            backend,
-            lane=lane,
-            only={x.strip() for x in only.split(",") if x.strip()} or None,
-            sandbox=LocalSandbox() if fake else None,
-            swap=None if fake else SwapView(),
-            on_task=show,
-            cascade=cascade,
-            spec=spec,
-            learn={x.strip() for x in learn.split(",") if x.strip()} or None,
-            lessons=lessons,
-        )
+        try:
+            report = run_suite(
+                settings,
+                backend,
+                lane=lane,
+                only={x.strip() for x in only.split(",") if x.strip()} or None,
+                sandbox=LocalSandbox() if fake else None,
+                swap=None if fake else SwapView(),
+                on_task=show,
+                cascade=cascade,
+                spec=spec,
+                learn={x.strip() for x in learn.split(",") if x.strip()} or None,
+                lessons=lessons,
+            )
+        except InfraError as exc:
+            console.print(f"[red]stopped: the box failed, not the model[/] {exc}")
+            console.print(f"Runs finished before this one are kept ({len(reports)}). This one "
+                          "isn't written: its numbers would be noise.")  # fmt: skip
+            return reports, True
         s = report.summary()
         console.print(
             f"pass {s['pass_rate']:.0%} {s['pass_rate_by_refs']} · ready {s['ready']} "
@@ -721,7 +758,7 @@ def _eval_runs(
             append_result(report)
             added = append_cases(report.replay)
             console.print(f"judge replay: {added} new diffs in evals/judge/replay.jsonl")
-    return reports
+    return reports, False
 
 
 def _eval_report(reports: list[Any], repeat: int, write: bool, fake: bool) -> None:

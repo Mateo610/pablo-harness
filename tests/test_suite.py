@@ -238,3 +238,55 @@ def test_eval_keeps_judged_diffs_for_the_judge_replay(settings: Settings, tmp_pa
     loose = {x["threshold"]: x for x in report.sweep()}
     assert loose[0.9]["false_ready"] == 2 and loose[0.9]["missed"] == 0  # 0.95 clears every bar
     assert "| false ready |" in report.to_markdown()
+
+
+def test_a_box_failure_is_retried_once_then_stops_the_suite(settings: Settings) -> None:
+    """A deep 500 (the voice server on the GPU) says nothing about the model: don't score it."""
+    import httpx
+
+    from pablo.evals import InfraError
+
+    perfect = _coder(cheat=False).scripts["pablo/coder"]
+    judge = json.dumps({"certainty": 0.9, "summary": "ok", "question": ""})
+    calls = {"deep": 0}
+
+    def deep(model: str, msgs: Sequence[Message]) -> str:
+        calls["deep"] += 1
+        if calls["deep"] == 1:  # the first try hits a full GPU; the second one works
+            req = httpx.Request("POST", "http://127.0.0.1:4000/v1/chat/completions")
+            raise httpx.HTTPStatusError(
+                "Server error '500 Internal Server Error'", request=req,
+                response=httpx.Response(500, request=req),
+            )  # fmt: skip
+        return perfect(model, msgs)
+
+    unsure = "I'm not sure what to change."
+    backend = FakeBackend(scripts={"pablo/coder": lambda m, x: unsure, "pablo/deep": deep,
+                                   "pablo/judge": lambda m, x: judge})  # fmt: skip
+    one = {"ledger-by-payee-sums"}
+    waited: list[float] = []
+    report = run_suite(settings, backend, only=one, python=PY, sandbox=LocalSandbox(),
+                       cascade=True, pause=waited.append)  # fmt: skip
+    assert waited == [30.0] and report.results[0].hidden_passed  # scored on the retry
+
+    def refused(model: str, msgs: Sequence[Message]) -> str:
+        raise httpx.ConnectError("Connection refused")
+
+    broken = FakeBackend(scripts={"pablo/coder": lambda m, x: unsure, "pablo/deep": refused,
+                                  "pablo/judge": lambda m, x: judge})  # fmt: skip
+    with pytest.raises(InfraError, match="ledger-by-payee-sums"):
+        run_suite(settings, broken, only=one, python=PY, sandbox=LocalSandbox(), cascade=True,
+                  pause=lambda s: None)  # fmt: skip
+
+
+def test_preflight_names_the_model_that_doesnt_answer() -> None:
+    from pablo.evals import preflight
+
+    def down(model: str, msgs: Sequence[Message]) -> str:
+        raise RuntimeError("Server error '500 Internal Server Error'\nmore")
+
+    backend = FakeBackend(scripts={"pablo/coder": lambda m, x: "OK", "pablo/deep": down})
+    assert preflight(backend, ["pablo/coder"]) == []
+    assert preflight(backend, ["pablo/deep", "pablo/coder"]) == [
+        "pablo/deep: Server error '500 Internal Server Error'"
+    ]

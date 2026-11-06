@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import shutil
 import statistics
 import subprocess
@@ -188,6 +189,36 @@ class TaskResult:
         return self.state == "ready"
 
 
+INFRA = re.compile(
+    r"Server error '5\d\d|ConnectError|Connection refused|ReadTimeout|RemoteProtocolError"
+    r"|Server disconnected|didn't come up"
+)
+
+
+class InfraError(RuntimeError):
+    """The box failed, not the model: a 5xx or a dropped connection from the gateway."""
+
+
+def infra_error(*runs: Any) -> str:
+    """The infrastructure error behind a failed run, or "" when the model simply got it wrong."""
+    for run in runs:
+        q = getattr(run, "question", "") or ""
+        if q.startswith("Run failed:") and INFRA.search(q):
+            return q
+    return ""
+
+
+def preflight(backend: Any, models: list[str]) -> list[str]:
+    """One tiny call to every model the suite will use, in suite order. Problems, or []."""
+    problems = []
+    for model in models:
+        try:
+            backend.complete(model, [{"role": "user", "content": "Reply with OK."}], max_tokens=8)
+        except Exception as exc:
+            problems.append(f"{model}: {str(exc).splitlines()[0][:200]}")
+    return problems
+
+
 @dataclass
 class SuiteReport:
     lane: str
@@ -330,6 +361,8 @@ def run_suite(
     spec: bool | None = None,
     learn: set[str] | None = None,
     lessons: Path | None = None,
+    infra_wait_s: float = 30.0,
+    pause: Callable[[float], None] = time.sleep,
 ) -> SuiteReport:
     """Run `lane` on every task (or `only` those ids) and score each against its hidden test.
 
@@ -373,6 +406,16 @@ def run_suite(
             started = time.perf_counter()
             first = orch.start(task.task, lane=lane)
             run = orch.get(first.retry_run) if first.retry_run else first
+            if infra_error(first, run):
+                # A 500 or a dropped connection says nothing about the model. Give the box a
+                # moment and try the task once more (runs never touch the repo, so it's the same
+                # task); if it fails the same way, stop: the rest of the suite would be noise.
+                pause(infra_wait_s)
+                started = time.perf_counter()
+                first = orch.start(task.task, lane=lane)
+                run = orch.get(first.retry_run) if first.retry_run else first
+                if why := infra_error(first, run):
+                    raise InfraError(f"{task.id}: {why[:300]}")
             wall = time.perf_counter() - started
             passed, tail = (
                 hidden_check(task, repo, run.diff, box, python=python)
