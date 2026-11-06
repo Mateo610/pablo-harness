@@ -20,6 +20,13 @@ tests, ignoring a stated constraint). Swapping from the coder costs ~7.6 s; a ju
   `84a7349`): 33, 32, 34 (99/108), false ready 5, 3 right changes held back, 2586 s. Task by task,
   8 tasks differ by one run each, 5 favoring the heretic and 3 the Qwen judge: noise. Leaving out
   the two tasks no judge catches, false ready is 2 vs 3.
+- **[measured]** Same 275 replay diffs (33 broken), threshold 0.75, weight 3× false ready + a
+  missed review (`085f0a7`). Qwen reasoning off: false ready 12, missed 28, weighted 64, 2.21 s.
+  Heretic: 15, 23, 68, 1.20 s. Qwen reasoning on (4096 tokens): 7, 57, 78, 33.9 s. Clean-but-broken
+  caught 16/28, 13/28, 21/28. Reasoning-off Qwen beats the heretic on this set. Reasoning on is
+  stricter and about 15× slower; at 0.75 the extra reviews lose the weighted score. Its best
+  cutoff on the sweep is 0.5 (false ready 8, missed 30, weighted 54). Qwen-off does not move
+  between 0.5 and 0.9.
 
 ## Weaknesses
 
@@ -27,26 +34,29 @@ tests, ignoring a stated constraint). Swapping from the coder costs ~7.6 s; a ju
   change that's wrong), and it's still 1–3 per run.
 - **[suspected]** The judge sees the coder's own tests passing and believes them: it shares the
   coder's blind spot (see verification.md).
-- **[measured]** On the suite the Qwen judge is not better than the heretic, and it may be more
-  cautious (7 vs 3 right changes held back) and a little slower. The replay bake-off (same 143
-  diffs, both judges) said the opposite. 45 new replay diffs from `2e20e05` can settle it.
+- **[measured]** On the suite the Qwen judge is not better than the heretic (96/108 vs 99/108,
+  false ready 8 vs 5), inside the noise. On the 275-diff replay it is better (weighted 64 vs 68,
+  false ready 12 vs 15). The suite and the replay still disagree.
 - **[suspected]** One threshold for every task type. A refactor and a new feature probably
   deserve different bars.
 
-- **[suspected]** Our setup leans toward the heretic: the Qwen judge runs with reasoning off
-  (the heretic has no thinking mode to lose), the judge prompt's 0.2/0.3 anchors were written
-  from the heretic's mistakes (Nov 1–2), and the suite scores a reviewer's fair question on a
-  change whose hidden test passes as a miss. M7f measures the first on replay.
+- **[measured]** Reasoning off is not what makes Qwen lose to the heretic on replay: with it off,
+  Qwen's weighted score is better (64 vs 68). Turning reasoning on cuts false ready (12 → 7) and
+  catches more clean-but-broken (16/28 → 21/28), and costs 33.9 s instead of 2.21 s. The
+  heretic-tuned 0.2/0.3 anchors were left as they are; a prompt change would be tested on
+  `evals/judge` and the holdout, not on these diffs.
 - **[measured]** Both judges are poorly calibrated on subtle errors: on wrong changes the Qwen
   judge's median certainty was 0.9, the same as on right ones; the heretic's was 0.8 vs 1.0.
-- **[observed]** One Qwen reply at `2e20e05` was unscorable (no JSON), and the judge's reply budget
-  is 300 tokens. M7f looks at why.
+- **[measured]** The unscorable `textkit-truncate-words` reply (run `c6bcbbab1a`, certainty 0) was
+  cut off at 300 tokens. Replayed, `finish_reason` was `length` and the text opened
+  `{"certainty": 0.3, "summary": ...` then spent the budget deliberating inside the summary, so
+  the object never closed and did not parse. Not prose before the JSON.
 
 ## Ideas
 
 | Idea | How we'd know |
 |---|---|
-| Judge with reasoning on, only when certainty lands near the threshold (0.6–0.85) | false ready on replay and suite, plus seconds per judgement |
+| Judge with reasoning on, only when certainty lands near the threshold (0.6–0.85) | Always-on reasoning is measured (false ready 7, 33.9 s, weighted 78 at 0.75). The near-threshold version is not |
 | Tell the judge which tests the diff added, and ask whether they test the task or the diff | false ready on replay |
 | Per task type thresholds, fitted on replay | false ready vs false alarms on replay, then suite |
 
