@@ -2599,3 +2599,36 @@ Passed per run [34, 29, 33] · mean 89% ± 7% · false ready over all runs 8
 
 - Flaky (7): harness-clip-small-caps, harness-judge-fenced-json, harness-memory-units, inventory-remove-too-many, ledger-comments, textkit-slug-accents, textkit-slug-max-length
 - Never passed (1): textkit-reading-time
+
+### Judge replay · pablo/judge · 275 suite diffs (33 broken)
+
+False ready **12** (caught 64% of broken) · clean-but-broken caught 16/28 · missed 28 · ready precision 0.947 · certainty passed 0.84 / failed 0.5 · threshold 0.75
+
+False ready: harness-memory-units, textkit-slug-accents, harness-memory-units, ledger-comments, textkit-slug-accents, ledger-comments, textkit-slug-max-length, textkit-reading-time, textkit-slug-accents, textkit-slug-max-length, textkit-reading-time, ledger-comments
+
+| threshold | 0.5 | 0.6 | 0.7 | 0.75 | 0.8 | 0.9 |
+|---|---|---|---|---|---|---|
+| false ready | 12 | 12 | 12 | 12 | 12 | 12 |
+| missed | 28 | 28 | 28 | 28 | 28 | 28 |
+
+### Judge replay · pablo/advisor · 275 suite diffs (33 broken)
+
+False ready **15** (caught 55% of broken) · clean-but-broken caught 13/28 · missed 23 · ready precision 0.936 · certainty passed 0.9 / failed 0.57 · threshold 0.75
+
+False ready: textkit-wrap-max-lines, textkit-reading-time, harness-memory-units, ledger-refunds-parse, textkit-slug-max-length, harness-memory-units, ledger-comments, ledger-comments, harness-memory-units, textkit-reading-time, inventory-csv-lenient, harness-judge-fenced-json, textkit-slug-max-length, textkit-reading-time, ledger-comments
+
+| threshold | 0.5 | 0.6 | 0.7 | 0.75 | 0.8 | 0.9 |
+|---|---|---|---|---|---|---|
+| false ready | 15 | 15 | 15 | 15 | 15 | 9 |
+| missed | 23 | 23 | 23 | 23 | 23 | 46 |
+
+### Judge replay · pablo/judge-qwen-think · 275 suite diffs (33 broken)
+
+False ready **7** (caught 79% of broken) · clean-but-broken caught 21/28 · missed 57 · ready precision 0.964 · certainty passed 0.78 / failed 0.33 · threshold 0.75
+
+False ready: ledger-comments, textkit-slug-accents, ledger-comments, textkit-slug-max-length, textkit-reading-time, textkit-slug-accents, ledger-comments
+
+| threshold | 0.5 | 0.6 | 0.7 | 0.75 | 0.8 | 0.9 |
+|---|---|---|---|---|---|---|
+| false ready | 8 | 7 | 7 | 7 | 7 | 6 |
+| missed | 30 | 35 | 45 | 57 | 62 | 98 |
