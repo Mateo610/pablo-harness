@@ -23,6 +23,7 @@ Status: `todo` · `doing` · `done`. Update this table when a gate passes.
 | M7c | Judge bake-off | `pablo eval-judge --set replay` on real suite diffs labeled by hidden tests; new judge has fewer false ready than the heretic at its best threshold. Heretic becomes the `advisor` lane | done (bake-off at 18d5523; Matt picked Qwen3.8-27B dense, threshold 0.75; switch with Cursor) |
 | M7d | Task-derived checks | Tests written from the request before the diff is seen, run before/after in the sandbox; on only if false ready drops with ≤ 1 false alarm per run | todo (built in core, off; prompt `docs/cursor-prompts/M7d-spec-checks.md`) |
 | M8 | Learning loop | LoRA trained on `pablo export-training` output; promoted only if eval score beats baseline | doing (pipeline runs end to end; gate fixed 2026-11-04 to 3+3 same-night runs; first candidate held: 7 examples, 1 run) |
+| M8b | Learning without retraining | Practice tasks from your repos (kept only if the real tests pass), examples and failure notes in the coder prompt, learned coder-vs-deep routing; each kept only if the suite says it helps | doing (built in core, off; `docs/cursor-prompts/M8b-learning.md`) |
 | M9 | Specialist lanes | Media lane dispatches image and 3D jobs; results come back as evidence cards | todo |
 | M9b | Voice lane | Talk to the orchestrator, advisor, or deep in the browser: local speech-to-text and text-to-speech, replies spoken as they stream, turns land in a conversation, first word under 2.5 s on the orchestrator | doing (STT whisper.cpp v1.9.5 `small.en` on 127.0.0.1:8090; TTS Qwen3-TTS 0.6B CustomVoice, coder Vivian, advisor Serena; HTTPS cert still needs one `sudo`. `docs/cursor-prompts/M9b-voice.md`) |
 | M10 | Ownership | Every model archived with checksums; full offline run with network unplugged; Headscale option documented | doing (archive + verify script + Headscale doc + telemetry audit; offline drill after tonight's evals) |
@@ -39,6 +40,7 @@ Status: `todo` · `doing` · `done`. Update this table when a gate passes.
 | C6 | Conversations + memory | Multi-turn chats per profile in `~/.pablo/pablo.db`; RUN lines start ordinary runs; notes kept only when you keep them; FTS search; nothing of memory goes to Claude | done (API + `pablo chat` / `pablo memory`; cockpit v2 Chat UI next) |
 | C7 | Profiles + teammate access | Tailscale identity → profile, owner/member roles, only the owner approves | done (`tailscale whois` per peer IP; headers never trusted; `~/.pablo/access.yaml`; see `docs/teammates.md`) |
 | C8 | Cockpit v2 in the browser | Home, Chat, Advisor, Agents live on the API; Voice shows the orb until M9b; v1 tools stay as Work | doing (pages live; voice lane, phone layout for the new pages, GPU mode switch to come) |
+| C9 | GPU scheduler | One lease for the GPU: voice > chat > runs > retries > night; same-model calls share; background waits for quiet; Interactive / Balanced / Deep Work modes | done (`src/pablo/gpu.py`, `/api/gpu`, switch on Home, queue on Agents) |
 
 ## Order that works
 M0 → M1 unblocks everything real. C1–C2 can be built any time (fake mode). M3 and M4 go

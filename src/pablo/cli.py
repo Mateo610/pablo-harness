@@ -627,6 +627,13 @@ def eval_suite(
     cascade: Annotated[
         bool, typer.Option(help="Retry Needs-you runs on the lane's retry_on lane (coder → deep)")
     ] = False,
+    learn: Annotated[
+        str, typer.Option(help="Turn on learning pieces: examples,failures,routing")
+    ] = "",
+    lessons: Annotated[
+        Path | None,
+        typer.Option(help="Start from this lessons folder (from practice --suite-seeds)"),
+    ] = None,
     spec: Annotated[
         bool | None,
         typer.Option(
@@ -666,6 +673,8 @@ def eval_suite(
             on_task=show,
             cascade=cascade,
             spec=spec,
+            learn={x.strip() for x in learn.split(",") if x.strip()} or None,
+            lessons=lessons,
         )
         s = report.summary()
         console.print(
@@ -798,6 +807,90 @@ def _memory_store() -> Any:
     store = Store(load_settings().home / "pablo.db")
     store.ensure_profile(OWNER, "Owner", "owner")
     return store
+
+
+@app.command("practice")
+def practice_cmd(
+    repo: RepoOpt = Path("."),
+    n: Annotated[int, typer.Option(help="How many tasks to make and attempt")] = 10,
+    teacher: Annotated[
+        str, typer.Option(help="Lane that tries what the coder missed; '' for none")
+    ] = "deep",
+    suite_seeds: Annotated[
+        bool, typer.Option(help="Practice on the suite's seed repos, for measuring (needs --out)")
+    ] = False,
+    out: Annotated[
+        Path | None, typer.Option(help="Write lessons here instead of ~/.pablo/lessons")
+    ] = None,
+    fake: FakeOpt = False,
+) -> None:
+    """Make checkable tasks from a repo, attempt them, keep the fixes that pass its tests.
+
+    Kept fixes become examples, misses become failure notes, both become lane outcomes
+    (~/.pablo/lessons). Functions the eval suite names are always skipped.
+    """
+    import tempfile as _tempfile
+
+    from pablo.lessons import Lessons
+    from pablo.practice import Practice, PracticeResult
+
+    def show(r: PracticeResult) -> None:
+        mark = f"[green]kept · {r.lane}[/]" if r.passed else f"[red]missed[/] {r.reason[:70]}"
+        console.print(f"  {r.kind:<11} {r.target:<48} {mark}")
+
+    if not suite_seeds:
+        orch = _orch(repo.resolve(), fake)
+        lessons = Lessons(out) if out else None
+        coach = Practice(orch, lessons=lessons, teacher=teacher or None, on_result=show)
+        results = coach.session(repo.resolve(), n)
+    else:
+        if out is None:
+            console.print("[red]--suite-seeds writes to a separate folder: pass --out DIR[/]")
+            raise typer.Exit(2)
+        from pablo.evals import load_suite, materialize
+
+        firsts: dict[str, Any] = {}
+        for task in load_suite():
+            if task.repo != "harness":  # the harness seed needs the full app installed
+                firsts.setdefault(task.repo, task)
+        results = []
+        with _tempfile.TemporaryDirectory(prefix="pablo-seed-practice-") as tmp:
+            seeds = {name: materialize(task, Path(tmp)) for name, task in firsts.items()}
+            orch = _orch(next(iter(seeds.values())), fake)
+            coach = Practice(orch, lessons=Lessons(out), teacher=teacher or None, on_result=show)
+            for name, path in seeds.items():
+                console.print(f"[bold]{name}[/]")
+                results += coach.session(path, max(1, n // len(seeds)), key=name, allow_suite=True)
+    kept = sum(r.passed for r in results)
+    console.print(
+        f"kept {kept} of {len(results)} · lessons in {(out or load_settings().home) / 'lessons'}"
+    )
+
+
+@app.command("lessons")
+def lessons_cmd(
+    where: Annotated[Path | None, typer.Option(help="A home folder (default ~/.pablo)")] = None,
+) -> None:
+    """What Pablo has learned without retraining: examples, failure notes, lane outcomes."""
+    from collections import Counter
+
+    from pablo.lessons import Lessons
+
+    store = Lessons(where or load_settings().home)
+    examples, failures = store.examples(), store.failures()
+    by = Counter((e.repo, e.source) for e in examples)
+    console.print(f"[bold]examples[/] {len(examples)}")
+    for (repo_name, source), count in sorted(by.items()):
+        console.print(f"  {repo_name:<24} {source:<9} {count}")
+    console.print(f"[bold]failure notes[/] {len(failures)}")
+    rows = store._read("outcomes.jsonl")
+    seen = sorted({(r["repo"], r["kind"]) for r in rows})
+    if seen:
+        console.print("[bold]outcomes[/] (right / tried)")
+    for repo_name, kind in seen:
+        rec = store.lane_record(repo_name, kind)
+        cells = "  ".join(f"{lane} {r}/{t}" for lane, (r, t) in sorted(rec.items()))
+        console.print(f"  {repo_name:<24} {kind:<10} {cells}")
 
 
 @app.command("token")

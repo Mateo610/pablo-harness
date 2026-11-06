@@ -340,6 +340,14 @@ class Budget:
         files = BUDGET["files"] + extra - (tree - BUDGET["tree"])
         return cls(total=total, files=files, tree=tree, max_files=60)
 
+    def shrunk(self, tokens_out: int) -> Budget:
+        """The same budget with `tokens_out` fewer tokens of files, for prompts that add more."""
+        if tokens_out <= 0:
+            return self
+        files = max(2500, self.files - tokens_out)
+        return Budget(total=self.total - (self.files - files), files=files, tree=self.tree,
+                      max_files=self.max_files)  # fmt: skip
+
     @property
     def per_file(self) -> int:
         """No single file may eat more than a third of the files section."""

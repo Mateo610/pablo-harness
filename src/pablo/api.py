@@ -10,7 +10,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
@@ -86,6 +86,10 @@ class SayIn(BaseModel):
     do: bool | None = None  # True: run it · False: just talk · None: the model decides
     confirm: bool = False  # required for a lane that leaves Pablo (Claude), every send
     stream: bool = False  # reply as NDJSON: {"type": "delta"} pieces, then "done" or "error"
+
+
+class ModeIn(BaseModel):
+    mode: Literal["interactive", "balanced", "deep"]
 
 
 class MemoryIn(BaseModel):
@@ -276,6 +280,10 @@ def create_app(
         cfg = orch.settings.lanes.get(lane)
         if cfg is None or cfg.kind != "local" or cfg.requires_approval:
             raise HTTPException(400, "Voice talks to a local model on Pablo.")
+        if orch.gpu.mode == "deep":
+            raise HTTPException(
+                409, "Pablo is in Deep Work mode: voice is paused so deep keeps the GPU."
+            )
         if conversation:
             conv = _found(store.conversation, conversation, who)
         else:
@@ -622,6 +630,17 @@ def create_app(
     def forget_memory(mid: str, request: Request) -> dict[str, Any]:
         store.forget(mid, profile_of(request))
         return {"forgot": mid}
+
+    @app.get("/api/gpu")
+    def gpu_state() -> dict[str, Any]:
+        """Mode, who has the GPU, and who's waiting, most urgent first."""
+        return orch.gpu.snapshot()
+
+    @app.post("/api/gpu/mode")
+    def gpu_mode(body: ModeIn, request: Request) -> dict[str, Any]:
+        owner_only(request)
+        orch.gpu.set_mode(body.mode)
+        return orch.gpu.snapshot()
 
     @app.get("/api/repo")
     def repo_info() -> dict[str, Any]:

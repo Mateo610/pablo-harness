@@ -53,6 +53,8 @@ class Lane(BaseModel):
     # Sampling. Most lanes stay at 0.2. A lane sets top_p only when its model card requires it.
     temperature: float = 0.2
     top_p: float | None = None
+    # Runs on the GPU (takes the scheduler's lease). The router runs on the CPU.
+    gpu: bool = True
 
     @model_validator(mode="after")
     def _remote_never_trains(self) -> Lane:
@@ -184,6 +186,33 @@ class SpecConfig(BaseModel):
     timeout_s: float = 120.0
 
 
+class GpuConfig(BaseModel):
+    """The GPU scheduler (src/pablo/gpu.py). `mode` is the starting mode; the owner's switch
+    on Home overrides it (saved in ~/.pablo/gpu-mode.json)."""
+
+    mode: Literal["interactive", "balanced", "deep"] = "balanced"
+    idle_s: float = 120.0  # balanced: background work waits this long after the last live call
+
+
+class LearnConfig(BaseModel):
+    """Learning without retraining (src/pablo/lessons.py). Recording always happens; using it
+    in prompts and routing is off until the suite shows it helps."""
+
+    examples: bool = False  # show the coder 1 or 2 right answers from this repo
+    failures: bool = False  # warn the coder what broke on similar changes before
+    routing: bool = False  # send a kind of task to deep when deep clearly does better here
+    example_tokens: int = 1500
+
+
+class PracticeConfig(BaseModel):
+    """Nightly practice (src/pablo/practice.py): checkable tasks made from these repos, run in
+    the overnight window after the queue, at night urgency. Never the eval suite's repos."""
+
+    repos: list[str] = Field(default_factory=list)
+    nightly_tasks: int = 0  # 0 = off
+    teacher: str = "deep"  # tries what the coder got wrong; "" for none
+
+
 class Settings(BaseModel):
     gateway: Gateway = Field(default_factory=Gateway)
     thresholds: Thresholds = Field(default_factory=Thresholds)
@@ -191,6 +220,9 @@ class Settings(BaseModel):
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     spec: SpecConfig = Field(default_factory=SpecConfig)
+    gpu: GpuConfig = Field(default_factory=GpuConfig)
+    learn: LearnConfig = Field(default_factory=LearnConfig)
+    practice: PracticeConfig = Field(default_factory=PracticeConfig)
     lanes: dict[str, Lane]
     home: Path = Field(default_factory=lambda: default_home())
 

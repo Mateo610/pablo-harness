@@ -20,6 +20,8 @@ from typing import Any, Literal
 
 from pablo.config import Overnight
 from pablo.events import Event
+from pablo.gpu import Priority
+from pablo.gpu import job as gpu_job
 from pablo.orchestrator import Orchestrator, Run
 from pablo.plan import Plan
 
@@ -159,13 +161,14 @@ class OvernightRunner:
                 )
                 self._emit("queue", job, status="running", text=f"tonight · {job.task[:60]}")
                 try:
-                    run = self.orch.start(
-                        job.task,
-                        lane=lane,
-                        task_id=job.task_id,
-                        group=job.group,
-                        retried_from=job.retried_from,
-                    )
+                    with gpu_job(Priority.NIGHT):  # yields to anyone working, even at night
+                        run = self.orch.start(
+                            job.task,
+                            lane=lane,
+                            task_id=job.task_id,
+                            group=job.group,
+                            retried_from=job.retried_from,
+                        )
                     job = self.queue.update(
                         job.id,
                         status="done",
@@ -350,6 +353,8 @@ class Scheduler:
         cfg = self.runner.cfg
         if in_window(cfg, at) and self.runner.queue.pending():
             self.runner.run_pending(at=at)
+        if in_window(cfg, at) and not self.runner.queue.pending():
+            self.practice(at)
         if at.time() >= _hm(cfg.brief_at) and self.briefs.get(at.date().isoformat()) is None:
             brief = build_brief(
                 self.runner.orch,
@@ -360,6 +365,35 @@ class Scheduler:
             )
             self.briefs.save(brief)
             self.runner.orch.bus.publish(Event("brief", "brief", {"headline": brief.headline}))
+
+    def practice(self, at: datetime) -> None:
+        """Once a night, after the queue: practice on the configured repos."""
+        orch = self.runner.orch
+        cfg = orch.settings.practice
+        night = window_bounds(
+            self.runner.cfg, at.date() if at.hour < 12 else at.date() + timedelta(days=1)
+        )[0]
+        marker = orch.settings.home / "lessons" / "practiced-on"
+        stamp = night.date().isoformat()
+        if not cfg.repos or cfg.nightly_tasks <= 0:
+            return
+        if marker.is_file() and marker.read_text().strip() == stamp:
+            return
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(stamp)
+        from pablo.practice import Practice
+
+        per_repo = max(1, cfg.nightly_tasks // len(cfg.repos))
+        coach = Practice(orch, teacher=cfg.teacher or None, seed=int(stamp.replace("-", "")))
+        kept = 0
+        for i, repo in enumerate(cfg.repos):
+            if i and not in_window(self.runner.cfg, now_local()):
+                break  # morning came: the rest waits for tomorrow night
+            try:
+                kept += sum(r.passed for r in coach.session(Path(repo).expanduser(), per_repo))
+            except Exception as exc:  # one bad repo must not stop the night
+                orch.bus.publish(Event("error", "practice", {"message": f"{repo}: {exc}"}))
+        orch.bus.publish(Event("practice", "practice", {"kept": kept, "night": stamp}))
 
     def start(self, every_s: float = 60) -> None:
         def loop() -> None:
