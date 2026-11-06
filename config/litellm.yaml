@@ -29,7 +29,7 @@ model_list:
 
   - model_name: pablo/judge
     litellm_params:
-      model: openai/judge
+      model: openai/judge-qwen-dense
       api_base: http://127.0.0.1:8100/v1
       api_key: "none"
 
@@ -46,20 +46,7 @@ model_list:
       api_key: "none"
       timeout: 3600                        # overrides the global 900; lanes.yaml matches
 
-  # Judge bake-off aliases. pablo/judge stays on the heretic until Matt picks.
   # judge-coder hits the coder entry, so a resident coder is not swapped out.
-  - model_name: pablo/judge-mistral
-    litellm_params:
-      model: openai/judge-mistral
-      api_base: http://127.0.0.1:8100/v1
-      api_key: "none"
-
-  - model_name: pablo/judge-oss20
-    litellm_params:
-      model: openai/judge-oss20
-      api_base: http://127.0.0.1:8100/v1
-      api_key: "none"
-
   - model_name: pablo/judge-qwen-dense
     litellm_params:
       model: openai/judge-qwen-dense

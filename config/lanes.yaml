@@ -15,12 +15,14 @@ spec:                     # task-derived checks: tests from your request, writte
   lane: judge             # who writes them (the judge model is already loaded at that moment)
 
 voice:                    # M9b. Both engines are local processes; empty URLs turn voice off.
-  stt_url: ""             # whisper.cpp server, e.g. http://127.0.0.1:8090
+  stt_url: http://127.0.0.1:8090   # whisper.cpp small.en, CPU threads 4-7
   stt_api: whisper.cpp    # whisper.cpp (POST /inference) or openai (/v1/audio/transcriptions)
-  tts_url: ""             # OpenAI-style speech server, e.g. http://127.0.0.1:8880
-  tts_model: ""
+  tts_url: http://127.0.0.1:8880   # Qwen3-TTS 0.6B CustomVoice
+  tts_model: qwen3-tts
   tts_format: wav
-  voices: {}              # lane -> voice name, e.g. {coder: ..., advisor: ..., deep: ...}
+  voices:
+    coder: Vivian            # bright young female preset
+    advisor: Serena          # warm young female preset
   language: en
 
 overnight:                # Pablo's local time
@@ -76,7 +78,7 @@ lanes:
 
   judge:
     role: Reviews diffs and scores certainty
-    model: pablo/judge           # Mistral-Small-3.2-24B heretic Q5, llama.cpp
+    model: pablo/judge           # Qwen3.8-27B UD-Q4_K_M via judge-qwen-dense; threshold 0.75
     color: "#b9a3ff"
     kind: local
     train_ok: true

@@ -24,7 +24,7 @@ Status: `todo` · `doing` · `done`. Update this table when a gate passes.
 | M7d | Task-derived checks | Tests written from the request before the diff is seen, run before/after in the sandbox; on only if false ready drops with ≤ 1 false alarm per run | todo (built in core, off; prompt `docs/cursor-prompts/M7d-spec-checks.md`) |
 | M8 | Learning loop | LoRA trained on `pablo export-training` output; promoted only if eval score beats baseline | doing (pipeline runs end to end; gate fixed 2026-11-04 to 3+3 same-night runs; first candidate held: 7 examples, 1 run) |
 | M9 | Specialist lanes | Media lane dispatches image and 3D jobs; results come back as evidence cards | todo |
-| M9b | Voice lane | Talk to the orchestrator, advisor, or deep in the browser: local speech-to-text and text-to-speech, replies spoken as they stream, turns land in a conversation, first word under 2.5 s on the orchestrator | doing (harness, API, Voice page, HTTPS via `pablo cert` done; engines on Pablo: `docs/cursor-prompts/M9b-voice.md`) |
+| M9b | Voice lane | Talk to the orchestrator, advisor, or deep in the browser: local speech-to-text and text-to-speech, replies spoken as they stream, turns land in a conversation, first word under 2.5 s on the orchestrator | doing (STT whisper.cpp v1.9.5 `small.en` on 127.0.0.1:8090; TTS Qwen3-TTS 0.6B CustomVoice, coder Vivian, advisor Serena; HTTPS cert still needs one `sudo`. `docs/cursor-prompts/M9b-voice.md`) |
 | M10 | Ownership | Every model archived with checksums; full offline run with network unplugged; Headscale option documented | doing (archive + verify script + Headscale doc + telemetry audit; offline drill after tonight's evals) |
 
 ## Core track (built with Claude, pushed to this repo)

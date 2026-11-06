@@ -1,0 +1,15 @@
+[Unit]
+Description=Pablo speech-to-text (whisper.cpp, CPU)
+After=network-online.target
+
+[Service]
+Type=simple
+# Cores 0-3 (CPUs 0-3 and 8-11) stay with llama.cpp. The sandbox owns 12-15,
+# one thread of cores 4-7. Voice takes the other thread of those cores.
+CPUAffinity=4-7
+ExecStart=/home/mateo610/pablo-data/engines/whisper.cpp/build/bin/whisper-server -m /home/mateo610/pablo-data/models/whisper/ggml-small.en.bin --host 127.0.0.1 --port 8090 -t 4 -l en
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

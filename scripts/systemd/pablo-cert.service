@@ -1,0 +1,10 @@
+[Unit]
+Description=Renew Pablo's Tailscale TLS certificate and restart the harness
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/mateo610/Desktop/pablo-harness/pablo-harness-main
+Environment=HOME=/home/mateo610
+Environment=PATH=/home/mateo610/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/home/mateo610/.local/bin/uv run pablo cert
+ExecStart=/usr/bin/systemctl --user restart pablo.service

@@ -1,0 +1,35 @@
+[Unit]
+Description=Pablo text-to-speech (Qwen3-TTS 0.6B CustomVoice)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/mateo610/pablo-data/engines/qwen3-tts
+# Same cores as speech-to-text: not llama.cpp's first cores, not the sandbox's 12-15.
+CPUAffinity=4-7
+Environment=HF_HUB_OFFLINE=1
+Environment=TRANSFORMERS_OFFLINE=1
+Environment=HF_HUB_DISABLE_TELEMETRY=1
+Environment=HF_HOME=/home/mateo610/pablo-data/hf-cache
+Environment=GRADIO_ANALYTICS_ENABLED=false
+Environment=TORCHDYNAMO_DISABLE=1
+Environment=OMP_NUM_THREADS=4
+Environment=MKL_NUM_THREADS=4
+Environment=HOST=127.0.0.1
+Environment=PORT=8880
+Environment=WORKERS=1
+Environment=TTS_BACKEND=official
+Environment=TTS_MODEL_ID=/home/mateo610/pablo-data/models/Qwen3-TTS-12Hz-0.6B-CustomVoice
+Environment=TTS_DEVICE=cuda
+Environment=TTS_DTYPE=bfloat16
+Environment=TTS_LAZY_LOAD=false
+Environment=TTS_WARMUP_ON_START=false
+Environment=CPU_THREADS=4
+Environment=CPU_INTEROP=1
+Environment=PYTHONPATH=/home/mateo610/pablo-data/engines/qwen3-tts
+ExecStart=/home/mateo610/pablo-data/engines/qwen3-tts/.venv/bin/python -m uvicorn api.main:app --host 127.0.0.1 --port 8880
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
