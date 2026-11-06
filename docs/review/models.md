@@ -26,7 +26,11 @@
   Talk 3/8 typed and 2/8 spoken: a question usually starts a run.
 - **[measured]** Hybrid plan mode on 5 small tools from an empty project (`90319fc`): accepted
   1/5, planned 5/5, finished 5/5, mean steps 3.8, wall 1059 s. Seven approvals were clean but
-  the judge was unsure. None rejected. No project errored.
+  the judge was unsure. None rejected. No project errored. Again at `bc535d9`: accepted 2/5,
+  finished 4/5, mean steps 3.4, 4 steps rejected, wall 3873 s. `build-units` flipped to pass.
+- **[measured]** Hybrid chat on the same 22 messages at `bc535d9`: typed 20/22 (talk 6/8, run
+  8/8, plan 6/6), spoken 18/22 (talk 6/8, run 8/8, plan 4/6). At `2563ea6` that was typed 14/22
+  and spoken 16/22, with talk at 3/8 and 2/8.
 - **[measured]** Extended thinking in Chat, Base, hello repo. `coder-think` is `-c 32768` and
   held the 3090 alone: process 19668 MiB, card 20451/24576 MiB, router on CPU. Thinking on
   (model already warm): question 2.3 s to the first word, 2.5 s for the reply, no run; a

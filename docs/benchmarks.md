@@ -2664,3 +2664,35 @@ Accepted 1/5 · planned 5 (asked twice 0) · finished 5 · mean steps 3.8 · wal
 | build-csvstats | yes | 5 | 4 (2 unsure) | 0 | yes | fail | 62 s |
 | build-ratelimit | yes | 4 | 4 (1 unsure) | 0 | yes | **pass** | 70 s |
 | build-mdtoc | yes | 3 | 3 (1 unsure) | 0 | yes | fail | 796 s |
+
+### Chat behavior · auto · `bc535d9`
+
+Right 20/22 (91%) · by label {'talk': 0.75, 'run': 1.0, 'plan': 1.0}
+
+| wanted \ chose | talk | run | plan |
+|---|---|---|---|
+| talk | 6 | 2 | 0 |
+| run | 0 | 8 | 0 |
+| plan | 0 | 0 | 6 |
+
+### Chat behavior · auto · spoken · `bc535d9`
+
+Right 18/22 (82%) · by label {'talk': 0.75, 'run': 1.0, 'plan': 0.667}
+
+| wanted \ chose | talk | run | plan |
+|---|---|---|---|
+| talk | 6 | 2 | 0 |
+| run | 0 | 8 | 0 |
+| plan | 0 | 2 | 4 |
+
+### Build set · auto · `bc535d9`
+
+Accepted 2/5 · planned 5 (asked twice 1) · finished 4 · mean steps 3.4 · wall 3872.8 s
+
+| Project | Planned | Steps | Approved | Rejected | Finished | Acceptance | Wall |
+|---|---|---|---|---|---|---|---|
+| build-units | yes | 3 | 3 (0 unsure) | 1 | yes | **pass** | 1710 s |
+| build-todo | yes (2nd ask) | 3 | 3 (2 unsure) | 1 | yes | fail | 527 s |
+| build-csvstats | yes | 3 | 1 (1 unsure) | 2 | no | fail | 1124 s |
+| build-ratelimit | yes | 4 | 3 (1 unsure) | 0 | yes | **pass** | 489 s |
+| build-mdtoc | yes | 4 | 1 (0 unsure) | 0 | yes | fail | 22 s |
