@@ -8,7 +8,7 @@ mode or chat. Four new measurements (all GPU-free to build, all in this repo):
 | `pablo eval --set holdout --cascade --repeat 3 --write` | 12 harder, multi-file tasks on a new seed repo (gradebook). Prints and keeps **totals only** | ~1–1.5 h |
 | `pablo eval-build --write` | Plan mode end to end: 5 small tools from an empty project, scored by acceptance tests | ~1–2 h (unknown) |
 | `pablo eval-chat --write` (and `--spoken`) | Does Hybrid talk, start one change, or plan, when it should (22 labeled messages) | minutes |
-| `pablo eval --lane claude --allow-remote --write` | Claude on the 36 tasks, for scale | ~30 min, a few dollars |
+| `pablo eval --lane claude --allow-remote --write` | Claude on the 36 tasks, for scale (**on hold: no API key yet**) | ~30 min, a few dollars |
 
 **Rules for the holdout.** It exists so we stop fitting ourselves to the main suite. Never open
 `evals/holdout/tasks.yaml` to see why something failed, never paste holdout output into a prompt,
@@ -28,7 +28,8 @@ the same commit or newer, with nothing else using the GPU.
    see totals; that's the point.
 4. Build set: `uv run pablo eval-build --write`. If a project ends with an error (not a fail),
    report the error line and keep going.
-5. **Only with Matt's go-ahead** (it sends the 36 suite tasks to Anthropic and costs money; none
+5. **Skipped for now (2026-11-06): no Anthropic API key yet.** When there is one, and only with
+   Matt's go-ahead (it sends the 36 suite tasks to Anthropic and costs money; none
    of his code goes): check that `ANTHROPIC_API_KEY` is set for the gateway, decide with Matt which
    model `pablo/escalate` points at in `config/litellm.yaml` for this run (Sonnet is the default;
    Opus if he wants the top), then `uv run pablo eval --lane claude --allow-remote --write`. One

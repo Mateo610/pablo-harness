@@ -33,6 +33,15 @@ tests, ignoring a stated constraint). Swapping from the coder costs ~7.6 s; a ju
 - **[suspected]** One threshold for every task type. A refactor and a new feature probably
   deserve different bars.
 
+- **[suspected]** Our setup leans toward the heretic: the Qwen judge runs with reasoning off
+  (the heretic has no thinking mode to lose), the judge prompt's 0.2/0.3 anchors were written
+  from the heretic's mistakes (Nov 1–2), and the suite scores a reviewer's fair question on a
+  change whose hidden test passes as a miss. M7f measures the first on replay.
+- **[measured]** Both judges are poorly calibrated on subtle errors: on wrong changes the Qwen
+  judge's median certainty was 0.9, the same as on right ones; the heretic's was 0.8 vs 1.0.
+- **[observed]** One Qwen reply at `2e20e05` was unscorable (no JSON), and the judge's reply budget
+  is 300 tokens. M7f looks at why.
+
 ## Ideas
 
 | Idea | How we'd know |

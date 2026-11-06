@@ -100,6 +100,21 @@ models:
       --reasoning off
       --alias judge-qwen-dense
 
+  # The same judge, thinking. Only for `pablo eval-judge --set replay --model
+  # pablo/judge-qwen-think --max-tokens 4096`: is reasoning off what holds the Qwen judge back?
+  judge-qwen-think:
+    ttl: 0
+    proxy: http://127.0.0.1:${PORT}
+    cmd: >-
+      /home/mateo610/pablo-data/engines/llama.cpp/build/bin/llama-server
+      -m /home/mateo610/pablo-data/models/qwen3.8-27b/Qwen3.8-27B-UD-Q4_K_M.gguf
+      --host 127.0.0.1 --port ${PORT}
+      -c 16384 -ngl 99
+      --flash-attn on
+      --jinja
+      --reasoning on
+      --alias judge-qwen-think
+
 routing:
   router:
     use: group
@@ -121,3 +136,4 @@ routing:
             - advisor
             - deep
             - judge-qwen-dense
+            - judge-qwen-think

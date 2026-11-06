@@ -932,6 +932,9 @@ def eval_judge(
             "(real suite diffs labeled by hidden tests; the bake-off number)",
         ),
     ] = "main",
+    max_tokens: Annotated[
+        int, typer.Option(help="Room for the reply; a judge that reasons needs ~4096")
+    ] = 300,
 ) -> None:
     """Score the judge on fixed good/bad diffs (evals/judge), or replay real suite diffs."""
     from pablo.judge_eval import run_judge_eval
@@ -945,8 +948,9 @@ def eval_judge(
             console.print("[yellow]No replay yet: run `pablo eval --write` first.[/]")
             raise typer.Exit(1)
         replay = run_replay(
-            _backend(settings, fake), alias, threshold=settings.thresholds.judge_needs_you
-        )
+            _backend(settings, fake), alias, threshold=settings.thresholds.judge_needs_you,
+            max_tokens=max_tokens,
+        )  # fmt: skip
         table = replay.to_markdown()
         console.print(table)
         if write:

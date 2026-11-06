@@ -179,13 +179,14 @@ def run_replay(
     threshold: float = 0.75,
     path: Path = REPLAY,
     only: set[str] | None = None,
+    max_tokens: int = 300,
 ) -> ReplayReport:
     rows = []
     for case in load_cases(path):
         if only and case.task_id not in only:
             continue
         verdict = verdict_from_dict(case.verdict)
-        judgement = judge(backend, model, case.task, case.diff, verdict)
+        judgement = judge(backend, model, case.task, case.diff, verdict, max_tokens=max_tokens)
         rows.append(
             ReplayRow(
                 key=case.key,

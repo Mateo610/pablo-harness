@@ -54,15 +54,22 @@ class Judgement:
 
 
 def judge(
-    backend: ChatBackend, model: str, task: str, diff: str, verdict: Verdict, extra: str = ""
+    backend: ChatBackend,
+    model: str,
+    task: str,
+    diff: str,
+    verdict: Verdict,
+    extra: str = "",
+    max_tokens: int = 300,
 ) -> Judgement:
-    """`extra` is more evidence for the prompt, e.g. how task-derived checks went."""
+    """`extra` is more evidence for the prompt, e.g. how task-derived checks went.
+    `max_tokens`: a judge that reasons spends tokens thinking first; give it room."""
     evidence = verdict.summary() + (f"\n{extra}" if extra else "")
     messages: list[Message] = [
         {"role": "system", "content": JUDGE_PROMPT},
         {"role": "user", "content": f"Task:\n{task}\n\nEvidence: {evidence}\n\nDiff:\n{diff}"},
     ]
-    reply = backend.complete(model, messages, max_tokens=300, temperature=0.0)
+    reply = backend.complete(model, messages, max_tokens=max_tokens, temperature=0.0)
     judgement = parse_judgement(reply.text)
     if not verdict.clean:
         judgement = Judgement(

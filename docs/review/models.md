@@ -56,7 +56,7 @@ the reason to keep it.
 | Idea | How we'd know |
 |---|---|
 | Coder with reasoning on, only for Hybrid retries or tasks marked `deep` by complexity | suite, 3 runs; also wall time per task |
-| Claude once on the 36 tasks (only suite tasks leave the box) | pass rate and false ready next to ours |
+| Claude once on the 36 tasks (only suite tasks leave the box; built, on hold until there's an API key) | pass rate and false ready next to ours |
 | Q5 coder if it fits with the KV cache | suite, 3 runs, plus tok/s |
 | Re-check the leaderboards for newer open coders every month or so | a bake-off when one fits the 3090 |
 
