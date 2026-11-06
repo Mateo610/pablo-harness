@@ -1,0 +1,1455 @@
+# The holdout suite: harder, multi-file tasks on a seed repo the main suite never uses.
+#
+# Scored, never studied. `pablo eval --set holdout` prints only the totals and writes no
+# per-task results and no judge replay, so nobody (person or model) tunes against these tasks.
+# Look at a task here only to fix a broken hidden test, and say so in decisions.md.
+#
+# Same format as evals/suite/tasks.yaml: `hidden` runs after the diff with
+# `python -I -m pytest --noconftest`; `solution` exists only for the self-test
+# (tests/test_holdout.py). These tasks are never prompts or training data.
+tasks:
+- id: holdout-drop-lowest
+  repo: gradebook
+  refs: none
+  kind: feature
+  task: 'The policy''s drop_lowest setting is read but never used. Make it work: for each category, ignore
+    that many of the student''s lowest graded scores before averaging, but always keep at least one.'
+  hidden: |
+    from gradebook.book import Gradebook
+    from gradebook.models import Assignment, Score, Student
+
+
+    def make(*assignments, students=("s1",)):
+        b = Gradebook()
+        for sid in students:
+            b.add_student(Student(sid, sid.upper()))
+        for a in assignments:
+            b.add_assignment(Assignment(*a))
+        return b
+    from gradebook.compute import final_percent
+    from gradebook.policy import load_policy
+
+
+    def test_drop_lowest() -> None:
+        b = make(("h1", "H1", "homework", 10, "2026-09-01"), ("h2", "H2", "homework", 10, "2026-09-02"),
+                 ("h3", "H3", "homework", 10, "2026-09-03"))
+        for aid, pts in (("h1", 2), ("h2", 8), ("h3", 10)):
+            b.record(Score("s1", aid, pts))
+        one = load_policy({"weights": {"homework": 1.0}, "drop_lowest": {"homework": 1}})
+        assert round(final_percent(b, "s1", one), 1) == 90.0
+        many = load_policy({"weights": {"homework": 1.0}, "drop_lowest": {"homework": 5}})
+        assert round(final_percent(b, "s1", many), 1) == 100.0
+        none = load_policy({"weights": {"homework": 1.0}})
+        assert round(final_percent(b, "s1", none), 1) == 66.7
+  solution:
+    gradebook/compute.py: |
+      """Turning scores into percentages and letters."""
+
+      from gradebook.book import Gradebook
+      from gradebook.models import Score
+      from gradebook.policy import Policy
+
+
+      def earned(score: Score, max_points: float, policy: Policy) -> float:
+          """Points after the late penalty, never below zero."""
+          penalty = score.points * policy.late_penalty * score.late_days
+          return max(0.0, score.points - penalty) / max_points
+
+
+      def category_average(book: Gradebook, student_id: str, category: str, policy: Policy) -> float | None:
+          """Mean fraction (0..1) over the graded assignments in a category; None if none are graded."""
+          fractions = []
+          for score in book.scores_for(student_id):
+              assignment = book.assignments[score.assignment_id]
+              if assignment.category == category:
+                  fractions.append(earned(score, assignment.max_points, policy))
+          if not fractions:
+              return None
+          drop = min(policy.drop_lowest.get(category, 0), len(fractions) - 1)
+          kept = sorted(fractions)[drop:]
+          return sum(kept) / len(kept)
+
+
+      def final_percent(book: Gradebook, student_id: str, policy: Policy) -> float:
+          total = 0.0
+          for category, weight in policy.weights.items():
+              avg = category_average(book, student_id, category, policy)
+              if avg is not None:
+                  total += avg * weight
+          return total * 100
+
+
+      def letter(percent: float) -> str:
+          if percent >= 90:
+              return "A"
+          if percent >= 80:
+              return "B"
+          if percent >= 70:
+              return "C"
+          if percent >= 60:
+              return "D"
+          return "F"
+- id: holdout-late-cap
+  repo: gradebook
+  refs: symbol
+  kind: feature
+  task: 'Late penalties in earned() can take a score all the way to zero. Add a late_cap to the Policy
+    (a fraction, default 0.5): the late penalty never removes more than that fraction of the points. load_policy
+    should read it from the policy data when it''s there.'
+  hidden: |
+    from gradebook.book import Gradebook
+    from gradebook.models import Assignment, Score, Student
+
+
+    def make(*assignments, students=("s1",)):
+        b = Gradebook()
+        for sid in students:
+            b.add_student(Student(sid, sid.upper()))
+        for a in assignments:
+            b.add_assignment(Assignment(*a))
+        return b
+    from gradebook.compute import final_percent
+    from gradebook.policy import Policy, load_policy
+
+
+    def test_late_cap() -> None:
+        b = make(("h1", "H1", "homework", 10, "2026-09-01"))
+        b.record(Score("s1", "h1", 10, late_days=4))
+        default = load_policy({"weights": {"homework": 1.0}, "late_penalty": 0.2})
+        assert round(final_percent(b, "s1", default), 1) == 50.0
+        strict = load_policy({"weights": {"homework": 1.0}, "late_penalty": 0.2, "late_cap": 0.25})
+        assert round(final_percent(b, "s1", strict), 1) == 75.0
+        assert Policy(weights={"homework": 1.0}).late_cap == 0.5
+        b.record(Score("s1", "h1", 10, late_days=1))
+        assert round(final_percent(b, "s1", default), 1) == 80.0
+  solution:
+    gradebook/policy.py: |
+      """How scores turn into a grade: category weights and the late penalty."""
+
+      from dataclasses import dataclass, field
+      from typing import Any
+
+
+      @dataclass(frozen=True)
+      class Policy:
+          weights: dict[str, float]  # category -> weight; the weights add up to 1
+          late_penalty: float = 0.1  # fraction of the points lost per late day
+          drop_lowest: dict[str, int] = field(default_factory=dict)  # category -> how many to drop
+          late_cap: float = 0.5  # the late penalty never takes more than this fraction of the points
+
+
+      def load_policy(data: dict[str, Any]) -> Policy:
+          weights = {str(k): float(v) for k, v in data["weights"].items()}
+          if abs(sum(weights.values()) - 1.0) > 1e-6:
+              raise ValueError("weights must add up to 1")
+          return Policy(
+              weights=weights,
+              late_penalty=float(data.get("late_penalty", 0.1)),
+              drop_lowest={str(k): int(v) for k, v in data.get("drop_lowest", {}).items()},
+              late_cap=float(data.get("late_cap", 0.5)),
+          )
+    gradebook/compute.py: |
+      """Turning scores into percentages and letters."""
+
+      from gradebook.book import Gradebook
+      from gradebook.models import Score
+      from gradebook.policy import Policy
+
+
+      def earned(score: Score, max_points: float, policy: Policy) -> float:
+          """Points after the late penalty, never below zero."""
+          penalty = min(
+              score.points * policy.late_penalty * score.late_days, score.points * policy.late_cap
+          )
+          return max(0.0, score.points - penalty) / max_points
+
+
+      def category_average(book: Gradebook, student_id: str, category: str, policy: Policy) -> float | None:
+          """Mean fraction (0..1) over the graded assignments in a category; None if none are graded."""
+          fractions = []
+          for score in book.scores_for(student_id):
+              assignment = book.assignments[score.assignment_id]
+              if assignment.category == category:
+                  fractions.append(earned(score, assignment.max_points, policy))
+          if not fractions:
+              return None
+          return sum(fractions) / len(fractions)
+
+
+      def final_percent(book: Gradebook, student_id: str, policy: Policy) -> float:
+          total = 0.0
+          for category, weight in policy.weights.items():
+              avg = category_average(book, student_id, category, policy)
+              if avg is not None:
+                  total += avg * weight
+          return total * 100
+
+
+      def letter(percent: float) -> str:
+          if percent >= 90:
+              return "A"
+          if percent >= 80:
+              return "B"
+          if percent >= 70:
+              return "C"
+          if percent >= 60:
+              return "D"
+          return "F"
+- id: holdout-excused
+  repo: gradebook
+  refs: none
+  kind: feature
+  task: 'Teachers need to excuse a student from an assignment. In the scores CSV, a points value of EX
+    means excused. An excused assignment doesn''t count toward that student''s average at all: it is neither
+    a zero nor full marks.'
+  hidden: |
+    from gradebook.book import Gradebook
+    from gradebook.models import Assignment, Score, Student
+
+
+    def make(*assignments, students=("s1",)):
+        b = Gradebook()
+        for sid in students:
+            b.add_student(Student(sid, sid.upper()))
+        for a in assignments:
+            b.add_assignment(Assignment(*a))
+        return b
+    from gradebook.compute import final_percent
+    from gradebook.csvio import load_scores
+    from gradebook.policy import load_policy
+
+
+    def test_excused() -> None:
+        b = make(("h1", "H1", "homework", 10, "2026-09-01"), ("h2", "H2", "homework", 10, "2026-09-02"),
+                 ("e1", "E1", "exam", 100, "2026-10-01"))
+        load_scores("student,assignment,points\ns1,h1,8\ns1,h2,EX\ns1,e1,70\n", b)
+        policy = load_policy({"weights": {"homework": 0.5, "exam": 0.5}})
+        assert round(final_percent(b, "s1", policy), 1) == 75.0
+  solution:
+    gradebook/models.py: |
+      """The records a gradebook keeps."""
+
+      from dataclasses import dataclass
+
+
+      @dataclass(frozen=True)
+      class Student:
+          id: str
+          name: str
+
+
+      @dataclass(frozen=True)
+      class Assignment:
+          id: str
+          title: str
+          category: str  # homework, quiz, exam, ...
+          max_points: float
+          due: str  # YYYY-MM-DD
+
+
+      @dataclass(frozen=True)
+      class Score:
+          student_id: str
+          assignment_id: str
+          points: float
+          late_days: int = 0
+          excused: bool = False  # doesn't count toward the average at all
+    gradebook/csvio.py: |
+      """Rosters and scores from CSV text, and the grade export."""
+
+      import csv
+      import io
+
+      from gradebook.book import Gradebook
+      from gradebook.compute import final_percent, letter
+      from gradebook.models import Score, Student
+      from gradebook.policy import Policy
+
+
+      def load_roster(text: str, book: Gradebook) -> None:
+          """Columns: id,name"""
+          for row in csv.DictReader(io.StringIO(text)):
+              book.add_student(Student(row["id"].strip(), row["name"].strip()))
+
+
+      def load_scores(text: str, book: Gradebook) -> None:
+          """Columns: student,assignment,points[,late_days]"""
+          for row in csv.DictReader(io.StringIO(text)):
+              raw = row["points"].strip()
+              excused = raw.upper() == "EX"
+              book.record(
+                  Score(
+                      student_id=row["student"].strip(),
+                      assignment_id=row["assignment"].strip(),
+                      points=0.0 if excused else float(raw),
+                      late_days=int(row.get("late_days") or 0),
+                      excused=excused,
+                  )
+              )
+
+
+      def export_grades(book: Gradebook, policy: Policy) -> str:
+          """One row per student, sorted by id: id,name,percent,letter"""
+          out = io.StringIO()
+          writer = csv.writer(out, lineterminator="\n")
+          writer.writerow(["id", "name", "percent", "letter"])
+          for sid in sorted(book.students):
+              pct = final_percent(book, sid, policy)
+              writer.writerow([sid, book.students[sid].name, f"{pct:.1f}", letter(pct)])
+          return out.getvalue()
+    gradebook/compute.py: |
+      """Turning scores into percentages and letters."""
+
+      from gradebook.book import Gradebook
+      from gradebook.models import Score
+      from gradebook.policy import Policy
+
+
+      def earned(score: Score, max_points: float, policy: Policy) -> float:
+          """Points after the late penalty, never below zero."""
+          penalty = score.points * policy.late_penalty * score.late_days
+          return max(0.0, score.points - penalty) / max_points
+
+
+      def category_average(book: Gradebook, student_id: str, category: str, policy: Policy) -> float | None:
+          """Mean fraction (0..1) over the graded assignments in a category; None if none are graded."""
+          fractions = []
+          for score in book.scores_for(student_id):
+              assignment = book.assignments[score.assignment_id]
+              if assignment.category == category and not score.excused:
+                  fractions.append(earned(score, assignment.max_points, policy))
+          if not fractions:
+              return None
+          return sum(fractions) / len(fractions)
+
+
+      def final_percent(book: Gradebook, student_id: str, policy: Policy) -> float:
+          total = 0.0
+          for category, weight in policy.weights.items():
+              avg = category_average(book, student_id, category, policy)
+              if avg is not None:
+                  total += avg * weight
+          return total * 100
+
+
+      def letter(percent: float) -> str:
+          if percent >= 90:
+              return "A"
+          if percent >= 80:
+              return "B"
+          if percent >= 70:
+              return "C"
+          if percent >= 60:
+              return "D"
+          return "F"
+- id: holdout-graded-weights
+  repo: gradebook
+  refs: symbol
+  kind: bugfix
+  task: 'final_percent quietly counts a category with nothing graded yet as zero, so a student who has
+    only homework graded early in the term gets a tiny percent. Spread the weight over the categories
+    that do have graded work instead: the result should be the weighted average of the graded categories
+    only (0 when nothing is graded).'
+  hidden: |
+    from gradebook.book import Gradebook
+    from gradebook.models import Assignment, Score, Student
+
+
+    def make(*assignments, students=("s1",)):
+        b = Gradebook()
+        for sid in students:
+            b.add_student(Student(sid, sid.upper()))
+        for a in assignments:
+            b.add_assignment(Assignment(*a))
+        return b
+    from gradebook.compute import final_percent
+    from gradebook.policy import load_policy
+
+
+    def test_only_graded_categories_count() -> None:
+        b = make(("h1", "H1", "homework", 10, "2026-09-01"), ("e1", "E1", "exam", 100, "2026-10-01"),
+                 students=("s1", "s2"))
+        b.record(Score("s1", "h1", 9))
+        policy = load_policy({"weights": {"homework": 0.4, "exam": 0.6}})
+        assert round(final_percent(b, "s1", policy), 1) == 90.0
+        assert final_percent(b, "s2", policy) == 0.0
+        b.record(Score("s1", "e1", 50))
+        assert round(final_percent(b, "s1", policy), 1) == 66.0
+  solution:
+    gradebook/compute.py: |
+      """Turning scores into percentages and letters."""
+
+      from gradebook.book import Gradebook
+      from gradebook.models import Score
+      from gradebook.policy import Policy
+
+
+      def earned(score: Score, max_points: float, policy: Policy) -> float:
+          """Points after the late penalty, never below zero."""
+          penalty = score.points * policy.late_penalty * score.late_days
+          return max(0.0, score.points - penalty) / max_points
+
+
+      def category_average(book: Gradebook, student_id: str, category: str, policy: Policy) -> float | None:
+          """Mean fraction (0..1) over the graded assignments in a category; None if none are graded."""
+          fractions = []
+          for score in book.scores_for(student_id):
+              assignment = book.assignments[score.assignment_id]
+              if assignment.category == category:
+                  fractions.append(earned(score, assignment.max_points, policy))
+          if not fractions:
+              return None
+          return sum(fractions) / len(fractions)
+
+
+      def final_percent(book: Gradebook, student_id: str, policy: Policy) -> float:
+          total = 0.0
+          graded_weight = 0.0
+          for category, weight in policy.weights.items():
+              avg = category_average(book, student_id, category, policy)
+              if avg is not None:
+                  total += avg * weight
+                  graded_weight += weight
+          if graded_weight == 0:
+              return 0.0
+          return total / graded_weight * 100
+
+
+      def letter(percent: float) -> str:
+          if percent >= 90:
+              return "A"
+          if percent >= 80:
+              return "B"
+          if percent >= 70:
+              return "C"
+          if percent >= 60:
+              return "D"
+          return "F"
+- id: holdout-policy-scale
+  repo: gradebook
+  refs: none
+  kind: feature
+  task: 'Let the grading policy set the letter boundaries. A policy may include "scale", for example {"A":
+    93, "B": 85, "C": 75, "D": 65}: each letter with its minimum percent. Without it, today''s 90/80/70/60
+    scale applies. The CSV export, the student report and the class summary should all use the policy''s
+    scale.'
+  hidden: |
+    from gradebook.book import Gradebook
+    from gradebook.models import Assignment, Score, Student
+
+
+    def make(*assignments, students=("s1",)):
+        b = Gradebook()
+        for sid in students:
+            b.add_student(Student(sid, sid.upper()))
+        for a in assignments:
+            b.add_assignment(Assignment(*a))
+        return b
+    from gradebook.csvio import export_grades
+    from gradebook.policy import load_policy
+    from gradebook.report import class_summary, student_report
+
+
+    def test_policy_scale() -> None:
+        b = make(("e1", "E1", "exam", 100, "2026-10-01"), students=("s1", "s2"))
+        b.record(Score("s1", "e1", 88))
+        b.record(Score("s2", "e1", 92))
+        strict = load_policy({"weights": {"exam": 1.0}, "scale": {"A": 93, "B": 85, "C": 75, "D": 65}})
+        assert export_grades(b, strict).splitlines()[1:] == ["s1,S1,88.0,B", "s2,S2,92.0,B"]
+        assert "88.0% B" in student_report(b, "s1", strict)
+        assert class_summary(b, strict)["letters"] == {"B": 2}
+        plain = load_policy({"weights": {"exam": 1.0}})
+        assert export_grades(b, plain).splitlines()[1:] == ["s1,S1,88.0,B", "s2,S2,92.0,A"]
+  solution:
+    gradebook/policy.py: |
+      """How scores turn into a grade: category weights and the late penalty."""
+
+      from dataclasses import dataclass, field
+      from typing import Any
+
+
+      @dataclass(frozen=True)
+      class Policy:
+          weights: dict[str, float]  # category -> weight; the weights add up to 1
+          late_penalty: float = 0.1  # fraction of the points lost per late day
+          drop_lowest: dict[str, int] = field(default_factory=dict)  # category -> how many to drop
+          scale: dict[str, float] | None = None  # letter -> minimum percent; None: 90/80/70/60
+
+
+      def load_policy(data: dict[str, Any]) -> Policy:
+          weights = {str(k): float(v) for k, v in data["weights"].items()}
+          if abs(sum(weights.values()) - 1.0) > 1e-6:
+              raise ValueError("weights must add up to 1")
+          return Policy(
+              weights=weights,
+              late_penalty=float(data.get("late_penalty", 0.1)),
+              drop_lowest={str(k): int(v) for k, v in data.get("drop_lowest", {}).items()},
+              scale={str(k): float(v) for k, v in data["scale"].items()} if "scale" in data else None,
+          )
+    gradebook/compute.py: |
+      """Turning scores into percentages and letters."""
+
+      from gradebook.book import Gradebook
+      from gradebook.models import Score
+      from gradebook.policy import Policy
+
+
+      def earned(score: Score, max_points: float, policy: Policy) -> float:
+          """Points after the late penalty, never below zero."""
+          penalty = score.points * policy.late_penalty * score.late_days
+          return max(0.0, score.points - penalty) / max_points
+
+
+      def category_average(book: Gradebook, student_id: str, category: str, policy: Policy) -> float | None:
+          """Mean fraction (0..1) over the graded assignments in a category; None if none are graded."""
+          fractions = []
+          for score in book.scores_for(student_id):
+              assignment = book.assignments[score.assignment_id]
+              if assignment.category == category:
+                  fractions.append(earned(score, assignment.max_points, policy))
+          if not fractions:
+              return None
+          return sum(fractions) / len(fractions)
+
+
+      def final_percent(book: Gradebook, student_id: str, policy: Policy) -> float:
+          total = 0.0
+          for category, weight in policy.weights.items():
+              avg = category_average(book, student_id, category, policy)
+              if avg is not None:
+                  total += avg * weight
+          return total * 100
+
+
+      DEFAULT_SCALE = {"A": 90.0, "B": 80.0, "C": 70.0, "D": 60.0}
+
+
+      def letter(percent: float, scale: dict[str, float] | None = None) -> str:
+          """The best letter whose minimum the percent reaches; F below every minimum."""
+          for name, minimum in sorted((scale or DEFAULT_SCALE).items(), key=lambda kv: -kv[1]):
+              if percent >= minimum:
+                  return name
+          return "F"
+    gradebook/csvio.py: |
+      """Rosters and scores from CSV text, and the grade export."""
+
+      import csv
+      import io
+
+      from gradebook.book import Gradebook
+      from gradebook.compute import final_percent, letter
+      from gradebook.models import Score, Student
+      from gradebook.policy import Policy
+
+
+      def load_roster(text: str, book: Gradebook) -> None:
+          """Columns: id,name"""
+          for row in csv.DictReader(io.StringIO(text)):
+              book.add_student(Student(row["id"].strip(), row["name"].strip()))
+
+
+      def load_scores(text: str, book: Gradebook) -> None:
+          """Columns: student,assignment,points[,late_days]"""
+          for row in csv.DictReader(io.StringIO(text)):
+              book.record(
+                  Score(
+                      student_id=row["student"].strip(),
+                      assignment_id=row["assignment"].strip(),
+                      points=float(row["points"]),
+                      late_days=int(row.get("late_days") or 0),
+                  )
+              )
+
+
+      def export_grades(book: Gradebook, policy: Policy) -> str:
+          """One row per student, sorted by id: id,name,percent,letter"""
+          out = io.StringIO()
+          writer = csv.writer(out, lineterminator="\n")
+          writer.writerow(["id", "name", "percent", "letter"])
+          for sid in sorted(book.students):
+              pct = final_percent(book, sid, policy)
+              writer.writerow([sid, book.students[sid].name, f"{pct:.1f}", letter(pct, policy.scale)])
+          return out.getvalue()
+    gradebook/report.py: |
+      """Readable reports for one student or the whole class."""
+
+      from gradebook.book import Gradebook
+      from gradebook.compute import category_average, final_percent, letter
+      from gradebook.policy import Policy
+
+
+      def student_report(book: Gradebook, student_id: str, policy: Policy) -> str:
+          student = book.students[student_id]
+          lines = [f"{student.name} ({student.id})"]
+          for category in policy.weights:
+              avg = category_average(book, student_id, category, policy)
+              shown = "-" if avg is None else f"{avg * 100:.1f}%"
+              lines.append(f"  {category}: {shown}")
+          pct = final_percent(book, student_id, policy)
+          lines.append(f"  final: {pct:.1f}% {letter(pct, policy.scale)}")
+          return "\n".join(lines)
+
+
+      def class_summary(book: Gradebook, policy: Policy) -> dict[str, object]:
+          percents = sorted(final_percent(book, sid, policy) for sid in book.students)
+          letters: dict[str, int] = {}
+          for p in percents:
+              grade = letter(p, policy.scale)
+              letters[grade] = letters.get(grade, 0) + 1
+          return {
+              "students": len(percents),
+              "mean": sum(percents) / len(percents) if percents else 0.0,
+              "median": percents[len(percents) // 2] if percents else 0.0,
+              "letters": letters,
+          }
+- id: holdout-median-even
+  repo: gradebook
+  refs: file
+  kind: bugfix
+  task: In gradebook/report.py, class_summary reports the wrong median when the class has an even number
+    of students. With an even count it should be the mean of the two middle percents.
+  hidden: |
+    from gradebook.book import Gradebook
+    from gradebook.models import Assignment, Score, Student
+
+
+    def make(*assignments, students=("s1",)):
+        b = Gradebook()
+        for sid in students:
+            b.add_student(Student(sid, sid.upper()))
+        for a in assignments:
+            b.add_assignment(Assignment(*a))
+        return b
+    from gradebook.policy import load_policy
+    from gradebook.report import class_summary
+
+
+    def test_even_median() -> None:
+        b = make(("e1", "E1", "exam", 100, "2026-10-01"), students=("s1", "s2", "s3", "s4"))
+        for sid, pts in (("s1", 60), ("s2", 70), ("s3", 90), ("s4", 100)):
+            b.record(Score(sid, "e1", pts))
+        policy = load_policy({"weights": {"exam": 1.0}})
+        assert class_summary(b, policy)["median"] == 80.0
+        b.add_student(Student("s5", "S5"))
+        b.record(Score("s5", "e1", 75))
+        assert class_summary(b, policy)["median"] == 75.0
+  solution:
+    gradebook/report.py: |
+      """Readable reports for one student or the whole class."""
+
+      from gradebook.book import Gradebook
+      from gradebook.compute import category_average, final_percent, letter
+      from gradebook.policy import Policy
+
+
+      def student_report(book: Gradebook, student_id: str, policy: Policy) -> str:
+          student = book.students[student_id]
+          lines = [f"{student.name} ({student.id})"]
+          for category in policy.weights:
+              avg = category_average(book, student_id, category, policy)
+              shown = "-" if avg is None else f"{avg * 100:.1f}%"
+              lines.append(f"  {category}: {shown}")
+          pct = final_percent(book, student_id, policy)
+          lines.append(f"  final: {pct:.1f}% {letter(pct)}")
+          return "\n".join(lines)
+
+
+      def class_summary(book: Gradebook, policy: Policy) -> dict[str, object]:
+          percents = sorted(final_percent(book, sid, policy) for sid in book.students)
+          letters: dict[str, int] = {}
+          for p in percents:
+              letters[letter(p)] = letters.get(letter(p), 0) + 1
+          n = len(percents)
+          if n == 0:
+              median = 0.0
+          elif n % 2:
+              median = percents[n // 2]
+          else:
+              median = (percents[n // 2 - 1] + percents[n // 2]) / 2
+          return {
+              "students": n,
+              "mean": sum(percents) / n if percents else 0.0,
+              "median": median,
+              "letters": letters,
+          }
+- id: holdout-move-letter
+  repo: gradebook
+  refs: symbol
+  kind: refactor
+  task: Move letter() out of compute into a new module, gradebook/scale.py, and import it from there everywhere
+    it's used. Old code that does `from gradebook.compute import letter` must keep working, but compute.py
+    should no longer define it.
+  hidden: |
+    import inspect
+
+    import gradebook.compute
+    import gradebook.csvio
+    import gradebook.report
+    import gradebook.scale
+
+
+    def test_letter_lives_in_scale() -> None:
+        assert gradebook.scale.letter(85) == "B" and gradebook.scale.letter(10) == "F"
+        assert "def letter" not in inspect.getsource(gradebook.compute)
+        assert gradebook.compute.letter is gradebook.scale.letter
+        assert gradebook.csvio.letter is gradebook.scale.letter
+        assert gradebook.report.letter is gradebook.scale.letter
+  solution:
+    gradebook/scale.py: |
+      """Letter grades."""
+
+
+      def letter(percent: float) -> str:
+          if percent >= 90:
+              return "A"
+          if percent >= 80:
+              return "B"
+          if percent >= 70:
+              return "C"
+          if percent >= 60:
+              return "D"
+          return "F"
+    gradebook/compute.py: |+
+      """Turning scores into percentages and letters."""
+
+      from gradebook.book import Gradebook
+      from gradebook.models import Score
+      from gradebook.policy import Policy
+      from gradebook.scale import letter
+
+      __all__ = ["category_average", "earned", "final_percent", "letter"]
+
+
+      def earned(score: Score, max_points: float, policy: Policy) -> float:
+          """Points after the late penalty, never below zero."""
+          penalty = score.points * policy.late_penalty * score.late_days
+          return max(0.0, score.points - penalty) / max_points
+
+
+      def category_average(book: Gradebook, student_id: str, category: str, policy: Policy) -> float | None:
+          """Mean fraction (0..1) over the graded assignments in a category; None if none are graded."""
+          fractions = []
+          for score in book.scores_for(student_id):
+              assignment = book.assignments[score.assignment_id]
+              if assignment.category == category:
+                  fractions.append(earned(score, assignment.max_points, policy))
+          if not fractions:
+              return None
+          return sum(fractions) / len(fractions)
+
+
+      def final_percent(book: Gradebook, student_id: str, policy: Policy) -> float:
+          total = 0.0
+          for category, weight in policy.weights.items():
+              avg = category_average(book, student_id, category, policy)
+              if avg is not None:
+                  total += avg * weight
+          return total * 100
+
+    gradebook/csvio.py: |
+      """Rosters and scores from CSV text, and the grade export."""
+
+      import csv
+      import io
+
+      from gradebook.book import Gradebook
+      from gradebook.compute import final_percent
+      from gradebook.models import Score, Student
+      from gradebook.policy import Policy
+      from gradebook.scale import letter
+
+
+      def load_roster(text: str, book: Gradebook) -> None:
+          """Columns: id,name"""
+          for row in csv.DictReader(io.StringIO(text)):
+              book.add_student(Student(row["id"].strip(), row["name"].strip()))
+
+
+      def load_scores(text: str, book: Gradebook) -> None:
+          """Columns: student,assignment,points[,late_days]"""
+          for row in csv.DictReader(io.StringIO(text)):
+              book.record(
+                  Score(
+                      student_id=row["student"].strip(),
+                      assignment_id=row["assignment"].strip(),
+                      points=float(row["points"]),
+                      late_days=int(row.get("late_days") or 0),
+                  )
+              )
+
+
+      def export_grades(book: Gradebook, policy: Policy) -> str:
+          """One row per student, sorted by id: id,name,percent,letter"""
+          out = io.StringIO()
+          writer = csv.writer(out, lineterminator="\n")
+          writer.writerow(["id", "name", "percent", "letter"])
+          for sid in sorted(book.students):
+              pct = final_percent(book, sid, policy)
+              writer.writerow([sid, book.students[sid].name, f"{pct:.1f}", letter(pct)])
+          return out.getvalue()
+    gradebook/report.py: |
+      """Readable reports for one student or the whole class."""
+
+      from gradebook.book import Gradebook
+      from gradebook.compute import category_average, final_percent
+      from gradebook.policy import Policy
+      from gradebook.scale import letter
+
+
+      def student_report(book: Gradebook, student_id: str, policy: Policy) -> str:
+          student = book.students[student_id]
+          lines = [f"{student.name} ({student.id})"]
+          for category in policy.weights:
+              avg = category_average(book, student_id, category, policy)
+              shown = "-" if avg is None else f"{avg * 100:.1f}%"
+              lines.append(f"  {category}: {shown}")
+          pct = final_percent(book, student_id, policy)
+          lines.append(f"  final: {pct:.1f}% {letter(pct)}")
+          return "\n".join(lines)
+
+
+      def class_summary(book: Gradebook, policy: Policy) -> dict[str, object]:
+          percents = sorted(final_percent(book, sid, policy) for sid in book.students)
+          letters: dict[str, int] = {}
+          for p in percents:
+              letters[letter(p)] = letters.get(letter(p), 0) + 1
+          return {
+              "students": len(percents),
+              "mean": sum(percents) / len(percents) if percents else 0.0,
+              "median": percents[len(percents) // 2] if percents else 0.0,
+              "letters": letters,
+          }
+    tests/test_gradebook.py: |
+      from gradebook.book import Gradebook
+      from gradebook.compute import final_percent
+      from gradebook.scale import letter
+      from gradebook.csvio import export_grades, load_roster, load_scores
+      from gradebook.models import Assignment
+      from gradebook.policy import load_policy
+
+
+      def book() -> Gradebook:
+          b = Gradebook()
+          b.add_assignment(Assignment("hw1", "Homework 1", "homework", 10, "2026-09-10"))
+          b.add_assignment(Assignment("ex1", "Midterm", "exam", 100, "2026-10-15"))
+          load_roster("id,name\ns1,Ana\ns2,Ben\n", b)
+          load_scores("student,assignment,points\ns1,hw1,10\ns1,ex1,80\ns2,hw1,5\ns2,ex1,90\n", b)
+          return b
+
+
+      POLICY = load_policy({"weights": {"homework": 0.4, "exam": 0.6}})
+
+
+      def test_final_percent() -> None:
+          assert round(final_percent(book(), "s1", POLICY), 1) == 88.0
+          assert round(final_percent(book(), "s2", POLICY), 1) == 74.0
+
+
+      def test_letters() -> None:
+          assert [letter(p) for p in (95, 85, 75, 65, 10)] == ["A", "B", "C", "D", "F"]
+
+
+      def test_export() -> None:
+          assert export_grades(book(), POLICY).splitlines() == [
+              "id,name,percent,letter",
+              "s1,Ana,88.0,B",
+              "s2,Ben,74.0,C",
+          ]
+- id: holdout-export-categories
+  repo: gradebook
+  refs: none
+  kind: feature
+  task: The grade export should also show each category's average. Add one column per category, in the
+    policy's order, between name and percent, named after the category. Each holds that category's average
+    as a percent with one decimal, or is empty when nothing in the category is graded yet.
+  hidden: |
+    from gradebook.book import Gradebook
+    from gradebook.models import Assignment, Score, Student
+
+
+    def make(*assignments, students=("s1",)):
+        b = Gradebook()
+        for sid in students:
+            b.add_student(Student(sid, sid.upper()))
+        for a in assignments:
+            b.add_assignment(Assignment(*a))
+        return b
+    from gradebook.csvio import export_grades
+    from gradebook.policy import load_policy
+
+
+    def test_export_has_categories() -> None:
+        b = make(("h1", "H1", "homework", 10, "2026-09-01"), ("e1", "E1", "exam", 100, "2026-10-01"),
+                 students=("s1", "s2"))
+        b.record(Score("s1", "h1", 10))
+        b.record(Score("s1", "e1", 80))
+        b.record(Score("s2", "h1", 5))
+        policy = load_policy({"weights": {"homework": 0.4, "exam": 0.6}})
+        assert export_grades(b, policy).splitlines() == [
+            "id,name,homework,exam,percent,letter",
+            "s1,S1,100.0,80.0,88.0,B",
+            "s2,S2,50.0,,20.0,F",
+        ]
+  solution:
+    gradebook/csvio.py: |
+      """Rosters and scores from CSV text, and the grade export."""
+
+      import csv
+      import io
+
+      from gradebook.book import Gradebook
+      from gradebook.compute import category_average, final_percent, letter
+      from gradebook.models import Score, Student
+      from gradebook.policy import Policy
+
+
+      def load_roster(text: str, book: Gradebook) -> None:
+          """Columns: id,name"""
+          for row in csv.DictReader(io.StringIO(text)):
+              book.add_student(Student(row["id"].strip(), row["name"].strip()))
+
+
+      def load_scores(text: str, book: Gradebook) -> None:
+          """Columns: student,assignment,points[,late_days]"""
+          for row in csv.DictReader(io.StringIO(text)):
+              book.record(
+                  Score(
+                      student_id=row["student"].strip(),
+                      assignment_id=row["assignment"].strip(),
+                      points=float(row["points"]),
+                      late_days=int(row.get("late_days") or 0),
+                  )
+              )
+
+
+      def export_grades(book: Gradebook, policy: Policy) -> str:
+          """One row per student, sorted by id: id,name,<category averages>,percent,letter"""
+          out = io.StringIO()
+          writer = csv.writer(out, lineterminator="\n")
+          categories = list(policy.weights)
+          writer.writerow(["id", "name", *categories, "percent", "letter"])
+          for sid in sorted(book.students):
+              averages = []
+              for category in categories:
+                  avg = category_average(book, sid, category, policy)
+                  averages.append("" if avg is None else f"{avg * 100:.1f}")
+              pct = final_percent(book, sid, policy)
+              writer.writerow([sid, book.students[sid].name, *averages, f"{pct:.1f}", letter(pct)])
+          return out.getvalue()
+    tests/test_gradebook.py: |
+      from gradebook.book import Gradebook
+      from gradebook.compute import final_percent, letter
+      from gradebook.csvio import export_grades, load_roster, load_scores
+      from gradebook.models import Assignment
+      from gradebook.policy import load_policy
+
+
+      def book() -> Gradebook:
+          b = Gradebook()
+          b.add_assignment(Assignment("hw1", "Homework 1", "homework", 10, "2026-09-10"))
+          b.add_assignment(Assignment("ex1", "Midterm", "exam", 100, "2026-10-15"))
+          load_roster("id,name\ns1,Ana\ns2,Ben\n", b)
+          load_scores("student,assignment,points\ns1,hw1,10\ns1,ex1,80\ns2,hw1,5\ns2,ex1,90\n", b)
+          return b
+
+
+      POLICY = load_policy({"weights": {"homework": 0.4, "exam": 0.6}})
+
+
+      def test_final_percent() -> None:
+          assert round(final_percent(book(), "s1", POLICY), 1) == 88.0
+          assert round(final_percent(book(), "s2", POLICY), 1) == 74.0
+
+
+      def test_letters() -> None:
+          assert [letter(p) for p in (95, 85, 75, 65, 10)] == ["A", "B", "C", "D", "F"]
+
+
+      def test_export() -> None:
+          assert export_grades(book(), POLICY).splitlines() == [
+              "id,name,homework,exam,percent,letter",
+              "s1,Ana,100.0,80.0,88.0,B",
+              "s2,Ben,50.0,90.0,74.0,C",
+          ]
+- id: holdout-missing-command
+  repo: gradebook
+  refs: none
+  kind: feature
+  task: Add a `missing` command to the gradebook CLI. Given --as-of YYYY-MM-DD, it prints one line per
+    student and assignment that was due before that date and has no score, as 'student_id assignment_id',
+    sorted by student then assignment. Put the logic in a Gradebook.missing(as_of) method that returns
+    those (student_id, assignment_id) pairs, and have the command use it.
+  hidden: |
+    from gradebook.book import Gradebook
+    from gradebook.models import Assignment, Score, Student
+
+
+    def make(*assignments, students=("s1",)):
+        b = Gradebook()
+        for sid in students:
+            b.add_student(Student(sid, sid.upper()))
+        for a in assignments:
+            b.add_assignment(Assignment(*a))
+        return b
+    import json
+
+    from gradebook import cli
+
+
+    def test_missing(tmp_path, capsys) -> None:
+        b = make(("h1", "H1", "homework", 10, "2026-09-01"), ("h2", "H2", "homework", 10, "2026-09-20"),
+                 ("h3", "H3", "homework", 10, "2026-12-01"), students=("s1", "s2"))
+        b.record(Score("s1", "h1", 10))
+        assert b.missing("2026-10-01") == [("s1", "h2"), ("s2", "h1"), ("s2", "h2")]
+        assert b.missing("2026-09-01") == []
+        policy = {"weights": {"homework": 1.0}, "assignments": [
+            {"id": "h1", "title": "H1", "category": "homework", "max_points": 10, "due": "2026-09-01"},
+            {"id": "h2", "title": "H2", "category": "homework", "max_points": 10, "due": "2026-09-20"}]}
+        (tmp_path / "p.json").write_text(json.dumps(policy))
+        (tmp_path / "r.csv").write_text("id,name\ns2,Ben\ns1,Ana\n")
+        (tmp_path / "s.csv").write_text("student,assignment,points\ns1,h1,9\n")
+        code = cli.main(["missing", "--as-of", "2026-10-01", "--roster", str(tmp_path / "r.csv"),
+                         "--scores", str(tmp_path / "s.csv"), "--policy", str(tmp_path / "p.json")])
+        assert code == 0
+        assert capsys.readouterr().out.split() == ["s1", "h2", "s2", "h1", "s2", "h2"]
+  solution:
+    gradebook/book.py: |
+      """The gradebook itself: who is enrolled, what was assigned, what they scored."""
+
+      from gradebook.models import Assignment, Score, Student
+
+
+      class Gradebook:
+          def __init__(self) -> None:
+              self.students: dict[str, Student] = {}
+              self.assignments: dict[str, Assignment] = {}
+              self.scores: list[Score] = []
+
+          def add_student(self, student: Student) -> None:
+              self.students[student.id] = student
+
+          def add_assignment(self, assignment: Assignment) -> None:
+              self.assignments[assignment.id] = assignment
+
+          def record(self, score: Score) -> None:
+              if score.student_id not in self.students:
+                  raise KeyError(f"unknown student {score.student_id}")
+              if score.assignment_id not in self.assignments:
+                  raise KeyError(f"unknown assignment {score.assignment_id}")
+              self.scores = [
+                  s
+                  for s in self.scores
+                  if (s.student_id, s.assignment_id) != (score.student_id, score.assignment_id)
+              ]
+              self.scores.append(score)
+
+          def scores_for(self, student_id: str) -> list[Score]:
+              return [s for s in self.scores if s.student_id == student_id]
+
+          def in_category(self, category: str) -> list[Assignment]:
+              return [a for a in self.assignments.values() if a.category == category]
+
+          def missing(self, as_of: str) -> list[tuple[str, str]]:
+              """(student, assignment) pairs due before `as_of` (YYYY-MM-DD) with no score, sorted."""
+              scored = {(s.student_id, s.assignment_id) for s in self.scores}
+              return sorted(
+                  (sid, a.id)
+                  for sid in self.students
+                  for a in self.assignments.values()
+                  if a.due < as_of and (sid, a.id) not in scored
+              )
+    gradebook/cli.py: |
+      """gradebook report|summary|missing --roster R.csv --scores S.csv --policy P.json
+      [--student ID] [--as-of YYYY-MM-DD]"""
+
+      import argparse
+      import json
+      import sys
+      from pathlib import Path
+
+      from gradebook.book import Gradebook
+      from gradebook.csvio import load_roster, load_scores
+      from gradebook.models import Assignment
+      from gradebook.policy import load_policy
+      from gradebook.report import class_summary, student_report
+
+
+      def load(args: argparse.Namespace) -> tuple[Gradebook, object]:
+          data = json.loads(Path(args.policy).read_text())
+          book = Gradebook()
+          for a in data.get("assignments", []):
+              book.add_assignment(Assignment(a["id"], a["title"], a["category"], float(a["max_points"]), a["due"]))
+          load_roster(Path(args.roster).read_text(), book)
+          load_scores(Path(args.scores).read_text(), book)
+          return book, load_policy(data)
+
+
+      def main(argv: list[str] | None = None) -> int:
+          parser = argparse.ArgumentParser(prog="gradebook")
+          parser.add_argument("command", choices=["report", "summary", "missing"])
+          parser.add_argument("--roster", required=True)
+          parser.add_argument("--scores", required=True)
+          parser.add_argument("--policy", required=True)
+          parser.add_argument("--student")
+          parser.add_argument("--as-of", dest="as_of")
+          args = parser.parse_args(argv)
+          book, policy = load(args)
+          if args.command == "missing":
+              if not args.as_of:
+                  parser.error("missing needs --as-of YYYY-MM-DD")
+              for sid, aid in book.missing(args.as_of):
+                  print(f"{sid} {aid}")
+          elif args.command == "report":
+              ids = [args.student] if args.student else sorted(book.students)
+              print("\n\n".join(student_report(book, sid, policy) for sid in ids))  # type: ignore[arg-type]
+          else:
+              print(json.dumps(class_summary(book, policy), sort_keys=True))  # type: ignore[arg-type]
+          return 0
+
+
+      if __name__ == "__main__":
+          sys.exit(main())
+- id: holdout-score-ids
+  repo: gradebook
+  refs: symbol
+  kind: bugfix
+  task: Score files from the school's export sometimes have student ids in a different case or with spaces
+    around them ('S1 ' for 's1'), and load_scores fails with 'unknown student'. Match student ids ignoring
+    case and surrounding spaces, and record the score under the id as it appears in the roster.
+  hidden: |
+    from gradebook.book import Gradebook
+    from gradebook.models import Assignment, Score, Student
+
+
+    def make(*assignments, students=("s1",)):
+        b = Gradebook()
+        for sid in students:
+            b.add_student(Student(sid, sid.upper()))
+        for a in assignments:
+            b.add_assignment(Assignment(*a))
+        return b
+    from gradebook.csvio import load_roster, load_scores
+
+
+    def test_ids_ignore_case_and_spaces() -> None:
+        b = make(("h1", "H1", "homework", 10, "2026-09-01"), students=())
+        load_roster("id,name\ns1,Ana\nAB7,Ben\n", b)
+        load_scores("student,assignment,points\n S1 ,h1,9\nab7,h1,7\n", b)
+        assert [s.points for s in b.scores_for("s1")] == [9.0]
+        assert [s.points for s in b.scores_for("AB7")] == [7.0]
+  solution:
+    gradebook/csvio.py: |
+      """Rosters and scores from CSV text, and the grade export."""
+
+      import csv
+      import io
+
+      from gradebook.book import Gradebook
+      from gradebook.compute import final_percent, letter
+      from gradebook.models import Score, Student
+      from gradebook.policy import Policy
+
+
+      def load_roster(text: str, book: Gradebook) -> None:
+          """Columns: id,name"""
+          for row in csv.DictReader(io.StringIO(text)):
+              book.add_student(Student(row["id"].strip(), row["name"].strip()))
+
+
+      def load_scores(text: str, book: Gradebook) -> None:
+          """Columns: student,assignment,points[,late_days]"""
+          by_key = {sid.strip().lower(): sid for sid in book.students}
+          for row in csv.DictReader(io.StringIO(text)):
+              raw = row["student"].strip()
+              book.record(
+                  Score(
+                      student_id=by_key.get(raw.lower(), raw),
+                      assignment_id=row["assignment"].strip(),
+                      points=float(row["points"]),
+                      late_days=int(row.get("late_days") or 0),
+                  )
+              )
+
+
+      def export_grades(book: Gradebook, policy: Policy) -> str:
+          """One row per student, sorted by id: id,name,percent,letter"""
+          out = io.StringIO()
+          writer = csv.writer(out, lineterminator="\n")
+          writer.writerow(["id", "name", "percent", "letter"])
+          for sid in sorted(book.students):
+              pct = final_percent(book, sid, policy)
+              writer.writerow([sid, book.students[sid].name, f"{pct:.1f}", letter(pct)])
+          return out.getvalue()
+- id: holdout-extra-credit
+  repo: gradebook
+  refs: none
+  kind: feature
+  task: 'Add extra credit. Assignments in the category "extra" are not part of the weights: the points
+    a student earns on them (after any late penalty) are added straight to the final percent as percentage
+    points, up to a cap set by the policy''s extra_cap (default 5). A policy without an "extra" weight
+    must still load.'
+  hidden: |
+    from gradebook.book import Gradebook
+    from gradebook.models import Assignment, Score, Student
+
+
+    def make(*assignments, students=("s1",)):
+        b = Gradebook()
+        for sid in students:
+            b.add_student(Student(sid, sid.upper()))
+        for a in assignments:
+            b.add_assignment(Assignment(*a))
+        return b
+    from gradebook.compute import final_percent
+    from gradebook.policy import Policy, load_policy
+
+
+    def test_extra_credit() -> None:
+        b = make(("h1", "H1", "homework", 10, "2026-09-01"), ("x1", "Bonus", "extra", 10, "2026-09-05"),
+                 ("x2", "Bonus 2", "extra", 10, "2026-09-06"), students=("s1", "s2"))
+        b.record(Score("s1", "h1", 8))
+        b.record(Score("s2", "h1", 8))
+        policy = load_policy({"weights": {"homework": 1.0}})
+        assert policy.extra_cap == 5 and Policy(weights={"homework": 1.0}).extra_cap == 5
+        assert round(final_percent(b, "s1", policy), 1) == 80.0
+        b.record(Score("s1", "x1", 3))
+        assert round(final_percent(b, "s1", policy), 1) == 83.0
+        b.record(Score("s1", "x2", 6))
+        assert round(final_percent(b, "s1", policy), 1) == 85.0
+        roomy = load_policy({"weights": {"homework": 1.0}, "extra_cap": 20})
+        assert round(final_percent(b, "s1", roomy), 1) == 89.0
+        assert round(final_percent(b, "s2", roomy), 1) == 80.0
+  solution:
+    gradebook/policy.py: |
+      """How scores turn into a grade: category weights and the late penalty."""
+
+      from dataclasses import dataclass, field
+      from typing import Any
+
+
+      @dataclass(frozen=True)
+      class Policy:
+          weights: dict[str, float]  # category -> weight; the weights add up to 1
+          late_penalty: float = 0.1  # fraction of the points lost per late day
+          drop_lowest: dict[str, int] = field(default_factory=dict)  # category -> how many to drop
+          extra_cap: float = 5.0  # most percentage points extra credit can add
+
+
+      def load_policy(data: dict[str, Any]) -> Policy:
+          weights = {str(k): float(v) for k, v in data["weights"].items()}
+          if abs(sum(weights.values()) - 1.0) > 1e-6:
+              raise ValueError("weights must add up to 1")
+          return Policy(
+              weights=weights,
+              late_penalty=float(data.get("late_penalty", 0.1)),
+              drop_lowest={str(k): int(v) for k, v in data.get("drop_lowest", {}).items()},
+              extra_cap=float(data.get("extra_cap", 5.0)),
+          )
+    gradebook/compute.py: |
+      """Turning scores into percentages and letters."""
+
+      from gradebook.book import Gradebook
+      from gradebook.models import Score
+      from gradebook.policy import Policy
+
+
+      def earned(score: Score, max_points: float, policy: Policy) -> float:
+          """Points after the late penalty, never below zero."""
+          penalty = score.points * policy.late_penalty * score.late_days
+          return max(0.0, score.points - penalty) / max_points
+
+
+      def category_average(book: Gradebook, student_id: str, category: str, policy: Policy) -> float | None:
+          """Mean fraction (0..1) over the graded assignments in a category; None if none are graded."""
+          fractions = []
+          for score in book.scores_for(student_id):
+              assignment = book.assignments[score.assignment_id]
+              if assignment.category == category:
+                  fractions.append(earned(score, assignment.max_points, policy))
+          if not fractions:
+              return None
+          return sum(fractions) / len(fractions)
+
+
+      def final_percent(book: Gradebook, student_id: str, policy: Policy) -> float:
+          total = 0.0
+          for category, weight in policy.weights.items():
+              avg = category_average(book, student_id, category, policy)
+              if avg is not None:
+                  total += avg * weight
+          extra = sum(
+              earned(s, 1.0, policy)
+              for s in book.scores_for(student_id)
+              if book.assignments[s.assignment_id].category == "extra"
+          )
+          return total * 100 + min(extra, policy.extra_cap)
+
+
+      def letter(percent: float) -> str:
+          if percent >= 90:
+              return "A"
+          if percent >= 80:
+              return "B"
+          if percent >= 70:
+              return "C"
+          if percent >= 60:
+              return "D"
+          return "F"
+- id: holdout-half-up
+  repo: gradebook
+  refs: file
+  kind: bugfix
+  task: 'Percents in gradebook/report.py and in the CSV export round the wrong way at the half: a final
+    of 84.95 shows as 84.9. Show percents rounded half up to one decimal everywhere they''re printed (84.95
+    -> 85.0, 72.25 -> 72.3), using one shared helper.'
+  hidden: |
+    from gradebook.book import Gradebook
+    from gradebook.models import Assignment, Score, Student
+
+
+    def make(*assignments, students=("s1",)):
+        b = Gradebook()
+        for sid in students:
+            b.add_student(Student(sid, sid.upper()))
+        for a in assignments:
+            b.add_assignment(Assignment(*a))
+        return b
+    from gradebook.csvio import export_grades
+    from gradebook.policy import load_policy
+    from gradebook.report import student_report
+
+
+    def test_half_up() -> None:
+        b = make(("e1", "E1", "exam", 2000, "2026-10-01"), ("e2", "E2", "exam", 400, "2026-10-02"),
+                 students=("s1", "s2"))
+        b.record(Score("s1", "e1", 1699))
+        b.record(Score("s2", "e2", 289))
+        policy = load_policy({"weights": {"exam": 1.0}})
+        rows = export_grades(b, policy).splitlines()
+        assert rows[1].startswith("s1,S1,85.0,") and rows[2].startswith("s2,S2,72.3,")
+        assert "final: 85.0%" in student_report(b, "s1", policy)
+        assert "exam: 72.3%" in student_report(b, "s2", policy)
+  solution:
+    gradebook/compute.py: |
+      """Turning scores into percentages and letters."""
+
+      from decimal import ROUND_HALF_UP, Decimal
+
+      from gradebook.book import Gradebook
+      from gradebook.models import Score
+      from gradebook.policy import Policy
+
+
+      def earned(score: Score, max_points: float, policy: Policy) -> float:
+          """Points after the late penalty, never below zero."""
+          penalty = score.points * policy.late_penalty * score.late_days
+          return max(0.0, score.points - penalty) / max_points
+
+
+      def category_average(book: Gradebook, student_id: str, category: str, policy: Policy) -> float | None:
+          """Mean fraction (0..1) over the graded assignments in a category; None if none are graded."""
+          fractions = []
+          for score in book.scores_for(student_id):
+              assignment = book.assignments[score.assignment_id]
+              if assignment.category == category:
+                  fractions.append(earned(score, assignment.max_points, policy))
+          if not fractions:
+              return None
+          return sum(fractions) / len(fractions)
+
+
+      def final_percent(book: Gradebook, student_id: str, policy: Policy) -> float:
+          total = 0.0
+          for category, weight in policy.weights.items():
+              avg = category_average(book, student_id, category, policy)
+              if avg is not None:
+                  total += avg * weight
+          return total * 100
+
+
+      def percent_text(percent: float) -> str:
+          """One decimal, halves rounded up (84.95 -> 85.0), ignoring float noise."""
+          return str(Decimal(f"{percent:.6f}").quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
+
+
+      def letter(percent: float) -> str:
+          if percent >= 90:
+              return "A"
+          if percent >= 80:
+              return "B"
+          if percent >= 70:
+              return "C"
+          if percent >= 60:
+              return "D"
+          return "F"
+    gradebook/csvio.py: |
+      """Rosters and scores from CSV text, and the grade export."""
+
+      import csv
+      import io
+
+      from gradebook.book import Gradebook
+      from gradebook.compute import final_percent, letter, percent_text
+      from gradebook.models import Score, Student
+      from gradebook.policy import Policy
+
+
+      def load_roster(text: str, book: Gradebook) -> None:
+          """Columns: id,name"""
+          for row in csv.DictReader(io.StringIO(text)):
+              book.add_student(Student(row["id"].strip(), row["name"].strip()))
+
+
+      def load_scores(text: str, book: Gradebook) -> None:
+          """Columns: student,assignment,points[,late_days]"""
+          for row in csv.DictReader(io.StringIO(text)):
+              book.record(
+                  Score(
+                      student_id=row["student"].strip(),
+                      assignment_id=row["assignment"].strip(),
+                      points=float(row["points"]),
+                      late_days=int(row.get("late_days") or 0),
+                  )
+              )
+
+
+      def export_grades(book: Gradebook, policy: Policy) -> str:
+          """One row per student, sorted by id: id,name,percent,letter"""
+          out = io.StringIO()
+          writer = csv.writer(out, lineterminator="\n")
+          writer.writerow(["id", "name", "percent", "letter"])
+          for sid in sorted(book.students):
+              pct = final_percent(book, sid, policy)
+              writer.writerow([sid, book.students[sid].name, percent_text(pct), letter(pct)])
+          return out.getvalue()
+    gradebook/report.py: |
+      """Readable reports for one student or the whole class."""
+
+      from gradebook.book import Gradebook
+      from gradebook.compute import category_average, final_percent, letter, percent_text
+      from gradebook.policy import Policy
+
+
+      def student_report(book: Gradebook, student_id: str, policy: Policy) -> str:
+          student = book.students[student_id]
+          lines = [f"{student.name} ({student.id})"]
+          for category in policy.weights:
+              avg = category_average(book, student_id, category, policy)
+              shown = "-" if avg is None else f"{percent_text(avg * 100)}%"
+              lines.append(f"  {category}: {shown}")
+          pct = final_percent(book, student_id, policy)
+          lines.append(f"  final: {percent_text(pct)}% {letter(pct)}")
+          return "\n".join(lines)
+
+
+      def class_summary(book: Gradebook, policy: Policy) -> dict[str, object]:
+          percents = sorted(final_percent(book, sid, policy) for sid in book.students)
+          letters: dict[str, int] = {}
+          for p in percents:
+              letters[letter(p)] = letters.get(letter(p), 0) + 1
+          return {
+              "students": len(percents),
+              "mean": sum(percents) / len(percents) if percents else 0.0,
+              "median": percents[len(percents) // 2] if percents else 0.0,
+              "letters": letters,
+          }

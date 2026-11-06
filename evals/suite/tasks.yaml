@@ -18,7 +18,9 @@ seeds:
     git: 7cc54b1f30c468376ad7bae0a4b410af4c3a0e90
     exclude:
     - evals/suite
+    - evals/holdout
     - tests/test_suite.py
+    - tests/test_holdout.py
 tasks:
 - id: ledger-by-payee-sums
   repo: ledger

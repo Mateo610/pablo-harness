@@ -39,6 +39,7 @@ from pablo.swap import SwapView
 from pablo.verify import IGNORE, apply_diff, run_check
 
 SUITE = Path(__file__).resolve().parents[2] / "evals" / "suite"
+HOLDOUT = SUITE.parent / "holdout"  # harder tasks: scored, never studied
 RESULTS = SUITE.parent / "results.jsonl"
 HARNESS_ROOT = SUITE.parents[1]  # this repo: git seeds are commits of it
 REFS = ("file", "symbol", "none")
@@ -522,6 +523,38 @@ def aggregate_markdown(reports: list[SuiteReport]) -> str:
             f"- Flaky ({len(a['flaky'])}): {', '.join(a['flaky']) or 'none'}",
             f"- Never passed ({len(a['never'])}): {', '.join(a['never']) or 'none'}",
         ]
+    )
+
+
+HOLDOUT_RESULTS = SUITE.parent / "holdout-results.jsonl"
+
+
+def sealed_summary(report: SuiteReport) -> dict[str, Any]:
+    """A holdout run as totals only: no task ids, no outputs, nothing to study."""
+    s = report.summary()
+    keep = (
+        "at", "commit", "lane", "model", "tasks", "pass_rate", "pass_rate_by_refs", "no_diff",
+        "ready", "ready_precision", "missed", "retried", "retried_and_passed", "wall_s",
+    )  # fmt: skip
+    return {"set": "holdout", **{k: s[k] for k in keep}, "false_ready": len(s["false_ready"])}
+
+
+def append_sealed(report: SuiteReport, path: Path = HOLDOUT_RESULTS) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(sealed_summary(report)) + "\n")
+
+
+def sealed_markdown(reports: list[SuiteReport]) -> str:
+    rows = [sealed_summary(r) for r in reports]
+    rates = [r["pass_rate"] for r in rows]
+    spread = f" ± {statistics.stdev(rates):.0%}" if len(rates) > 1 else ""
+    first = rows[0]
+    return (
+        f"### Holdout · {first['lane']} ({first['model']}) · `{first['commit']}`\n\n"
+        f"Passed per run {[round(r * first['tasks']) for r in rates]} of {first['tasks']} · mean "
+        f"{statistics.mean(rates):.0%}{spread} · false ready {[r['false_ready'] for r in rows]} · "
+        f"wall {[r['wall_s'] for r in rows]} s"
     )
 
 
