@@ -128,6 +128,8 @@ def test_the_advisor_speaks_in_its_own_voice_and_keeps_its_conversation(
 def test_what_voice_refuses(settings: Settings, repo: Path) -> None:
     c, _, _ = setup(settings, repo, heard="")
     assert c.post("/api/voice/turn?lane=claude", content=b"W").status_code == 400
+    deep = c.post("/api/voice/turn?lane=deep", content=b"W")  # can't share the GPU with the voice
+    assert deep.status_code == 400 and "can't talk" in deep.json()["detail"]
     assert c.post("/api/voice/turn?lane=coder", content=b"").status_code == 400
     silent = events(c.post("/api/voice/turn?lane=coder", content=b"W"))
     assert silent[-1] == {"type": "error", "status": 422, "detail": "Didn't catch that. Try again?"}

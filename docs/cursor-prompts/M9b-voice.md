@@ -41,14 +41,14 @@ HTTPS (or localhost).
      with the advisor (~17 GB). Measure the time to synthesize a 12-word sentence.
    - Then try **1.7B CustomVoice**. Keep it only if it fits under ~23 GB total with the coder loaded,
      and it isn't slower to first audio.
-   - With deep loaded there's probably no room. Check it. If it doesn't fit, voice with deep falls
-     back to the CPU build of 0.6B (measure it) or isn't offered. Report which.
+   - Deep isn't a voice (decided 2026-11-06): it and the voice server don't fit on the GPU
+     together, and at ~25 tok/s it's too slow to talk to. Don't measure voice with deep loaded.
    - FlashAttention is optional. Its build needs a lot of RAM (`MAX_JOBS=4`), so only build it if
      it measurably helps.
    Run it as `pablo-tts.service` on 127.0.0.1:8880. Set `voice.tts_url`, `tts_model`, and
    `tts_format: wav`.
 5. Voices:
-   - Pick a distinct preset for `coder`, `advisor`, and `deep` (`voice.voices`, e.g. the English
+   - Pick a distinct preset for `coder` and `advisor` (`voice.voices`, e.g. the English
      presets). Matt picks; play him the same sentence in each.
    - **Signature voice (optional, once):** with the **1.7B VoiceDesign** model, offline, generate a
      voice from a written description Matt writes. It must be an original voice, not a real person's.

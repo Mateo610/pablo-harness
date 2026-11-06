@@ -228,6 +228,12 @@ def create_app(
     def list_runs(request: Request, limit: int = 30) -> list[dict[str, Any]]:
         return [linked(r, request) for r in orch.recent(max(1, min(limit, 200)))]
 
+    def voice_conflicts() -> set[str]:
+        """Lanes whose model can't share the GPU with the voice server (deep, today)."""
+        tts = next((r for r in orch.settings.gpu.residents if r.name == "tts"), None)
+        models = set(tts.conflicts) if tts else {"pablo/deep"}
+        return {name for name, lane in orch.settings.lanes.items() if lane.model in models}
+
     def _voice() -> tuple[Transcriber, Speaker]:
         try:
             return voice_engines or engines(orch.settings.voice)
@@ -288,6 +294,9 @@ def create_app(
         cfg = orch.settings.lanes.get(lane)
         if cfg is None or cfg.kind != "local" or cfg.requires_approval:
             raise HTTPException(400, "Voice talks to a local model on Pablo.")
+        if lane in voice_conflicts():
+            # The voice server and this model can't share the GPU, so it could never answer aloud.
+            raise HTTPException(400, f"{lane} can't talk: it needs the GPU the voice uses.")
         if orch.gpu.mode == "deep":
             raise HTTPException(
                 409, "Pablo is in Deep Work mode: voice is paused so deep keeps the GPU."
