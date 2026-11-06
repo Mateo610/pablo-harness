@@ -7,6 +7,7 @@ import {
   ResourcesPanel,
   TonightList,
   laneColor,
+  setLaneNames,
   resourcesLine,
   stateLabel,
   todayLocal,
@@ -65,7 +66,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    api.lanes().then(setLanes).catch((e: Error) => setError(e.message));
+    api.lanes().then((l) => (setLaneNames(l), setLanes(l))).catch((e: Error) => setError(e.message));
     refresh().catch((e: Error) => setError(e.message));
     return subscribe((event) => {
       if (event.kind === "status") setStatus(event);

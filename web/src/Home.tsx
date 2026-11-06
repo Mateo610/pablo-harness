@@ -1,6 +1,6 @@
 // Home: the machine, your conversations, what needs you, what Pablo remembers, the repo.
 import { api, type Conversation, type Me, type Resources, type Run } from "./api";
-import { laneColor } from "./components";
+import { laneColor, laneName } from "./components";
 import { ago, gb, go, kTokens, ModeSwitch, pct, STATE_COLOR, usePoll, useEvents } from "./hud";
 
 export function Home({ me, res }: { me: Me | null; res: Resources | null }) {
@@ -88,7 +88,7 @@ export function Home({ me, res }: { me: Me | null; res: Resources | null }) {
                   <span className="h-chip" style={{ color: "var(--sys)" }}>{c.project || "—"}</span>
                 </span>
                 <span className="h-mono h-faint" style={{ fontSize: 11 }}>
-                  {c.lane} · {ago(c.updated_at)}
+                  {laneName(c.lane)} · {ago(c.updated_at)}
                 </span>
               </a>
             ))}
@@ -197,7 +197,7 @@ function NeedsRow({ run }: { run: Run }) {
     >
       <span style={{ color: "#f6ead6", fontSize: 14.5, lineHeight: 1.4 }}>{run.task.split("\n")[0].slice(0, 90)}</span>
       <span className="h-mono" style={{ fontSize: 12, color: STATE_COLOR[run.state] }}>
-        {run.lane}
+        {laneName(run.lane)}
         {run.certainty != null ? ` ${run.certainty.toFixed(2)}` : ""} · {run.question.slice(0, 70)}
       </span>
     </a>

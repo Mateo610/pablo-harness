@@ -1,6 +1,7 @@
 // Cockpit v2: the rail and the pages. Phones keep the phone view; the Workbench keeps every
 // v1 tool (plan, compare, hunks, replay) until each one has a home in the new pages.
 import { useEffect, useState } from "react";
+import { setLaneNames } from "./components";
 import { api, type Lane, type Me, type Resources } from "./api";
 import { App } from "./App";
 import { Agents } from "./Agents";
@@ -54,7 +55,7 @@ export function Shell() {
 
   useEffect(() => {
     api.me().then(setMe).catch((e: Error) => setError(e.message));
-    api.lanes().then(setLanes).catch(() => undefined);
+    api.lanes().then((l) => (setLaneNames(l), setLanes(l))).catch(() => undefined);
   }, []);
 
   if (narrow) return <App />;

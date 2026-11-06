@@ -71,6 +71,7 @@ lanes:
   router:
     role: Classifies each task and picks a lane
     model: pablo/router          # Qwen3.5-4B Q4, always loaded on CPU
+    display: Qwen3.5 4B
     color: "#8fa7c2"
     kind: local
     gpu: false                   # CPU: never waits for the GPU scheduler
@@ -79,6 +80,7 @@ lanes:
   coder:
     role: Daily coding, diffs, tests
     model: pablo/coder           # Qwen3.6 35B-A3B
+    display: Qwen3.6 35B-A3B
     color: "#4fd1bc"
     kind: local
     train_ok: true
@@ -93,6 +95,7 @@ lanes:
   coder-candidate:
     role: LoRA candidate under eval; never auto-routed, never training data
     model: pablo/coder-candidate
+    display: Qwen3.6 35B-A3B + LoRA
     color: "#3aa896"
     kind: local
     train_ok: false
@@ -104,6 +107,7 @@ lanes:
   judge:
     role: Reviews diffs and scores certainty
     model: pablo/judge           # Qwen3.8-27B UD-Q4_K_M via judge-qwen-dense; threshold 0.75
+    display: Qwen3.8 27B
     color: "#b9a3ff"
     kind: local
     train_ok: true
@@ -111,6 +115,7 @@ lanes:
   advisor:
     role: Unfiltered second opinion; talks, never edits, never scores
     model: pablo/advisor         # Mistral-Small-3.2-24B heretic Q5 (the old judge's weights)
+    display: Mistral Small 3.2 24B heretic
     color: "#b9a3ff"
     kind: local
     train_ok: false              # no-guardrails output never becomes training data
@@ -123,6 +128,7 @@ lanes:
   deep:
     role: Long, hard reasoning; overnight sweeps
     model: pablo/deep            # gpt-oss-120b MXFP4, --n-cpu-moe 25, ctx 65536. Bake-off did not keep the lane.
+    display: gpt-oss-120b
     color: "#f28fa8"
     kind: local
     train_ok: true
@@ -138,6 +144,7 @@ lanes:
   media:
     role: Images, 3D, motion, video
     model: pablo/media           # dispatches to Qwen-Image / TRELLIS.2 / LTX workers
+    display: Qwen-Image · TRELLIS.2
     color: "#c4db72"
     kind: local
     train_ok: false              # media pipelines are not chat-trainable
@@ -146,6 +153,7 @@ lanes:
   claude:
     role: Escalation only, never automatic
     model: pablo/escalate        # Anthropic API through the gateway
+    display: Claude
     writes_code: true
     color: "#d9cfc2"
     kind: remote

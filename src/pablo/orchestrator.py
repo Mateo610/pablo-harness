@@ -161,6 +161,10 @@ class Run:
     fixed: bool = False  # the coder fixed its change after seeing checks it made worse
     # "" (no round) · kept · no edit blocks · didn't apply · not better
     fix_outcome: str = ""
+    project: str = ""  # the project (repo folder name) the run changes
+    # How a Needs-you run retries: "" the lane's config, "now" (Hybrid: deep tries it right
+    # away, at your urgency), "off" (you picked one model: it answers alone).
+    retry: str = ""
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
 
     def to_dict(self) -> dict[str, Any]:
@@ -373,17 +377,21 @@ class Orchestrator:
         group: str | None = None,
         retried_from: str | None = None,
         by: str = "",
+        retry: str = "",
     ) -> Run:
         return self.finish(
             self.begin(
                 task, lane=lane, task_id=task_id, escalate=escalate,
                 escalated_from=escalated_from, group=group, retried_from=retried_from, by=by,
+                retry=retry,
             )
         )  # fmt: skip
 
-    def start_background(self, task: str, *, lane: str | None = None, by: str = "") -> Run:
+    def start_background(
+        self, task: str, *, lane: str | None = None, by: str = "", retry: str = ""
+    ) -> Run:
         """Route and save the run now; do the work on a thread. Events report its progress."""
-        run = self.begin(task, lane=lane, by=by)
+        run = self.begin(task, lane=lane, by=by, retry=retry)
         if self.retry_inline:  # tests and evals: no threads
             return self.finish(run)
         threading.Thread(target=self.finish, args=(run,), name=f"run-{run.id}", daemon=True).start()
@@ -400,6 +408,7 @@ class Orchestrator:
         group: str | None = None,
         retried_from: str | None = None,
         by: str = "",
+        retry: str = "",
     ) -> Run:
         """Route the task and save the run as running. `finish` does the work."""
         decision = self.router.route(task, lane=ESCALATION_LANE if escalate else lane)
@@ -434,6 +443,8 @@ class Orchestrator:
             group=group,
             retried_from=retried_from,
             by=by,
+            project=self.repo.name,
+            retry=retry,
         )
         self._save(run)
         self._emit("route", run, reason=reason, confidence=decision.confidence)
@@ -512,7 +523,7 @@ class Orchestrator:
         target = lane.retry_on
         if (
             target is None
-            or lane.retry_when == "off"
+            or (run.retry or lane.retry_when) == "off"
             or run.retried_from
             or run.escalated_from
             or run.group
@@ -520,8 +531,8 @@ class Orchestrator:
         ):
             return
         run.group = uuid.uuid4().hex[:8]
-        when = lane.retry_when
-        if when == "now" and self.gpu.mode == "interactive":
+        when = run.retry or lane.retry_when
+        if when == "now" and self.gpu.mode == "interactive" and not run.retry:
             when = "overnight"  # interactive mode keeps the coder hot; deep tries it tonight
         if when == "overnight":
             from pablo.overnight import JobQueue
@@ -539,8 +550,11 @@ class Orchestrator:
         self._save(run)
         self._emit("retry", run, lane=target, when="now")
 
+        # Hybrid asked for the retry: it runs at your urgency. A config retry waits for quiet.
+        urgency = Priority.RUN if run.retry == "now" else Priority.RETRY
+
         def go() -> None:
-            with gpu_job(Priority.RETRY, run.by):  # waits for a quiet GPU in balanced mode
+            with gpu_job(urgency, run.by):  # RETRY waits for a quiet GPU in balanced mode
                 retry = self.start(
                     run.task, lane=target, task_id=run.task_id, group=run.group,
                     retried_from=run.id, by=run.by,

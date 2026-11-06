@@ -1,7 +1,7 @@
 // Agents: every lane, what it's doing, what it spent, and the runs behind it.
 import { useState } from "react";
 import { api, type Lane, type LaneStat, type Resources } from "./api";
-import { laneColor } from "./components";
+import { laneColor, laneName } from "./components";
 import { ago, GpuQueue, kTokens, STATE_COLOR, useEvents, usePoll } from "./hud";
 
 const EMPTY: LaneStat = { runs: 0, approved: 0, ready: 0, needs_you: 0, failed: 0, tokens_in: 0, tokens_out: 0, chat_tokens_in: 0, chat_tokens_out: 0, latency_s: 0, calls: 0 };
@@ -125,7 +125,7 @@ export function Agents({ lanes, res }: { lanes: Lane[]; res: Resources | null })
                       )}
                     </td>
                     <td>{r.by ? (r.by === "owner" ? "you" : r.by.replace(/@.*/, "")) : "cli"}</td>
-                    <td style={{ color: laneColor(r.lane) }}>{r.lane}</td>
+                    <td style={{ color: laneColor(r.lane) }}>{laneName(r.lane)}</td>
                     <td className="h-diffstat">{v ? <><span className="add">+{v.added}</span> <span className="del">−{v.removed}</span></> : "—"}</td>
                     <td style={{ color: !v ? "var(--ink-faint)" : !v.applied || bad ? "var(--status-fail)" : "var(--status-pass)" }}>
                       {!v ? "—" : !v.applied ? "didn't apply" : bad ? `${bad} worse` : `${v.checks.length}/${v.checks.length} ✓`}
@@ -152,8 +152,8 @@ export function Agents({ lanes, res }: { lanes: Lane[]; res: Resources | null })
           <section className="h-frame h-pad" aria-label="Token spend by lane">
             <h2 className="h-cap">Token spend · {days === 1 ? "today" : `${days} days`}</h2>
             {spend.map((s) => (
-              <div key={s.lane} style={{ display: "grid", gridTemplateColumns: "74px 1fr 58px", gap: 10, alignItems: "center" }}>
-                <span className="h-mono" style={{ fontSize: 12, color: laneColor(s.lane) }}>{s.lane}</span>
+              <div key={s.lane} style={{ display: "grid", gridTemplateColumns: "minmax(0, 150px) 1fr 58px", gap: 10, alignItems: "center" }}>
+                <span className="h-mono" style={{ fontSize: 12, color: laneColor(s.lane) }}>{laneName(s.lane)}</span>
                 <div className="h-meter" aria-hidden="true">
                   <div style={{ width: `${Math.round((s.n / top) * 100)}%`, background: laneColor(s.lane) }} />
                 </div>

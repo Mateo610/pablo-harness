@@ -2,7 +2,7 @@
 // A reply can start a run; the run card shows the checks, and only the owner sees Apply.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, type ChatMessage, type Conversation, type Lane, type Me, type Memory, type SearchHits } from "./api";
-import { laneColor } from "./components";
+import { laneColor, laneName } from "./components";
 import { ago, go, RunCard, useEvents, usePoll } from "./hud";
 import { Markdown } from "./Markdown";
 
@@ -19,15 +19,24 @@ interface Option {
 
 function modelOptions(lanes: Lane[], me: Me | null): Option[] {
   const by = new Map(lanes.map((l) => [l.name, l]));
-  const out: Option[] = [{ key: "auto", name: "Auto", desc: "The router picks coder or deep for each change.", meta: "replies come from the coder" }];
-  const add = (key: string, name: string, desc: string, group?: string) => {
-    const lane = by.get(key);
-    if (lane) out.push({ key, name, desc, meta: `${lane.model.replace("pablo/", "")} · ${lane.kind}`, group });
+  const out: Option[] = [];
+  const add = (key: string, lane: string, name: string, desc: string, group?: string) => {
+    const l = by.get(lane);
+    if (l) out.push({ key, name, desc, meta: l.display || l.model.replace("pablo/", ""), group });
   };
-  add("coder", "Coder", "Fast. Everyday changes, tests, questions about the code.");
-  add("deep", "Deep", "Slow and careful. Hard bugs, refactors, plans. Expect minutes.");
-  add("advisor", "Advisor", "No guardrails. A blunt second opinion; never edits your repo.", "UNFILTERED");
-  if (me?.can_approve) add("claude", "Claude", "Leaves Pablo. Asks before every send; never gets your memory.", "OFF THE BOX");
+  add("coder", "coder", "Base", "Fastest. Good for most things. Answers alone: if a change breaks, it comes to you.");
+  add("advisor", "advisor", "No guardrails", "Unfiltered. Talks here; builds only in a no-guardrails project.", "UNFILTERED");
+  add("deep", "deep", "Best", "Our strongest model. Slow: expect a pause, and minutes for big changes.");
+  const coder = by.get("coder");
+  const deep = by.get("deep");
+  if (coder && deep)
+    out.push({
+      key: "auto",
+      name: "Hybrid",
+      desc: "Our system: the base model builds, checks and a judge review it, and Best retries anything that breaks.",
+      meta: `${coder.display || "coder"} → ${deep.display || "deep"}`,
+    });
+  if (me?.can_approve) add("claude", "claude", "Claude", "Leaves Pablo. Asks before every send; never gets your memory.", "OFF THE BOX");
   return out;
 }
 
@@ -235,7 +244,7 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
                 </span>
                 <div className="h-bot-body">
                   <span className="h-mono h-faint" style={{ fontSize: 11 }}>
-                    {m.lane} · {ago(m.created_at)}
+                    {laneName(m.lane)} · {ago(m.created_at)}
                   </span>
                   <Markdown text={m.run_id ? m.content.replace(/\n*\[run [^\]]+\]\s*$/, "") : m.content} />
                   {m.run_id && <RunCard id={m.run_id} me={me} />}
@@ -257,7 +266,7 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
                       <span className="h-caret" aria-hidden="true" />
                     </div>
                   ) : (
-                    <span className="h-thinking">{status || (lane === "deep" ? "deep is thinking (this takes a while)…" : "thinking…")}</span>
+                    <span className="h-thinking">{status || (lane === "deep" ? `${laneName("deep")} is thinking (this takes a while)…` : "thinking…")}</span>
                   )}
                 </div>
               </div>

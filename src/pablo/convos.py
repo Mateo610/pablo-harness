@@ -542,10 +542,12 @@ class Chat:
             task += "\n\nNotes from the user (keep to these):\n" + "\n".join(
                 f"- {n}" for n in notes[:6]
             )
-        target = None if lane == AUTO else lane
+        # Hybrid (AUTO): the router picks, checks and the judge review, and deep retries a
+        # broken change right away. A model you picked by name answers alone: no retry.
+        target, retry = (None, "now") if lane == AUTO else (lane, "off")
         if self.background:
-            return self.orch.start_background(task, lane=target, by=profile)
-        return self.orch.start(task, lane=target, by=profile)
+            return self.orch.start_background(task, lane=target, by=profile, retry=retry)
+        return self.orch.start(task, lane=target, by=profile, retry=retry)
 
     @staticmethod
     def _run_line(run: Run) -> str:

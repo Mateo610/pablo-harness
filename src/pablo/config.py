@@ -17,6 +17,8 @@ class Lane(BaseModel):
     name: str = ""
     role: str
     model: str
+    # The model's own name for menus ("Qwen3.6 35B-A3B"); the lane name stays internal.
+    display: str = ""
     color: str = "#a39c92"
     kind: Literal["local", "remote"] = "local"
     train_ok: bool = True

@@ -14,6 +14,14 @@ const LANE_VAR: Record<string, string> = {
 
 export const laneColor = (lane: string) => LANE_VAR[lane] ?? "var(--ink-muted)";
 
+// People see the model's own name ("Qwen3.6 35B-A3B"), not the lane ("coder"). The shell fills
+// this from /api/lanes once; until then the lane name stands in.
+const NAMES: Record<string, string> = { auto: "Hybrid" };
+export function setLaneNames(lanes: Lane[]) {
+  for (const l of lanes) if (l.display) NAMES[l.name] = l.display;
+}
+export const laneName = (lane: string) => NAMES[lane] ?? lane.charAt(0).toUpperCase() + lane.slice(1);
+
 export function LaneBadge({ lane, model }: { lane: string; model?: string }) {
   const escalate = lane === "claude";
   return (
@@ -29,7 +37,7 @@ export function LaneBadge({ lane, model }: { lane: string; model?: string }) {
       >
         {lane.charAt(0).toUpperCase()}
       </span>
-      <span className="lane-name">{lane.charAt(0).toUpperCase() + lane.slice(1)}</span>
+      <span className="lane-name">{laneName(lane)}</span>
       {model && <span className="mono muted">{model}</span>}
     </span>
   );

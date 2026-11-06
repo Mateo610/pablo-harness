@@ -6,6 +6,8 @@ export interface Lane {
   name: LaneName;
   role: string;
   model: string;
+  /** The model's own name, for menus and labels. */
+  display?: string;
   color: string;
   kind: "local" | "remote";
   train_ok: boolean;

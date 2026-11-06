@@ -1,7 +1,7 @@
 // Shared bits for cockpit v2: routing, polling, the event bus, run cards, small formatters.
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError, subscribe, type GpuLease, type GpuMode, type GpuState, type HarnessEvent, type Me, type Run } from "./api";
-import { DiffView, laneColor, stateLabel } from "./components";
+import { DiffView, laneColor, stateLabel, laneName } from "./components";
 
 export type Route = { page: string; id: string };
 
@@ -130,7 +130,7 @@ export function RunCard({ id, me, initial }: { id: string; me: Me | null; initia
           {stateLabel(run).toUpperCase()}
         </span>
         <span className="h-mono" style={{ fontSize: 12, color: laneColor(run.lane) }}>
-          {run.lane} · {run.model.replace("pablo/", "")}
+          {laneName(run.lane)}
         </span>
         {run.retried_from && <span className="h-mono h-faint" style={{ fontSize: 12 }}>retry of {run.retried_from}</span>}
         <span className="h-mono h-dim h-diffstat" style={{ marginLeft: "auto", fontSize: 12 }}>

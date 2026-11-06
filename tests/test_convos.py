@@ -194,3 +194,28 @@ def test_the_api_runs_a_conversation(settings: Settings, repo: Path) -> None:
     assert client.post("/api/conversations", json={"lane": "nope"}).status_code == 400
     assert client.delete(f"/api/conversations/{conv['id']}").json() == {"deleted": conv["id"]}
     assert client.get(f"/api/conversations/{conv['id']}").status_code == 404
+
+
+def test_hybrid_retries_on_deep_now_and_a_named_model_answers_alone(
+    settings: Settings, repo: Path
+) -> None:
+    """Hybrid is the whole system; Base (or any model you name) is that model alone."""
+    unsure = "I'm not sure what to change."
+    backend = FakeBackend(scripts={"pablo/coder": lambda m, x: unsure,
+                                   "pablo/deep": lambda m, x: GOOD,
+                                   "pablo/judge": lambda m, x: JUDGE})  # fmt: skip
+    settings.lanes["coder"].retry_when = "overnight"  # config says wait; Hybrid says now
+    orch = Orchestrator(settings, backend, repo=repo, checks=CHECKS)
+    orch.retry_inline = True
+    orch.gpu.set_mode("interactive")
+    chat = Chat(orch)
+
+    hybrid = chat.start(lane="auto")
+    turn = chat.say(hybrid.id, "add sub(a, b) to calc.py", do=True)
+    run = orch.get(turn.run["id"])
+    assert run.retry == "now" and run.retry_run and run.retry_job is None
+    assert orch.get(run.retry_run).lane == "deep" and run.project == repo.name
+
+    base = chat.start(lane="coder")
+    alone = orch.get(chat.say(base.id, "add sub(a, b) to calc.py", do=True).run["id"])
+    assert alone.retry == "off" and alone.retry_run is None and alone.retry_job is None
