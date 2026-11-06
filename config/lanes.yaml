@@ -13,6 +13,16 @@ thresholds:
 gpu:                      # one GPU, many people (src/pablo/gpu.py)
   mode: balanced          # interactive · balanced · deep; the switch on Home overrides it
   idle_s: 120             # balanced: retries and night work wait this long after live activity
+  # Residents: GPU processes outside llama-swap. The voice server can't share the 3090 with
+  # deep, so it's paused before deep loads and woken (after unloading deep) on a voice turn.
+  unload_url: http://127.0.0.1:8100/unload   # llama-swap: drop whatever model is loaded
+  residents:
+    - name: tts
+      start: systemctl --user start pablo-tts.service
+      stop: systemctl --user stop pablo-tts.service
+      health: http://127.0.0.1:8880          # any HTTP answer means it is up
+      conflicts: [pablo/deep]
+      warmup_s: 90
 
 learn:                    # learning without retraining (src/pablo/lessons.py); recording is always on
   examples: false         # show the coder 1 or 2 right answers from this repo

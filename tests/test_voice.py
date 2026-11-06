@@ -189,3 +189,49 @@ def test_speech_to_text_hears_the_projects_words(settings: Settings, repo: Path)
     app = create_app(orch, voice_engines=(stt, FakeTTS()))
     TestClient(app, client=("127.0.0.1", 5000)).post("/api/voice", content=b"W")
     assert "load_line" in stt.got[0][2]
+
+
+def test_a_turn_wakes_a_paused_voice_server_first(settings: Settings, repo: Path) -> None:
+    from pablo.config import ResidentConfig
+    from pablo.gpu import GpuScheduler
+
+    asked: list[str] = []
+    up = {"tts": False}
+
+    def run(command: str) -> None:
+        asked.append(command)
+        up["tts"] = command == "start"
+
+    tts_cfg = ResidentConfig(name="tts", start="start", stop="stop",
+                             health="http://127.0.0.1:8880", conflicts=["pablo/deep"])  # fmt: skip
+    gpu = GpuScheduler(settings.home, idle_s=0, residents_cfg=[tts_cfg], run=run,
+                       up=lambda url: up["tts"], unload=asked.append,
+                       sleep=lambda s: None)  # fmt: skip
+    backend = FakeBackend(scripts={"pablo/coder": lambda m, x: REPLY})
+    orch = Orchestrator(settings, backend, repo=repo, checks=CHECKS, gpu=gpu)
+    tts = FakeTTS()
+    c = TestClient(create_app(orch, voice_engines=(FakeSTT("hi"), tts)), client=("127.0.0.1", 5000))
+
+    out = events(c.post("/api/voice/turn?lane=coder", content=b"W"))
+    kinds = [e["type"] for e in out]
+    assert kinds.index("status") < kinds.index("delta")  # "waking the voice…" before the answer
+    assert asked == ["start"] and tts.said and kinds[-1] == "done"
+    assert c.get("/api/voice/status").json()["tts_state"] == "running"
+
+    again = events(c.post("/api/voice/turn?lane=coder", content=b"W"))
+    assert "status" not in [e["type"] for e in again] and asked == ["start"]  # awake: no wake
+
+
+def test_a_voice_server_that_wont_wake_says_so(settings: Settings, repo: Path) -> None:
+    from pablo.config import ResidentConfig
+    from pablo.gpu import GpuScheduler
+
+    tts_cfg = ResidentConfig(name="tts", start="start", stop="stop", health="h", warmup_s=2)
+    gpu = GpuScheduler(settings.home, idle_s=0, residents_cfg=[tts_cfg], run=lambda c: None,
+                       up=lambda url: False, sleep=lambda s: None)  # fmt: skip
+    orch = Orchestrator(settings, FakeBackend(), repo=repo, checks=CHECKS, gpu=gpu)
+    c = TestClient(create_app(orch, voice_engines=(FakeSTT("hi"), FakeTTS())),
+                   client=("127.0.0.1", 5000))  # fmt: skip
+    out = events(c.post("/api/voice/turn?lane=coder", content=b"W"))
+    assert out[-1]["type"] == "error" and out[-1]["status"] == 503
+    assert "didn't wake" in out[-1]["detail"]

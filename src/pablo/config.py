@@ -186,12 +186,26 @@ class SpecConfig(BaseModel):
     timeout_s: float = 120.0
 
 
+class ResidentConfig(BaseModel):
+    """A non-LLM process that lives on the GPU (the TTS server) and can't share it with some
+    models. The scheduler pauses it before one of those loads and wakes it when it's needed."""
+
+    name: str
+    start: str  # shell-free command, e.g. "systemctl --user start pablo-tts.service"
+    stop: str
+    health: str  # URL that answers when it's up
+    conflicts: list[str] = Field(default_factory=list)  # gateway models, e.g. ["pablo/deep"]
+    warmup_s: float = 90.0
+
+
 class GpuConfig(BaseModel):
     """The GPU scheduler (src/pablo/gpu.py). `mode` is the starting mode; the owner's switch
-    on Home overrides it (saved in ~/.pablo/gpu-mode.json)."""
+    on Home overrides it (saved in ~/.pablo/gpu-mode.json, read by every Pablo process)."""
 
     mode: Literal["interactive", "balanced", "deep"] = "balanced"
     idle_s: float = 120.0  # balanced: background work waits this long after the last live call
+    residents: list[ResidentConfig] = Field(default_factory=list)
+    unload_url: str = ""  # llama-swap's unload endpoint: frees an idle model's VRAM for a resident
 
 
 class LearnConfig(BaseModel):

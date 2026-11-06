@@ -255,10 +255,20 @@ export interface Stats {
 export type VoiceEvent =
   | { type: "conversation"; id: string }
   | { type: "heard"; text: string }
+  | { type: "status"; text: string }
   | { type: "delta"; text: string }
   | { type: "audio"; seq: number; mime: string; text: string; data: string }
   | { type: "done"; turn: Turn; tts_error?: string }
   | { type: "error"; status?: number; detail?: string };
+
+export interface VoiceStatus {
+  enabled: boolean;
+  stt: boolean;
+  tts: boolean;
+  voices: Record<string, string>;
+  /** running · paused (asleep while deep has the GPU; wakes on your next turn) · starting · down */
+  tts_state?: "running" | "paused" | "starting" | "unknown" | "down";
+}
 
 export type GpuMode = "interactive" | "balanced" | "deep";
 export interface GpuLease {
@@ -386,7 +396,7 @@ export const api = {
       if (done) throw new ApiError("The reply stopped before it finished.", 502);
     }
   },
-  voiceStatus: () => call<{ enabled: boolean; stt: boolean; tts: boolean; voices: Record<string, string> }>("/api/voice/status"),
+  voiceStatus: () => call<VoiceStatus>("/api/voice/status"),
   /** One voice turn: WAV in; heard text, reply pieces, and spoken sentences out, in order. */
   voiceTurn: async (
     wav: Blob,

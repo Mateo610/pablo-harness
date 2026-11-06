@@ -74,3 +74,20 @@ HTTPS (or localhost).
   delete them when you're done.
 - Don't change `/api/voice/turn` or the prompt. If something in the harness gets in the way, write it
   up for Claude.
+
+## Addendum · the voice server is a GPU resident (2026-11-05)
+
+`gpu.residents` in `config/lanes.yaml` tells the scheduler how to stop, start and health-check
+`pablo-tts.service`. Deep pauses it; a voice turn wakes it (after unloading an idle deep).
+
+1. Make sure `systemctl --user start|stop pablo-tts.service` works from the user `pablo serve`
+   runs as, without sudo (a user unit, `loginctl enable-linger` already on).
+2. Check llama-swap's unload endpoint: `curl -i 127.0.0.1:8100/unload`. If it isn't `/unload` on
+   this version, fix `gpu.unload_url` and note the version in `docs/decisions.md`.
+3. Test the round trip: load deep (`pablo run --lane deep "say hi"`), check the TTS stopped, then
+   speak on the Voice page. The page should say "waking the voice…", then answer. Record the wake
+   time (deep unload + TTS start + first audio) next to the latency table as a separate row; it
+   doesn't count toward warm time-to-first-word.
+4. Don't measure latency while agent A's suite runs: `pablo eval` holds Deep Work, so voice
+   answers 409 until it finishes.
+

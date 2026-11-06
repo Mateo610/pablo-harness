@@ -40,7 +40,7 @@ Status: `todo` · `doing` · `done`. Update this table when a gate passes.
 | C6 | Conversations + memory | Multi-turn chats per profile in `~/.pablo/pablo.db`; RUN lines start ordinary runs; notes kept only when you keep them; FTS search; nothing of memory goes to Claude | done (API + `pablo chat` / `pablo memory`; cockpit v2 Chat UI next) |
 | C7 | Profiles + teammate access | Tailscale identity → profile, owner/member roles, only the owner approves | done (`tailscale whois` per peer IP; headers never trusted; `~/.pablo/access.yaml`; see `docs/teammates.md`) |
 | C8 | Cockpit v2 in the browser | Home, Chat, Advisor, Agents live on the API; Voice shows the orb until M9b; v1 tools stay as Work | doing (pages live; voice lane, phone layout for the new pages, GPU mode switch to come) |
-| C9 | GPU scheduler | One lease for the GPU: voice > chat > runs > retries > night; same-model calls share; background waits for quiet; Interactive / Balanced / Deep Work modes | done (`src/pablo/gpu.py`, `/api/gpu`, switch on Home, queue on Agents) |
+| C9 | GPU scheduler | One lease for the GPU: voice > chat > runs > retries > night; same-model calls share; background waits for quiet; Interactive / Balanced / Deep Work modes | done (`src/pablo/gpu.py`, `/api/gpu`, switch on Home, queue on Agents); residents: the TTS server pauses for deep and wakes on a voice turn; `pablo eval` holds Deep Work while it runs |
 
 ## Order that works
 M0 → M1 unblocks everything real. C1–C2 can be built any time (fake mode). M3 and M4 go

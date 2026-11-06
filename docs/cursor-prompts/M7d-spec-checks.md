@@ -18,6 +18,13 @@ and two short pytest runs per clean run.
 **Do this after the judge switch to Qwen3.8-27B dense** (agent A), so both arms use the same
 judge. Don't run it while the voice agent is measuring latency.
 
+**Rerun the baseline.** Cascade runs 2–3 at 3cb60a6 are invalid (deep returned 500 on 12 tasks
+because the voice server held VRAM). Pablo now pauses the voice server before deep loads, and
+`pablo eval` holds Deep Work for its whole run, so pull first and rerun step 2 even if a run on
+an older commit exists. Before you start, check `curl -s 127.0.0.1:8710/api/gpu | jq .residents`
+shows the tts resident, and after the first deep task that `systemctl --user is-active
+pablo-tts.service` says `inactive`.
+
 **Steps**
 1. `git pull`, `uv sync`. Leave `spec.enabled: false` in `config/lanes.yaml`.
 2. Without spec, on the same commit and judge: `uv run pablo eval --cascade --repeat 3 --write`.

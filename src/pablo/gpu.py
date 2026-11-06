@@ -14,7 +14,11 @@ Who goes first, most urgent first:
 
 Same urgency: the person served longest ago goes first, then the model already loaded.
 
-Modes (owner's switch on Home):
+Residents: processes that live on the GPU outside llama-swap (the TTS server). One that can't
+share the GPU with a model (TTS with deep) is paused before that model loads, by whichever Pablo
+process loads it, and woken when someone needs it (a voice turn), after unloading the idle model.
+
+Modes (owner's switch on Home; a file, so every Pablo process sees the same mode):
     interactive   keep the coder hot: retries move to tonight's queue; night work waits for night
     balanced      background work (retry, night) starts after `idle_s` with no live activity
     deep          deep work any time; voice is paused (it would evict deep)
@@ -26,6 +30,8 @@ from __future__ import annotations
 
 import itertools
 import json
+import shlex
+import subprocess
 import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
@@ -37,7 +43,7 @@ from enum import IntEnum
 from pathlib import Path
 from typing import Any, Literal
 
-from pablo.config import Overnight, Settings
+from pablo.config import Overnight, ResidentConfig, Settings
 from pablo.gateway import ChatBackend, Completion, Delta, Message
 
 Mode = Literal["interactive", "balanced", "deep"]
@@ -83,6 +89,42 @@ class Lease:
                 "for_s": round(now - self.since, 1)}  # fmt: skip
 
 
+class ResidentError(RuntimeError):
+    pass
+
+
+def run_command(command: str, timeout_s: float = 60) -> None:
+    done = subprocess.run(shlex.split(command), capture_output=True, text=True, timeout=timeout_s)
+    if done.returncode != 0:
+        raise ResidentError(f"{command}: {done.stderr.strip() or done.returncode}")
+
+
+def http_up(url: str) -> bool:
+    import httpx
+
+    try:
+        httpx.get(url, timeout=2)
+        return True
+    except httpx.HTTPError:
+        return False
+
+
+def http_post(url: str) -> None:
+    import httpx
+
+    # llama-swap's `/unload` drops every loaded model; versions differ on GET or POST.
+    if httpx.get(url, timeout=30).status_code >= 400:
+        httpx.post(url, timeout=30).raise_for_status()
+
+
+@dataclass
+class Resident:
+    cfg: ResidentConfig
+    state: Literal["unknown", "running", "paused", "starting"] = "unknown"
+    paused_for: str = ""
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+
 @dataclass
 class GpuScheduler:
     home: Path
@@ -91,6 +133,12 @@ class GpuScheduler:
     default_mode: Mode = "balanced"
     clock: Callable[[], float] = time.monotonic
     local_now: Callable[[], datetime] = datetime.now
+    residents_cfg: list[ResidentConfig] = field(default_factory=list)
+    unload_url: str = ""
+    run: Callable[[str], None] = run_command
+    up: Callable[[str], bool] = http_up
+    unload: Callable[[str], None] = http_post
+    sleep: Callable[[float], None] = time.sleep
 
     def __post_init__(self) -> None:
         self._cond = threading.Condition()
@@ -101,6 +149,7 @@ class GpuScheduler:
         self._last_live = float("-inf")
         self._served: dict[str, float] = {}
         self._mode: Mode = self._load_mode()
+        self.residents = {r.name: Resident(r) for r in self.residents_cfg}
 
     # mode -----------------------------------------------------------------------------------
 
@@ -116,6 +165,8 @@ class GpuScheduler:
 
     @property
     def mode(self) -> Mode:
+        """Read from the file each time (it's tiny): another process (a CLI eval) may set it."""
+        self._mode = self._load_mode() if self._mode_file().is_file() else self._mode
         return self._mode
 
     def set_mode(self, mode: Mode) -> None:
@@ -126,6 +177,16 @@ class GpuScheduler:
             self.home.mkdir(parents=True, exist_ok=True)
             self._mode_file().write_text(json.dumps({"mode": mode}))
             self._cond.notify_all()
+
+    @contextmanager
+    def mode_for(self, mode: Mode) -> Iterator[None]:
+        """Hold a mode for a while (a CLI eval holds Deep Work), then put the old one back."""
+        before = self.mode
+        self.set_mode(mode)
+        try:
+            yield
+        finally:
+            self.set_mode(before)
 
     # rules ----------------------------------------------------------------------------------
 
@@ -138,9 +199,10 @@ class GpuScheduler:
         """May background work (retry, night) start now? Holds the lock or reads a snapshot."""
         if priority < Priority.RETRY:
             return True
-        if self._mode == "deep":
+        mode = self.mode
+        if mode == "deep":
             return True
-        if self._mode == "interactive":
+        if mode == "interactive":
             return priority == Priority.NIGHT and self._night()
         live_waiting = any(w.priority <= LIVE for w in self._waiting)
         quiet = self.clock() - self._last_live >= self.idle_s
@@ -185,6 +247,7 @@ class GpuScheduler:
             self._served[who] = self.clock()
             self._cond.notify_all()
         try:
+            self._pause_for(model)
             yield req
         finally:
             with self._cond:
@@ -192,6 +255,55 @@ class GpuScheduler:
                 if priority <= LIVE:
                     self._last_live = self.clock()
                 self._cond.notify_all()
+
+    # residents ------------------------------------------------------------------------------
+
+    def _pause_for(self, model: str) -> None:
+        """Before `model` runs: pause every resident that can't share the GPU with it."""
+        for r in self.residents.values():
+            if model not in r.cfg.conflicts:
+                continue
+            with r.lock:
+                if r.state != "paused":
+                    self.run(r.cfg.stop)  # idempotent: stopping a stopped service is fine
+                    r.state, r.paused_for = "paused", model
+
+    def ensure_resident(self, name: str, on_wake: Callable[[], None] | None = None) -> bool:
+        """Make sure `name` is up (a voice turn calls this). True if it had to wake it.
+
+        Waits while a conflicting model is working here, unloads it if it's only idle in
+        VRAM, starts the resident, and waits for its health URL.
+        """
+        r = self.residents.get(name)
+        if r is None:
+            return False
+        with self._cond:
+            self._last_live = self.clock()  # someone is talking: background work holds off
+        with r.lock:
+            if self.up(r.cfg.health):
+                r.state = "running"
+                return False
+            if on_wake:
+                on_wake()
+            with self._cond:
+                while any(h.model in r.cfg.conflicts for h in self._holders):
+                    self._cond.wait(timeout=1.0)
+                idle_conflict = self._resident in r.cfg.conflicts
+                if idle_conflict:
+                    self._resident = None
+            if idle_conflict and self.unload_url:
+                self.unload(self.unload_url)
+            r.state = "starting"
+            self.run(r.cfg.start)
+            waited = 0.0
+            while not self.up(r.cfg.health):
+                if waited >= r.cfg.warmup_s:
+                    r.state = "unknown"
+                    raise ResidentError(f"{name} didn't come up in {r.cfg.warmup_s:.0f} s")
+                self.sleep(1.0)
+                waited += 1.0
+            r.state, r.paused_for = "running", ""
+            return True
 
     def poke(self) -> None:
         """Re-check who may start now (after the clock or the night window moved)."""
@@ -203,13 +315,17 @@ class GpuScheduler:
             now = self.clock()
             idle = now - self._last_live
             return {
-                "mode": self._mode,
+                "mode": self.mode,
                 "resident": self._resident,
                 "holders": [h.view(now) for h in self._holders],
                 "waiting": [w.view(now) for w in sorted(self._waiting, key=self._order)],
                 "idle_s": None if idle == float("inf") else round(idle, 1),
                 "background_ok": self.background_ok(Priority.RETRY),
                 "idle_needed_s": self.idle_s,
+                "residents": [
+                    {"name": n, "state": r.state, "paused_for": r.paused_for}
+                    for n, r in self.residents.items()
+                ],
             }
 
 

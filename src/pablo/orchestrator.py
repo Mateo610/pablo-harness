@@ -234,6 +234,8 @@ class Orchestrator:
             idle_s=settings.gpu.idle_s,
             overnight=settings.overnight,
             default_mode=settings.gpu.mode,
+            residents_cfg=settings.gpu.residents,
+            unload_url=settings.gpu.unload_url,
         )
         self.backend: ChatBackend = ScheduledBackend(backend, self.gpu, off_gpu_models(settings))
         self.repo = repo.resolve()

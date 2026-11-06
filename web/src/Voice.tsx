@@ -1,7 +1,7 @@
 // Voice: one orb, pick who you're talking to, talk. Speech is turned into text and back on
 // Pablo; every turn lands in a conversation, so handoffs are ordinary runs you approve.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, ApiError, type Me, type VoiceEvent } from "./api";
+import { api, ApiError, type Me, type VoiceEvent, type VoiceStatus } from "./api";
 import { audioContext, Player, record, releaseMicrophone, rms, type Recorder } from "./audio";
 import { ago, RunCard, usePoll } from "./hud";
 import { Markdown } from "./Markdown";
@@ -45,7 +45,10 @@ export function Voice({ me }: { me: Me | null }) {
   const cur = WHO[who];
 
   const secure = window.isSecureContext;
-  const ready = Boolean(status?.enabled && status.stt && status.tts && secure && !paused);
+  // A voice server asleep for deep still counts: the next turn wakes it.
+  const asleep = status?.tts_state === "paused";
+  const ready = Boolean(status?.enabled && status.stt && (status.tts || asleep) && secure && !paused);
+  const [note, setNote] = useState("");
 
   // The ring follows whatever is sounding: your mic while you talk, Pablo while it answers.
   useEffect(() => {
@@ -92,6 +95,8 @@ export function Voice({ me }: { me: Me | null }) {
       const at = new Date().toISOString();
       const onEvent = (e: VoiceEvent) => {
         if (e.type === "conversation") setConv(e.id);
+        if (e.type === "status") setNote(e.text);
+        if (e.type === "delta" || e.type === "error" || e.type === "done") setNote("");
         if (e.type === "heard") setLines((l) => [...l, { role: "user", text: e.text, lane: who, at }, { role: "assistant", text: "", lane: who, at }]);
         if (e.type === "delta") {
           reply += e.text;
@@ -220,7 +225,7 @@ export function Voice({ me }: { me: Me | null }) {
   const stateText = {
     idle: openMic ? "listening for you" : "hold to talk · or hold space",
     listening: "● hearing you",
-    thinking: who === "deep" ? "deep is thinking…" : "thinking…",
+    thinking: note || (who === "deep" ? "deep is thinking…" : "thinking…"),
     speaking: "● speaking",
   }[phase];
 
@@ -238,7 +243,7 @@ export function Voice({ me }: { me: Me | null }) {
             {paused ? (
               <span className="h-chip" style={{ color: "var(--lane-deep)", borderColor: "#5a2a3c" }}>Deep Work mode: voice paused so deep keeps the GPU</span>
             ) : (
-              <VoiceHealth ready={ready} secure={secure} status={status} />
+              <VoiceHealth ready={ready} secure={secure} status={status} asleep={asleep} />
             )}
           </span>
         </header>
@@ -311,7 +316,8 @@ export function Voice({ me }: { me: Me | null }) {
   );
 }
 
-function VoiceHealth({ ready, secure, status }: { ready: boolean; secure: boolean; status: { enabled: boolean; stt: boolean; tts: boolean } | null }) {
+function VoiceHealth({ ready, secure, status, asleep }: { ready: boolean; secure: boolean; status: VoiceStatus | null; asleep: boolean }) {
+  if (ready && asleep) return <span className="h-chip" style={{ color: "var(--lane-deep)", borderColor: "#5a2a3c" }}>voice sleeping while deep works: it wakes when you talk</span>;
   if (ready) return <span className="h-chip" style={{ color: "var(--status-pass)", borderColor: "#1f5a3c" }}>● live · audio stays on Pablo</span>;
   const why = !secure
     ? "the mic needs HTTPS: run `pablo cert`, then open the https address"

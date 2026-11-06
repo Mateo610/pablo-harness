@@ -198,3 +198,106 @@ def test_the_api_shows_the_queue_and_only_the_owner_switches(
     paused = client.post("/api/voice/turn?lane=coder", content=b"W")
     assert paused.status_code == 409 and "Deep Work" in paused.json()["detail"]
     assert json.loads((settings.home / "gpu-mode.json").read_text())["mode"] == "deep"
+
+
+# residents: the voice server lives on the GPU outside llama-swap -----------------------------
+
+
+class Box:
+    """A fake systemd + health URL + llama-swap unload, recording what Pablo asked for."""
+
+    def __init__(self, up: bool = True, warm_after: int = 0) -> None:
+        self.is_up, self.warm_after, self.polls = up, warm_after, 0
+        self.log: list[str] = []
+
+    def run(self, command: str) -> None:
+        self.log.append(command.split()[2])  # start / stop
+        if "stop" in command:
+            self.is_up = False
+        else:
+            self.polls = 0
+
+    def up(self, url: str) -> bool:
+        if not self.is_up and self.log and self.log[-1] == "start":
+            self.polls += 1
+            self.is_up = self.polls > self.warm_after
+        return self.is_up
+
+    def unload(self, url: str) -> None:
+        self.log.append("unload")
+
+
+def with_tts(tmp_path: Path, box: Box, warmup_s: float = 90) -> GpuScheduler:
+    from pablo.config import ResidentConfig
+
+    tts = ResidentConfig(name="tts", start="systemctl --user start pablo-tts.service",
+                         stop="systemctl --user stop pablo-tts.service",
+                         health="http://127.0.0.1:8880", conflicts=["pablo/deep"],
+                         warmup_s=warmup_s)  # fmt: skip
+    return GpuScheduler(tmp_path, idle_s=0, residents_cfg=[tts], unload_url="http://x/unload",
+                        run=box.run, up=box.up, unload=box.unload,
+                        sleep=lambda s: None)  # fmt: skip
+
+
+def test_deep_pauses_the_voice_server_before_it_loads(tmp_path: Path) -> None:
+    box = Box()
+    s = with_tts(tmp_path, box)
+    with s.lease("pablo/coder"):
+        pass
+    assert box.log == []  # the coder fits beside the voice
+    with s.lease("pablo/deep"):
+        assert box.log == ["stop"] and not box.is_up
+    with s.lease("pablo/deep"):
+        pass
+    assert box.log == ["stop"]  # already paused: no second stop
+    assert s.snapshot()["residents"] == [
+        {"name": "tts", "state": "paused", "paused_for": "pablo/deep"}
+    ]
+
+
+def test_a_voice_turn_wakes_it_after_unloading_an_idle_deep(tmp_path: Path) -> None:
+    box = Box(warm_after=3)
+    s = with_tts(tmp_path, box)
+    with s.lease("pablo/deep"):
+        pass
+    woke: list[bool] = []
+    assert s.ensure_resident("tts", on_wake=lambda: woke.append(True)) is True
+    assert box.log == ["stop", "unload", "start"] and woke == [True]
+    assert s.snapshot()["resident"] is None  # deep is gone from VRAM
+    assert s.residents["tts"].state == "running"
+    assert s.ensure_resident("tts") is False  # up already: nothing to do
+    assert box.log == ["stop", "unload", "start"]
+
+
+def test_waking_waits_for_deep_to_finish_its_work(tmp_path: Path) -> None:
+    box = Box()
+    s = with_tts(tmp_path, box)
+    log: list[str] = []
+    deep = Holder(s, "pablo/deep", Priority.RUN, "matt", log)
+    assert deep.got.wait(2)
+    done = threading.Event()
+    t = threading.Thread(target=lambda: (s.ensure_resident("tts"), done.set()), daemon=True)
+    t.start()
+    time.sleep(0.2)
+    assert not done.is_set() and "start" not in box.log  # mid-generation: not evicted
+    deep.done.set()
+    assert done.wait(3)
+    assert box.log == ["stop", "unload", "start"]
+
+
+def test_a_voice_server_that_never_comes_up_is_an_error(tmp_path: Path) -> None:
+    from pablo.gpu import ResidentError
+
+    box = Box(up=False, warm_after=10_000)
+    s = with_tts(tmp_path, box, warmup_s=3)
+    with pytest.raises(ResidentError, match="didn't come up"):
+        s.ensure_resident("tts")
+
+
+def test_every_process_sees_the_mode_the_other_set(tmp_path: Path) -> None:
+    serve, _ = sched(tmp_path)
+    cli, _ = sched(tmp_path)
+    assert serve.mode == "balanced"
+    with cli.mode_for("deep"):
+        assert serve.mode == "deep"  # an eval in another process holds Deep Work
+    assert serve.mode == "balanced" and cli.mode == "balanced"

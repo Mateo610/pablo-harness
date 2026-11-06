@@ -36,8 +36,15 @@ def _backend(settings: Settings, fake: bool) -> ChatBackend:
     return LiteLLMBackend(settings.gateway.base_url, settings.gateway.api_key)
 
 
-def _orch(repo: Path, fake: bool) -> Orchestrator:
+def _settings(fake: bool) -> Settings:
     settings = load_settings()
+    if fake:  # scripted models never touch the GPU: leave the voice server alone
+        settings.gpu.residents = []
+    return settings
+
+
+def _orch(repo: Path, fake: bool) -> Orchestrator:
+    settings = _settings(fake)
     return Orchestrator(
         settings,
         _backend(settings, fake),
@@ -646,18 +653,45 @@ def eval_suite(
     ] = False,
 ) -> None:
     """Score a lane on the coder suite against hidden tests (evals/suite)."""
-    from pablo.evals import aggregate, aggregate_markdown, append_result, run_suite
-    from pablo.judge_replay import append_cases
-    from pablo.sandbox import LocalSandbox
+    from contextlib import nullcontext
 
-    settings = load_settings()
+    from pablo.gpu import GpuScheduler
+
+    settings = _settings(fake)
     backend = _backend(settings, fake)
+    # A real eval owns the GPU: hold Deep Work in the real home so `pablo serve` doesn't wake
+    # the voice server (or start night work) mid-suite. The owner's mode comes back after.
+    hold = nullcontext() if fake else GpuScheduler(home=settings.home).mode_for("deep")
 
     def show(r: Any) -> None:
         mark = "[green]pass[/]" if r.hidden_passed else "[red]FAIL[/]"
         cert = "—" if r.certainty is None else f"{r.certainty:.2f}"
         fix = f"  fix: {r.fix_outcome}" if r.fix_outcome else ""
         console.print(f"  {r.id:<32} {r.refs:<6} {r.state:<9} {mark}  {cert}  {r.wall_s:.0f}s{fix}")
+
+    with hold:
+        reports = _eval_runs(settings, backend, lane, only, repeat, cascade, spec, learn,
+                             lessons, fake, write, show)  # fmt: skip
+    _eval_report(reports, repeat, write, fake)
+
+
+def _eval_runs(
+    settings: Settings,
+    backend: ChatBackend,
+    lane: str,
+    only: str,
+    repeat: int,
+    cascade: bool,
+    spec: bool | None,
+    learn: str,
+    lessons: Path | None,
+    fake: bool,
+    write: bool,
+    show: Any,
+) -> list[Any]:
+    from pablo.evals import append_result, run_suite
+    from pablo.judge_replay import append_cases
+    from pablo.sandbox import LocalSandbox
 
     reports = []
     for i in range(max(1, repeat)):
@@ -687,6 +721,12 @@ def eval_suite(
             append_result(report)
             added = append_cases(report.replay)
             console.print(f"judge replay: {added} new diffs in evals/judge/replay.jsonl")
+    return reports
+
+
+def _eval_report(reports: list[Any], repeat: int, write: bool, fake: bool) -> None:
+    from pablo.evals import aggregate, aggregate_markdown
+
     if repeat > 1:
         a = aggregate(reports)
         console.print(

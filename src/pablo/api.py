@@ -251,12 +251,20 @@ def create_app(
     @app.get("/api/voice/status")
     async def voice_status() -> dict[str, Any]:
         cfg = orch.settings.voice
+        resident = orch.gpu.residents.get("tts")
         if voice_engines:
-            return {"enabled": True, "stt": True, "tts": True, "voices": cfg.voices}
+            state: str = resident.state if resident else "running"
+            return {"enabled": True, "stt": True, "tts": True, "voices": cfg.voices,
+                    "tts_state": state}  # fmt: skip
         stt, tts = await asyncio.gather(
             run_in_threadpool(reachable, cfg.stt_url), run_in_threadpool(reachable, cfg.tts_url)
         )
-        return {"enabled": cfg.enabled, "stt": stt, "tts": tts, "voices": cfg.voices}
+        # The voice server may be paused for deep: it wakes on the next turn, so that's ready.
+        state = "running" if tts else (resident.state if resident else "down")
+        if state == "unknown":
+            state = "paused"
+        return {"enabled": cfg.enabled, "stt": stt, "tts": tts, "voices": cfg.voices,
+                "tts_state": state}  # fmt: skip
 
     @app.post("/api/voice")
     async def voice(request: Request) -> dict[str, Any]:
@@ -327,6 +335,14 @@ def create_app(
                 for line in cutter.feed(piece):
                     sentences.put(line)
 
+            try:
+                orch.gpu.ensure_resident(
+                    "tts", on_wake=lambda: put({"type": "status", "text": "waking the voice…"})
+                )
+            except Exception as exc:
+                sentences.put(None)
+                put({"type": "error", "status": 503, "detail": f"the voice didn't wake: {exc}"})
+                return
             try:
                 turn = chat.say(conv.id, text, profile=who, lane=lane, on_delta=delta, spoken=True)
                 if not turn.reply.run_id and turn.kept:  # "remember: ..." had no stream
