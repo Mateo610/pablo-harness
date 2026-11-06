@@ -56,3 +56,6 @@ cd web && npm install && npm run dev   # cockpit dev server on :5173
 - Web: tokens only (no raw hex outside tokens.css), amber (`--accent`) means "your move" and
   nothing else, real `<button>`/`<label>`, keyboard reachable, contrast ≥ 4.5:1.
 - Keep the plan honest: when you finish a milestone, update `docs/BUILD_PLAN.md` status.
+- Keep the review honest: when a change or a measurement touches an area, update its page in
+  `docs/review/` (what we know, weaknesses, ideas). Tag claims [measured], [observed],
+  [suspected] or [gap]; cite the run, commit or decision.
