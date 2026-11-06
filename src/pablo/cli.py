@@ -820,6 +820,56 @@ def _eval_report(reports: list[Any], repeat: int, write: bool, fake: bool) -> No
         console.print("appended to evals/results.jsonl and docs/benchmarks.md")
 
 
+@app.command("eval-build")
+def eval_build(
+    lane: Annotated[str, typer.Option(help="auto (Hybrid), coder, deep, ...")] = "auto",
+    only: Annotated[str, typer.Option(help="Comma-separated project ids")] = "",
+    fake: FakeOpt = False,
+    write: Annotated[
+        bool, typer.Option(help="Append to evals/build-results.jsonl and docs/benchmarks.md")
+    ] = False,
+) -> None:
+    """Plan mode end to end: plan a small tool, build it step by step, run its acceptance test."""
+    from contextlib import nullcontext
+
+    from pablo.build_eval import append_build, build_markdown, build_summary, run_build
+    from pablo.evals import current_commit
+    from pablo.gpu import GpuScheduler
+    from pablo.sandbox import LocalSandbox
+
+    settings = _settings(fake)
+    backend = _backend(settings, fake)
+    gpu = GpuScheduler(home=settings.home, residents_cfg=settings.gpu.residents,
+                       unload_url=settings.gpu.unload_url)  # fmt: skip
+    hold = nullcontext() if fake else gpu.mode_for("deep")
+
+    def show(r: Any) -> None:
+        mark = "[green]pass[/]" if r.accepted else "[red]FAIL[/]"
+        how = "no plan" if not r.planned else f"{r.steps} steps, {r.approved} approved"
+        err = f"  [red]{r.error}[/]" if r.error else ""
+        console.print(f"  {r.id:<20} {mark}  {how}  {r.wall_s:.0f}s{err}")
+
+    with hold:
+        if not fake:
+            _eval_preflight(settings, backend, gpu, "coder" if lane == "auto" else lane,
+                            lane == "auto")  # fmt: skip
+        results = run_build(
+            settings, backend, lane=lane,
+            only={x.strip() for x in only.split(",") if x.strip()} or None,
+            sandbox=LocalSandbox() if fake else None, on_result=show,
+        )  # fmt: skip
+    summary = build_summary(results, lane=lane, commit=current_commit(Path(".")))
+    text = build_markdown(summary)
+    console.print(text.split("\n\n")[1])
+    if write and not fake:
+        append_build(summary)
+        docs = Path("docs/benchmarks.md")
+        if docs.is_file():
+            with docs.open("a", encoding="utf-8") as fh:
+                fh.write("\n" + text + "\n")
+        console.print("appended to evals/build-results.jsonl and docs/benchmarks.md")
+
+
 @app.command("eval-judge")
 def eval_judge(
     fake: FakeOpt = False,
