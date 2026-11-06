@@ -110,3 +110,30 @@ def test_the_api_lists_projects_and_only_the_owner_starts_one(
     assert got["conversation"]["project"] == "side-quest" and got["unfiltered"] is False
     assert owner.post("/api/conversations", json={"project": "nope"}).status_code == 400
     assert owner.get("/api/repo?project=side-quest").json()["name"] == "side-quest"
+
+
+def test_tonights_queue_and_the_brief_cover_every_project(settings: Settings, repo: Path) -> None:
+    from pablo.plan import Phase, Plan, Task
+
+    ws, base, _ = workspace(settings, repo)
+    made = ws.create("Night Owl")
+    app = create_app(base, workspace=ws)
+    owner = TestClient(app, client=("127.0.0.1", 50000))
+    job = owner.post(
+        "/api/queue",
+        json={"task": "make a hello function", "lane": "coder", "project": "night-owl"},
+    )
+    assert job.status_code == 200 and job.json()["project"] == "night-owl"
+    assert owner.post("/api/queue", json={"task": "x", "project": "nope"}).status_code == 404
+    done = owner.post("/api/queue/run").json()
+    run = owner.get(f"/api/runs/{done[0]['run_id']}").json()
+    assert run["project"] == "night-owl"
+    owner.post(f"/api/runs/{run['id']}/approve")
+    assert (Path(made.path) / "hello.py").is_file() and not (repo / "hello.py").exists()
+
+    step = Task(id="2", title="add the alarm", status="needs_you")
+    phase = Phase(id=1, title="Build", gate="", tasks=[step])
+    Plan(project="night-owl", goal="g", state="running", phases=[phase]).save(Path(made.path))
+    brief = owner.post("/api/brief").json()
+    assert "Night Owl: step 2 (add the alarm) waits for you." in brief["plan_line"]
+    assert brief["items"][0]["project"] == "night-owl"

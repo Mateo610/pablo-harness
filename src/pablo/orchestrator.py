@@ -539,8 +539,9 @@ class Orchestrator:
             from pablo.overnight import JobQueue
 
             job = JobQueue(self.settings.home).add(
-                run.task, lane=target, task_id=run.task_id, group=run.group, retried_from=run.id
-            )
+                run.task, lane=target, task_id=run.task_id, group=run.group, retried_from=run.id,
+                project=self.repo.name,
+            )  # fmt: skip
             run.retry_job = job.id
             run.question = f"{run.question} {target.capitalize()} will try it tonight.".strip()
             self._save(run)

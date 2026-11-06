@@ -79,6 +79,7 @@ class JobIn(BaseModel):
     task: str
     lane: str | None = None
     task_id: str | None = None
+    project: str = ""
 
 
 class NewsIn(BaseModel):
@@ -155,8 +156,9 @@ def create_app(
     workspace: Workspace | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Pablo harness", version=__version__)
+    ws = workspace or Workspace(orch)
     queue = JobQueue(orch.settings.home)
-    runner = OvernightRunner(orch, queue, orch.settings.overnight)
+    runner = OvernightRunner(orch, queue, orch.settings.overnight, workspace=ws)
     briefs = BriefStore(orch.settings.home)
     app.state.scheduler = Scheduler(runner, briefs, orch.repo)
     app.add_middleware(
@@ -168,7 +170,6 @@ def create_app(
     repo: Path = orch.repo
     gate = access or Access(orch.settings.home)
     app.state.access = gate
-    ws = workspace or Workspace(orch)
     app.state.workspace = ws
     plans = Plans(ws, background=not orch.retry_inline)
     chat = Chat(orch, background=True, workspace=ws, plans=plans)
@@ -573,14 +574,19 @@ def create_app(
 
     @app.post("/api/queue")
     def add_job(body: JobIn) -> dict[str, Any]:
+        try:
+            target = ws.orch(body.project)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc).strip("'\"")) from exc
         if body.lane:
             try:
-                lane = orch.settings.lane(body.lane)
+                lane = target.settings.lane(body.lane)
             except KeyError as exc:
                 raise HTTPException(400, str(exc)) from exc
             if lane.requires_approval:
                 raise HTTPException(403, f"lane '{lane.name}' can't be queued; escalate instead")
-        return queue.add(body.task, body.lane, body.task_id).to_dict()
+        project = "" if target is orch else target.repo.name
+        return queue.add(body.task, body.lane, body.task_id, project=project).to_dict()
 
     @app.delete("/api/queue/{job_id}")
     def cancel_job(job_id: str, request: Request) -> dict[str, Any]:
@@ -608,7 +614,8 @@ def create_app(
     @app.post("/api/brief")
     def make_brief(request: Request) -> dict[str, Any]:
         owner_only(request)
-        brief = build_brief(orch, queue, now_local().date(), orch.repo, since=briefs.last_created())
+        brief = build_brief(orch, queue, now_local().date(), orch.repo, since=briefs.last_created(),
+                            workspace=ws)  # fmt: skip
         briefs.save(brief)
         return brief.to_dict()
 

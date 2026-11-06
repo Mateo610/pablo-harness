@@ -16,7 +16,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pablo.config import Overnight
 from pablo.events import Event
@@ -24,6 +24,9 @@ from pablo.gpu import Priority
 from pablo.gpu import job as gpu_job
 from pablo.orchestrator import Orchestrator, Run
 from pablo.plan import Plan
+
+if TYPE_CHECKING:
+    from pablo.projects import Workspace
 
 JobStatus = Literal["queued", "running", "done", "failed", "cancelled"]
 
@@ -63,6 +66,7 @@ class Job:
     error: str = ""
     group: str | None = None  # set when this job retries a run, so approving one rejects the other
     retried_from: str | None = None
+    project: str = ""  # the project it changes; "" is the one `pablo serve` started in
     created_at: str = field(default_factory=lambda: now_local().isoformat(timespec="seconds"))
     started_at: str | None = None
     finished_at: str | None = None
@@ -101,8 +105,10 @@ class JobQueue:
         *,
         group: str | None = None,
         retried_from: str | None = None,
+        project: str = "",
     ) -> Job:
-        job = Job(task=task, lane=lane, task_id=task_id, group=group, retried_from=retried_from)
+        job = Job(task=task, lane=lane, task_id=task_id, group=group, retried_from=retried_from,
+                  project=project)  # fmt: skip
         with self._lock:
             jobs = self._read()
             jobs.append(job)
@@ -133,8 +139,15 @@ class JobQueue:
 
 
 class OvernightRunner:
-    def __init__(self, orch: Orchestrator, queue: JobQueue, cfg: Overnight) -> None:
+    def __init__(
+        self,
+        orch: Orchestrator,
+        queue: JobQueue,
+        cfg: Overnight,
+        workspace: Workspace | None = None,
+    ) -> None:
         self.orch = orch
+        self.workspace = workspace
         self.queue = queue
         self.cfg = cfg
         self._running = threading.Lock()
@@ -161,8 +174,11 @@ class OvernightRunner:
                 )
                 self._emit("queue", job, status="running", text=f"tonight · {job.task[:60]}")
                 try:
+                    target = self.orch
+                    if self.workspace is not None and job.project:
+                        target = self.workspace.orch(job.project)  # KeyError: project gone
                     with gpu_job(Priority.NIGHT):  # yields to anyone working, even at night
-                        run = self.orch.start(
+                        run = target.start(
                             job.task,
                             lane=lane,
                             task_id=job.task_id,
@@ -199,6 +215,7 @@ class BriefItem:
     certainty: float | None
     summary: str
     question: str
+    project: str = ""
 
 
 @dataclass
@@ -246,6 +263,7 @@ def build_brief(
     morning: date,
     repo: Path,
     since: datetime | None = None,
+    workspace: Workspace | None = None,
 ) -> Brief:
     """Everything that finished since `since` (the previous brief), else the last 24 hours."""
     cutoff = (since or now_local() - timedelta(hours=24)).astimezone()
@@ -270,6 +288,7 @@ def build_brief(
             r.certainty,
             r.judge_summary or r.explanation[:160],
             r.question,
+            r.project,
         )
         for r in runs
     ]
@@ -300,6 +319,7 @@ def build_brief(
                 plan_line += f" Next: {nxt.id} {nxt.title}."
     except FileNotFoundError:
         pass
+    plan_line = " ".join(x for x in [plan_line, *_other_plans(workspace, repo)] if x)
 
     return Brief(
         day=morning.isoformat(),
@@ -312,6 +332,27 @@ def build_brief(
         still_queued=len(queue.pending()),
         plan_line=plan_line,
     )
+
+
+def _other_plans(workspace: Workspace | None, main: Path) -> list[str]:
+    """One line per other project whose plan is building or waits for you."""
+    if workspace is None:
+        return []
+    out = []
+    for project in workspace.projects():
+        if Path(project.path) == main:
+            continue
+        try:
+            plan = Plan.load(Path(project.path))
+        except (FileNotFoundError, ValueError):
+            continue
+        steps = [t for ph in plan.phases for t in ph.tasks]
+        waiting = next((t for t in steps if t.status == "needs_you"), None)
+        if plan.state == "running" and waiting:
+            out.append(f"{project.title}: step {waiting.id} ({waiting.title}) waits for you.")
+        elif plan.state == "paused":
+            out.append(f"{project.title}: the plan is paused at a stopped step.")
+    return out
 
 
 class BriefStore:
@@ -362,6 +403,7 @@ class Scheduler:
                 at.date(),
                 self.repo,
                 since=self.briefs.last_created(),
+                workspace=self.runner.workspace,
             )
             self.briefs.save(brief)
             self.runner.orch.bus.publish(Event("brief", "brief", {"headline": brief.headline}))
