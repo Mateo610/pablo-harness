@@ -164,7 +164,8 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
     });
 
   const here = (proposed ?? []).filter((m) => m.source_conversation === conv?.id);
-  const current = options.find((o) => o.key === lane) ?? options[0];
+  // Until /api/lanes answers, the menu has no options yet: show the choice by its name.
+  const current = options.find((o) => o.key === lane) ?? options[0] ?? { key: lane, name: laneName(lane), desc: "", meta: "" };
   const accent = advisor ? "var(--lane-advisor)" : laneColor(lane);
   const frame = advisor ? "violet" : "";
 
@@ -249,7 +250,7 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
               <span style={{ fontSize: 14, color: "var(--ink-body)", lineHeight: 1.6 }}>
                 {advisor
                   ? "The advisor talks only. It has no stake in your choices and no guardrails. Bring it a plan, a run, or a decision."
-                  : "Ask about the code, or say what to change. When Pablo starts a run you'll see the diff and the checks here; only the owner can apply it. Type \"remember: …\" to keep a note."}
+                  : "Ask about the code, say what to change, or describe something bigger (\"let's build a tool that…\") and Pablo plans it with you, then builds it a step at a time when you say go. Every change shows its diff and checks here; only the owner can apply it. Type \"remember: …\" to keep a note."}
               </span>
             </div>
           )}

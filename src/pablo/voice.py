@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 import httpx
 
@@ -200,3 +200,27 @@ class SentenceCutter:
     def flush(self) -> list[str]:
         said, self._buf = speakable(self._buf), ""
         return [said] if said else []
+
+
+_STEP_OF = re.compile(r"This is step (\w+) of a plan")
+
+
+def news_line(run: Any, *, can_apply: bool = True) -> str:
+    """One or two spoken sentences about a finished run."""
+    first = speakable(run.task.strip().splitlines()[0] if run.task.strip() else "the change")
+    words = first.split()
+    what = " ".join(words[:12]) + ("…" if len(words) > 12 else "")
+    step = _STEP_OF.search(run.task)
+    name = f"Step {step.group(1)}, {what}," if step else f"The change to {what}"
+    if run.state == "ready":
+        sure = f" The judge is {round(run.certainty * 100)} percent sure." if run.certainty else ""
+        ask = (
+            " Say apply it, or tell me what to change."
+            if can_apply
+            else " It's waiting for the owner to approve it."
+        )
+        return f"{name} is ready and the checks pass.{sure}{ask}"
+    why = speakable(run.question.split(". ")[0]) if run.question else ""
+    if run.state == "failed":
+        return f"{name} didn't work. {why}".strip()
+    return f"{name} needs you. {why}".strip()

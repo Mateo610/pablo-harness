@@ -424,6 +424,11 @@ export const api = {
   },
   voiceStatus: () => call<VoiceStatus>("/api/voice/status"),
   /** One voice turn: WAV in; heard text, reply pieces, and spoken sentences out, in order. */
+  voiceNews: (runId: string, lane: string) =>
+    call<{ skip: boolean; text?: string; mime?: string; data?: string; run?: string }>("/api/voice/news", {
+      method: "POST",
+      body: JSON.stringify({ run_id: runId, lane }),
+    }),
   voiceTurn: async (
     wav: Blob,
     lane: string,

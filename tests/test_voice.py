@@ -237,3 +237,32 @@ def test_a_voice_server_that_wont_wake_says_so(settings: Settings, repo: Path) -
     out = events(c.post("/api/voice/turn?lane=coder", content=b"W"))
     assert out[-1]["type"] == "error" and out[-1]["status"] == 503
     assert "didn't wake" in out[-1]["detail"]
+
+
+def test_a_finished_run_is_said_out_loud(settings: Settings, repo: Path) -> None:
+    from pablo.voice import news_line
+
+    c, _, tts = setup(settings, repo)
+    turn = events(c.post("/api/voice/turn?lane=coder", content=b"W"))[-1]["turn"]
+    run_id = turn["run"]["id"]
+    import time
+
+    for _ in range(100):  # the run works on a thread; wait for it to finish
+        if c.get(f"/api/runs/{run_id}").json()["state"] != "running":
+            break
+        time.sleep(0.05)
+    said = c.post("/api/voice/news", json={"run_id": run_id, "lane": "coder"}).json()
+    assert not said["skip"] and said["data"] and "needs you" in said["text"]
+    assert tts.said[-1][0] == said["text"]  # synthesized on Pablo, like every other line
+    assert c.post("/api/voice/news", json={"run_id": "nope"}).status_code == 404
+
+    class R:
+        task = "create greet.py with greet(name)\n\nThis is step 2 of a plan: a greeter"
+        state, certainty, question = "ready", 0.9, ""
+
+    line = news_line(R())
+    assert line.startswith("Step 2, create greet.py") and "90 percent" in line
+    R.state, R.question = "needs_you", "The checks got worse. Look at test_add."
+    assert news_line(R()).endswith("needs you. The checks got worse")
+    assert "waiting for the owner" in news_line(type("X", (R,), {"state": "ready"})(),
+                                                can_apply=False)  # fmt: skip

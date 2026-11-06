@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, type Me, type VoiceEvent, type VoiceStatus } from "./api";
 import { audioContext, Player, record, releaseMicrophone, rms, type Recorder } from "./audio";
-import { ago, pickProject, ProjectPicker, RunCard, usePoll, useProject } from "./hud";
+import { ago, pickProject, PlanCard, ProjectPicker, RunCard, useEvents, usePoll, useProject } from "./hud";
+import { laneName } from "./components";
 import { Markdown } from "./Markdown";
 
 const WHO = {
@@ -51,6 +52,54 @@ export function Voice({ me }: { me: Me | null }) {
   const asleep = status?.tts_state === "paused";
   const ready = Boolean(status?.enabled && status.stt && (status.tts || asleep) && secure && !paused);
   const [note, setNote] = useState("");
+
+  // Spoken progress: runs this call started (and plan steps, and their Hybrid retries) are
+  // watched; when one finishes, Pablo says so out loud as soon as it isn't talking or listening.
+  const watched = useRef(new Set<string>());
+  const announced = useRef(new Set<string>());
+  const news = useRef<string[]>([]);
+  const [plan] = usePoll(() => api.plan(project?.name ?? "").catch(() => null), 8000, [project?.name]);
+  useEffect(() => {
+    for (const l of lines) if (l.runId) watched.current.add(l.runId);
+    for (const t of plan?.phases.flatMap((p) => p.tasks) ?? []) if (t.run) watched.current.add(t.run);
+  }, [lines, plan]);
+  const speakNews = useCallback(async () => {
+    if (phaseRef.current !== "idle" || rec.current) return;
+    const id = news.current.shift();
+    if (!id) return;
+    try {
+      const said = await api.voiceNews(id, who);
+      if (said.skip || !said.data) return void speakNews();
+      const p = (player.current ??= new Player());
+      p.reset();
+      p.onIdle = () => {
+        if (phaseRef.current === "speaking") setPhase("idle");
+        void speakNews();
+      };
+      setLines((l) => [...l, { role: "assistant", text: said.text ?? "", lane: who, at: new Date().toISOString(), runId: id }]);
+      p.push(0, said.data);
+      setPhase("speaking");
+    } catch {
+      /* a missed update is still on the run card */
+    }
+  }, [who]);
+  useEvents((e) => {
+    if (e.kind !== "finished" || announced.current.has(e.run_id)) return;
+    const queue = (id: string) => {
+      announced.current.add(id);
+      watched.current.add(id);
+      news.current.push(id);
+      void speakNews();
+    };
+    if (watched.current.has(e.run_id)) return queue(e.run_id);
+    api
+      .run(e.run_id)
+      .then((r) => r.retried_from && watched.current.has(r.retried_from) && queue(r.id))
+      .catch(() => undefined);
+  });
+  useEffect(() => {
+    if (phase === "idle") void speakNews();
+  }, [phase, speakNews]);
 
   // The ring follows whatever is sounding: your mic while you talk, Pablo while it answers.
   useEffect(() => {
@@ -123,7 +172,7 @@ export function Voice({ me }: { me: Me | null }) {
         setPhase("idle");
       }
     },
-    [who, conv],
+    [who, conv, project?.name],
   );
 
   const startTalking = useCallback(async () => {
@@ -241,6 +290,9 @@ export function Voice({ me }: { me: Me | null }) {
           ) : (
             <ProjectPicker projects={projects} value={chosen} onChange={setChosen} />
           )}
+          {project?.mode === "unfiltered" && (
+            <span className="h-chip" style={{ color: "var(--lane-advisor)" }}>no guardrails · both voices are one model</span>
+          )}
           {conv && (
             <a className="h-mono" style={{ fontSize: 12, color: "var(--sys)" }} href={`#/chat/${conv}`}>
               open as chat
@@ -287,9 +339,9 @@ export function Voice({ me }: { me: Me | null }) {
 
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, textAlign: "center", maxWidth: 480 }}>
             <span style={{ fontSize: 15, letterSpacing: ".34em", fontWeight: 700, color: cur.color }}>{cur.label}</span>
-            <span className="h-mono h-dim" style={{ fontSize: 12 }}>{cur.model}</span>
+            <span className="h-mono h-dim" style={{ fontSize: 12 }}>{project?.mode === "unfiltered" ? laneName("advisor") : laneName(who)}</span>
             <span className="h-mono" style={{ fontSize: 12, color: phase === "listening" ? "var(--accent)" : phase === "idle" ? "var(--ink-faint)" : cur.color }}>{stateText}</span>
-            <span className="h-dim" style={{ fontSize: 13, lineHeight: 1.5 }}>{cur.blurb}</span>
+            <span className="h-dim" style={{ fontSize: 13, lineHeight: 1.5 }}>{project?.mode === "unfiltered" ? "No guardrails: one model talks, plans and builds this project." : cur.blurb}</span>
           </div>
 
           <div className="h-frame h-pad" style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", maxWidth: 760, width: "100%" }}>
@@ -307,8 +359,9 @@ export function Voice({ me }: { me: Me | null }) {
       </section>
 
       <aside className="h-rail-r" style={{ flex: "0 0 400px" }} aria-label="Transcript">
+        {project && <PlanCard project={project.name} me={me} />}
         <span className="h-cap">Transcript</span>
-        {lines.length === 0 && <span className="h-faint" style={{ fontSize: 12.5 }}>What you say and what it answers shows up here. Changes it hands off appear as runs you approve.</span>}
+        {lines.length === 0 && <span className="h-faint" style={{ fontSize: 12.5 }}>Talk like you would to any assistant. Ask for a change, or say "let's start a project that…": Pablo plans it with you, builds it one step at a time when you say go, and tells you out loud when a step is ready. Say "apply it" to keep it.</span>}
         {lines.map((l, i) => (
           <div key={i} style={{ display: "flex", flexDirection: "column", gap: 6, paddingLeft: 10, borderLeft: `2px solid ${l.role === "user" ? "var(--accent)" : WHO[(l.lane as Who) in WHO ? (l.lane as Who) : "coder"].color}` }}>
             <span className="h-mono" style={{ fontSize: 11, letterSpacing: ".12em", color: l.role === "user" ? "var(--accent)" : WHO[(l.lane as Who) in WHO ? (l.lane as Who) : "coder"].color }}>

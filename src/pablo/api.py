@@ -41,6 +41,7 @@ from pablo.voice import (
     Transcriber,
     VoiceOff,
     engines,
+    news_line,
     reachable,
     vocabulary,
 )
@@ -78,6 +79,11 @@ class JobIn(BaseModel):
     task: str
     lane: str | None = None
     task_id: str | None = None
+
+
+class NewsIn(BaseModel):
+    run_id: str
+    lane: str = "coder"
 
 
 class ConversationIn(BaseModel):
@@ -309,6 +315,35 @@ def create_app(
             raise HTTPException(422, "Didn't catch that. Try again?")
         run = await run_in_threadpool(orch.start_background, text, by=profile_of(request))
         return {"text": text, "run": linked(run, request)}
+
+    @app.post("/api/voice/news")
+    async def voice_news(body: NewsIn, request: Request) -> dict[str, Any]:
+        """A finished run, said out loud: what's ready, what needs you. Skips a run whose
+        Hybrid retry is still going (its retry gets its own news)."""
+        try:
+            run = orch.get(body.run_id)
+        except KeyError as exc:
+            raise HTTPException(404, f"no run {body.run_id}") from exc
+        if (
+            run.state not in ("ready", "needs_you", "failed")
+            or run.retry_run
+            or (run.group and "trying it now" in run.question and not run.retried_from)
+        ):
+            return {"skip": True}
+        text = news_line(run, can_apply=caller_of(request).is_owner)
+        _, tts = _voice()
+        lane = body.lane if body.lane in orch.settings.voice.voices else "coder"
+        try:
+            audio = await run_in_threadpool(
+                tts.speak, text, orch.settings.voice.voices.get(lane, "")
+            )
+        except Exception as exc:
+            raise HTTPException(502, f"text-to-speech failed: {exc}") from exc
+        mime = "audio/mpeg" if orch.settings.voice.tts_format == "mp3" else "audio/wav"
+        import base64
+
+        return {"skip": False, "text": text, "mime": mime, "run": run.id,
+                "data": base64.b64encode(audio).decode()}  # fmt: skip
 
     @app.post("/api/voice/turn", response_model=None)
     async def voice_turn(
