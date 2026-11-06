@@ -305,6 +305,8 @@ export interface GpuState {
   idle_s: number | null;
   background_ok: boolean;
   idle_needed_s: number;
+  /** other Pablo processes on the box (a command-line eval): what they hold and wait for */
+  elsewhere?: { model: string; state: "holding" | "waiting"; who: string; priority: string }[];
 }
 
 export class ApiError extends Error {

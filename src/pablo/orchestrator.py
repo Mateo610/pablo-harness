@@ -240,6 +240,7 @@ class Orchestrator:
             default_mode=settings.gpu.mode,
             residents_cfg=settings.gpu.residents,
             unload_url=settings.gpu.unload_url,
+            shared_dir=Path(settings.gpu.shared_dir) if settings.gpu.shared_dir else None,
         )
         self.backend: ChatBackend = ScheduledBackend(backend, self.gpu, off_gpu_models(settings))
         self.repo = repo.resolve()

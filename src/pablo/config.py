@@ -213,7 +213,10 @@ class GpuConfig(BaseModel):
     mode: Literal["interactive", "balanced", "deep"] = "balanced"
     idle_s: float = 120.0  # balanced: background work waits this long after the last live call
     residents: list[ResidentConfig] = Field(default_factory=list)
-    unload_url: str = ""  # llama-swap's unload endpoint: frees an idle model's VRAM for a resident
+    unload_url: str = ""
+    # Where every Pablo process shares its GPU lease table. Empty: the home. An eval runs in a
+    # throwaway home but sets this to the real one, so it queues with `pablo serve`.
+    shared_dir: str = ""  # llama-swap's unload endpoint: frees an idle model's VRAM for a resident
 
 
 class LearnConfig(BaseModel):

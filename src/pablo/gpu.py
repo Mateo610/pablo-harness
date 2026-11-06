@@ -23,19 +23,28 @@ Modes (owner's switch on Home; a file, so every Pablo process sees the same mode
     balanced      background work (retry, night) starts after `idle_s` with no live activity
     deep          deep work any time; voice is paused (it would evict deep)
 
+Every Pablo process on the box (`pablo serve`, a CLI eval, a practice run) shares one lease
+table, `gpu-leases.json` in the shared folder (the real ~/.pablo, even for an eval in a throwaway
+home), under a file lock. A process may start a model only if no other process holds a
+different one and no more urgent caller elsewhere waits for a different one. Entries from
+processes that died are ignored.
+
 A lease can't stop a generation that has started; it decides what starts next.
 """
 
 from __future__ import annotations
 
+import fcntl
 import itertools
 import json
+import os
 import shlex
 import subprocess
 import threading
 import time
+import uuid
 from collections.abc import Callable, Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -83,6 +92,7 @@ class Lease:
     priority: Priority
     who: str
     since: float
+    wall: float = field(default_factory=time.time)  # for ordering against other processes
 
     def view(self, now: float) -> dict[str, Any]:
         return {"model": self.model, "priority": self.priority.name.lower(), "who": self.who,
@@ -91,6 +101,81 @@ class Lease:
 
 class ResidentError(RuntimeError):
     pass
+
+
+WAITER_STALE_S = 15.0  # a waiter re-publishes every half second; older means it's gone
+HOLDER_STALE_S = 3 * 3600.0  # deep's longest call is an hour
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+class SharedTable:
+    """The lease table every Pablo process on this machine reads and writes."""
+
+    def __init__(self, folder: Path, owner: str = "") -> None:
+        self.folder = folder
+        self.owner = owner or uuid.uuid4().hex[:12]
+        self.path = folder / "gpu-leases.json"
+
+    @contextmanager
+    def _locked(self) -> Iterator[dict[str, Any]]:
+        self.folder.mkdir(parents=True, exist_ok=True)
+        with (self.folder / "gpu-leases.lock").open("a+") as fh:
+            fcntl.flock(fh, fcntl.LOCK_EX)
+            try:
+                try:
+                    data = json.loads(self.path.read_text("utf-8"))
+                    if not isinstance(data, dict):
+                        data = {}
+                except (OSError, ValueError):
+                    data = {}
+                data.setdefault("entries", [])
+                yield data
+            finally:
+                fcntl.flock(fh, fcntl.LOCK_UN)
+
+    @staticmethod
+    def _live(entry: dict[str, Any], now: float) -> bool:
+        if not _alive(int(entry.get("pid", 0))):
+            return False
+        age = now - float(entry.get("beat", 0))
+        return age < (HOLDER_STALE_S if entry.get("state") == "holding" else WAITER_STALE_S)
+
+    def publish(self, mine: list[dict[str, Any]], last: str | None = None) -> None:
+        now = time.time()
+        with self._locked() as data:
+            keep = [e for e in data["entries"]
+                    if e.get("owner") != self.owner and self._live(e, now)]  # fmt: skip
+            for e in mine:
+                keep.append({**e, "owner": self.owner, "pid": os.getpid(), "beat": now})
+            data["entries"] = keep
+            if last is not None:
+                data["last"] = last
+            tmp = self.path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(data), "utf-8")
+            tmp.replace(self.path)
+
+    def others(self) -> tuple[list[dict[str, Any]], str | None]:
+        """Live entries from every other process, and the last model anyone was given."""
+        now = time.time()
+        try:
+            data = json.loads(self.path.read_text("utf-8"))
+        except (OSError, ValueError):
+            return [], None
+        if not isinstance(data, dict):
+            return [], None
+        entries = [e for e in data.get("entries", [])
+                   if e.get("owner") != self.owner and self._live(e, now)]  # fmt: skip
+        last = data.get("last")
+        return entries, last if isinstance(last, str) else None
 
 
 def run_command(command: str, timeout_s: float = 60) -> None:
@@ -139,8 +224,12 @@ class GpuScheduler:
     up: Callable[[str], bool] = http_up
     unload: Callable[[str], None] = http_post
     sleep: Callable[[float], None] = time.sleep
+    # Where the lease table every process shares lives (the real home); None: `home`.
+    shared_dir: Path | None = None
+    shared: bool = True
 
     def __post_init__(self) -> None:
+        self.table = SharedTable(self.shared_dir or self.home)
         self._cond = threading.Condition()
         self._seq = itertools.count()
         self._holders: list[Lease] = []
@@ -226,8 +315,48 @@ class GpuScheduler:
         ]
         if self._holders:
             # Join the loaded model unless someone more urgent needs a different one.
-            return self._resident == req.model and not any(w.model != req.model for w in ahead)
-        return not ahead
+            if self._resident != req.model or any(w.model != req.model for w in ahead):
+                return False
+        elif ahead:
+            return False
+        return self._peers_allow(req)
+
+    # other processes ------------------------------------------------------------------------
+
+    def _entries(self) -> list[dict[str, Any]]:
+        def row(lease: Lease, state: str) -> dict[str, Any]:
+            return {"model": lease.model, "priority": int(lease.priority), "who": lease.who,
+                    "since": lease.wall, "state": state}  # fmt: skip
+
+        return [row(h, "holding") for h in self._holders] + [
+            row(w, "waiting") for w in self._waiting
+        ]
+
+    def _publish(self, last: str | None = None) -> None:
+        if self.shared:
+            with suppress(OSError):  # a read-only or full disk mustn't stop local work
+                self.table.publish(self._entries(), last)
+
+    def _peers_allow(self, req: Lease) -> bool:
+        """May `req` start, given what other Pablo processes hold and wait for?"""
+        if not self.shared:
+            return True
+        others, _ = self.table.others()
+        if any(e["state"] == "holding" and e["model"] != req.model for e in others):
+            return False  # another process has a different model on the GPU
+        mine = (int(req.priority), req.wall)
+        return not any(
+            e["state"] == "waiting"
+            and e["model"] != req.model
+            and (int(e["priority"]), float(e["since"])) < mine
+            for e in others
+        )
+
+    def _peers_hold(self, models: Sequence[str]) -> bool:
+        if not self.shared:
+            return False
+        others, _ = self.table.others()
+        return any(e["state"] == "holding" and e["model"] in models for e in others)
 
     # lease ----------------------------------------------------------------------------------
 
@@ -239,12 +368,16 @@ class GpuScheduler:
             self._waiting.append(req)
             if priority <= LIVE:
                 self._last_live = self.clock()
+            self._publish()
             while not self._may_start(req):
-                self._cond.wait(timeout=1.0)  # idle and night rules change with time
+                # Idle and night rules change with time, and other processes don't notify us.
+                self._cond.wait(timeout=0.5)
+                self._publish()  # still waiting: keep our entry fresh
             self._waiting.remove(req)
             self._holders.append(req)
             self._resident = model
             self._served[who] = self.clock()
+            self._publish(last=model)
             self._cond.notify_all()
         try:
             self._pause_for(model)
@@ -254,6 +387,7 @@ class GpuScheduler:
                 self._holders.remove(req)
                 if priority <= LIVE:
                     self._last_live = self.clock()
+                self._publish()
                 self._cond.notify_all()
 
     # residents ------------------------------------------------------------------------------
@@ -286,9 +420,12 @@ class GpuScheduler:
             if on_wake:
                 on_wake()
             with self._cond:
-                while any(h.model in r.cfg.conflicts for h in self._holders):
-                    self._cond.wait(timeout=1.0)
-                idle_conflict = self._resident in r.cfg.conflicts
+                while any(h.model in r.cfg.conflicts for h in self._holders) or self._peers_hold(
+                    r.cfg.conflicts
+                ):
+                    self._cond.wait(timeout=0.5)
+                _, last = self.table.others() if self.shared else ([], None)
+                idle_conflict = self._resident in r.cfg.conflicts or last in r.cfg.conflicts
                 if idle_conflict:
                     self._resident = None
             if idle_conflict and self.unload_url:
@@ -325,6 +462,16 @@ class GpuScheduler:
                 "residents": [
                     {"name": n, "state": r.state, "paused_for": r.paused_for}
                     for n, r in self.residents.items()
+                ],
+                # Other Pablo processes (a CLI eval, say): what they hold and wait for.
+                "elsewhere": [
+                    {
+                        "model": e["model"],
+                        "state": e["state"],
+                        "who": e.get("who", ""),
+                        "priority": Priority(int(e["priority"])).name.lower(),
+                    }
+                    for e in (self.table.others()[0] if self.shared else [])
                 ],
             }
 

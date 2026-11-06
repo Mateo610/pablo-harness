@@ -316,13 +316,21 @@ export function GpuQueue({ gpu }: { gpu: GpuState | null }) {
   return (
     <section className="h-frame h-pad" aria-label="GPU queue">
       <h2 className="h-cap">GPU · {gpu.mode === "deep" ? "deep work" : gpu.mode}</h2>
-      {gpu.holders.length === 0 && gpu.waiting.length === 0 && (
+      {gpu.holders.length === 0 && gpu.waiting.length === 0 && !gpu.elsewhere?.length && (
         <span className="h-dim" style={{ fontSize: 12 }}>
           Free{gpu.resident ? ` · ${gpu.resident.replace("pablo/", "")} still loaded` : ""}.
         </span>
       )}
       {gpu.holders.map((l, i) => row(l, i, true))}
       {gpu.waiting.map((l, i) => row(l, i, false))}
+      {(gpu.elsewhere ?? []).map((e, i) => (
+        <div key={`x-${i}`} className="h-mono" style={{ display: "flex", gap: 10, fontSize: 12, alignItems: "baseline" }}>
+          <span style={{ color: e.state === "holding" ? "var(--status-pass)" : "var(--ink-faint)", width: 54 }}>{e.state === "holding" ? "● has it" : "waiting"}</span>
+          <span style={{ color: PRIORITY_COLOR[e.priority] ?? "var(--ink-muted)", width: 44 }}>{e.priority}</span>
+          <span style={{ flex: 1 }}>{e.model.replace("pablo/", "")}</span>
+          <span className="h-dim">another process{e.who ? ` · ${e.who}` : ""}</span>
+        </div>
+      ))}
       <span className="h-faint" style={{ fontSize: 11.5 }}>
         Background work {gpu.background_ok ? "may start now" : gpu.mode === "interactive" ? "waits for tonight" : `waits for ${Math.round(gpu.idle_needed_s)} s of quiet`}.
       </span>

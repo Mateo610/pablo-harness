@@ -301,3 +301,79 @@ def test_every_process_sees_the_mode_the_other_set(tmp_path: Path) -> None:
     with cli.mode_for("deep"):
         assert serve.mode == "deep"  # an eval in another process holds Deep Work
     assert serve.mode == "balanced" and cli.mode == "balanced"
+
+
+# other Pablo processes: one lease table for the machine ----------------------------------------
+
+
+def test_another_process_holding_a_different_model_makes_us_wait(tmp_path: Path) -> None:
+    serve, _ = sched(tmp_path)
+    cli, _ = sched(tmp_path)  # a second scheduler on the same table: another process
+    log: list[str] = []
+    deep = Holder(cli, "pablo/deep", Priority.NIGHT, "eval", log)
+    assert deep.got.wait(2)
+    assert serve.snapshot()["elsewhere"] == [
+        {"model": "pablo/deep", "state": "holding", "who": "eval", "priority": "night"}
+    ]
+    also_deep = Holder(serve, "pablo/deep", Priority.CHAT, "matt", log)
+    assert also_deep.got.wait(2)  # the same model shares, like it does in one process
+    also_deep.done.set()
+    coder = Holder(serve, "pablo/coder", Priority.CHAT, "matt", log)
+    assert not coder.got.wait(0.6)  # deep is on the GPU in the other process
+    deep.done.set()
+    assert coder.got.wait(3)
+    coder.done.set()
+
+
+def test_a_more_urgent_caller_elsewhere_goes_first(tmp_path: Path) -> None:
+    serve, _ = sched(tmp_path)
+    cli, _ = sched(tmp_path)
+    serve.table.publish([{"model": "pablo/coder", "priority": int(Priority.VOICE),
+                          "who": "matt", "since": 0.0, "state": "waiting"}])  # fmt: skip
+    log: list[str] = []
+    night = Holder(cli, "pablo/deep", Priority.NIGHT, "practice", log)
+    assert not night.got.wait(0.6)  # a voice turn is waiting for the coder
+    serve.table.publish([])  # the voice turn got its answer
+    assert night.got.wait(3)
+    night.done.set()
+
+
+def test_leases_from_a_process_that_died_dont_count(tmp_path: Path) -> None:
+    s, _ = sched(tmp_path)
+    (tmp_path / "gpu-leases.json").write_text(json.dumps({"entries": [
+        {"owner": "gone", "pid": 4_000_000, "beat": time.time(), "model": "pablo/deep",
+         "priority": 2, "who": "", "since": 0.0, "state": "holding"}]}))  # fmt: skip
+    with s.lease("pablo/coder"):
+        pass
+    assert s.snapshot()["elsewhere"] == []
+
+
+def test_the_voice_waits_for_deep_in_another_process_then_unloads_it(tmp_path: Path) -> None:
+    box = Box(up=False)  # paused for deep
+    voice = with_tts(tmp_path, box)
+    cli, _ = sched(tmp_path)
+    log: list[str] = []
+    deep = Holder(cli, "pablo/deep", Priority.RUN, "eval", log)
+    assert deep.got.wait(2)
+    done = threading.Event()
+    threading.Thread(target=lambda: (voice.ensure_resident("tts"), done.set()), daemon=True).start()
+    assert not done.wait(0.6)
+    deep.done.set()
+    assert done.wait(3)
+    assert box.log == ["unload", "start"]  # deep was last on the GPU: unloaded before the voice
+
+
+def test_an_eval_queues_on_the_real_homes_table(settings: Settings) -> None:
+    from pablo.evals import run_suite
+    from pablo.sandbox import LocalSandbox
+
+    seen: list[bool] = []
+
+    def coder(model: str, msgs: object) -> str:
+        seen.append((settings.home / "gpu-leases.json").is_file())
+        return "I'm not sure."
+
+    backend = FakeBackend(scripts={"pablo/coder": coder})
+    run_suite(settings, backend, only={"ledger-by-payee-sums"}, python=sys.executable,
+              sandbox=LocalSandbox())  # fmt: skip
+    assert seen and all(seen)  # the eval's leases are in the real home, not its throwaway one

@@ -378,6 +378,8 @@ def run_suite(
         work = Path(tmp)
         # A throwaway home: eval runs and their traces disappear with this directory.
         isolated = settings.model_copy(update={"home": work / "home"}, deep=True)
+        # The GPU is real: queue with every other Pablo process through the real home's table.
+        isolated.gpu.shared_dir = settings.gpu.shared_dir or str(settings.home)
         for cfg in isolated.lanes.values():
             cfg.retry_when = "now" if cascade else "off"
         if spec is not None:
