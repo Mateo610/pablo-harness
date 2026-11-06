@@ -18,7 +18,7 @@ from pablo.orchestrator import Orchestrator
 
 MATT, SAM, EVE = "100.64.0.10", "100.64.0.20", "100.64.0.30"
 PEERS = {MATT: ("matt@github", "Matt"), SAM: ("sam@github", "Sam"), EVE: ("eve@github", "Eve")}
-TEAM = AccessConfig(owner="matt@github", members=["sam@github"])
+TEAM = AccessConfig(owner="matt@github", members=["sam@github"], hosts=["testserver"])
 CHECKS = {"tests": [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"]}
 GOOD = (
     "Added sub.\n\ncalc.py\n<<<<<<< SEARCH\ndef add(a, b):\n    return a + b\n=======\n"
@@ -167,3 +167,67 @@ def test_the_token_link_signs_in_a_browser_on_pablo(settings: Settings, repo: Pa
     bearer = TestClient(create_app(orch, access), client=("127.0.0.1", 5000))
     headers = {"Authorization": f"Bearer {access.token()}"}
     assert bearer.get("/api/runs", headers=headers).status_code == 200
+
+
+def test_a_rebound_name_is_refused_even_from_the_owners_address(tmp_path: Path) -> None:
+    """DNS rebinding: evil.example points at Pablo's IP, the page runs in Matt's browser."""
+    g = gate(tmp_path)
+    with pytest.raises(Denied, match=r"evil\.example"):
+        g.resolve(MATT, None, {"host": "evil.example:8710"})
+    for host in ("100.101.102.103:8710", "[fd7a:115c:a1e0::1]:8710", "localhost:8710",
+                 "pablo.tail1234.ts.net", "testserver"):  # fmt: skip
+        assert g.resolve(MATT, None, {"host": host}).is_owner
+
+
+def test_extra_names_come_from_the_access_list_and_the_cert(tmp_path: Path) -> None:
+    g = Access(tmp_path, AccessConfig(hosts=["Pablo.Home.Arpa"]), whois=PEERS.get,
+               self_login=lambda: "matt@github")  # fmt: skip
+    assert g.host_ok("pablo.home.arpa:8710") and not g.host_ok("pablo.example")
+    (tmp_path / "tls").mkdir()
+    (tmp_path / "tls" / "name").write_text("pablo.example\n")
+    assert g.host_ok("pablo.example")
+
+
+def test_changes_only_come_from_pablos_own_pages(tmp_path: Path) -> None:
+    g = gate(tmp_path)
+    page = {"host": "100.64.0.1:8710"}
+    with pytest.raises(Denied, match=r"evil\.example"):
+        g.resolve(MATT, None, {**page, "origin": "https://evil.example"}, method="POST")
+    with pytest.raises(Denied):
+        g.resolve(MATT, None, {**page, "origin": "null"}, method="POST")
+    assert g.resolve(MATT, None, {**page, "origin": "https://evil.example"}, method="GET")
+    for origin in ("http://100.64.0.1:8710", "http://127.0.0.1:5173"):
+        assert g.resolve(MATT, None, {**page, "origin": origin}, method="POST").is_owner
+    assert g.resolve(MATT, None, page, method="POST").is_owner  # curl, the TUI: no Origin
+
+
+def test_the_api_refuses_a_rebound_page(settings: Settings, repo: Path) -> None:
+    orch, access = app_for(settings, repo)
+    matt = TestClient(create_app(orch, access), client=(MATT, 5000))
+    run = matt.post("/api/runs", json={"task": "add sub(a, b)", "lane": "coder"}).json()
+    evil = {"host": "evil.example"}
+    assert matt.get("/api/runs", headers=evil).status_code == 403
+    assert matt.post(f"/api/runs/{run['id']}/approve", headers=evil).status_code == 403
+    cross = {"origin": "https://evil.example"}
+    assert matt.post(f"/api/runs/{run['id']}/approve", headers=cross).status_code == 403
+    assert "def sub" not in (repo / "calc.py").read_text()
+
+
+def test_a_teammate_cant_compare_and_their_queued_jobs_are_theirs(
+    settings: Settings, repo: Path
+) -> None:
+    orch, access = app_for(settings, repo)
+    app = create_app(orch, access)
+    sam = TestClient(app, client=(SAM, 5000))
+    assert sam.post("/api/compare", json={"task": "add sub"}).status_code == 403
+    job = sam.post("/api/queue", json={"task": "add sub(a, b)"}).json()
+    assert job["by"] == "sam@github"
+
+
+def test_the_token_link_leaves_the_address_bar(settings: Settings, repo: Path) -> None:
+    orch, access = app_for(settings, repo)
+    local = TestClient(create_app(orch, access), client=("127.0.0.1", 5000))
+    hop = local.get("/", params={"token": access.token(), "run": "abc"}, follow_redirects=False)
+    assert hop.status_code == 303 and hop.headers["location"] == "/?run=abc"
+    assert access.token() in hop.headers["set-cookie"]
+    assert local.get("/api/runs").status_code == 200  # signed in by the cookie

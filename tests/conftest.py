@@ -21,6 +21,9 @@ def settings(tmp_path: Path) -> Settings:
     s.gpu.residents = []  # never start or stop a real service from a test
     s.projects.root = ""  # <home>/projects: the test's own folder
     s.voice = VoiceConfig()  # never the real engines from lanes.yaml; voice tests inject fakes
+    # Starlette's TestClient sends `Host: testserver`; Pablo answers only names it knows.
+    s.home.mkdir(parents=True, exist_ok=True)
+    (s.home / "access.yaml").write_text("hosts: [testserver]\n")
     return s
 
 
