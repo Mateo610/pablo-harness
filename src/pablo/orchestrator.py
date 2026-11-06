@@ -10,7 +10,7 @@ import json
 import re
 import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -165,10 +165,17 @@ class Run:
     # How a Needs-you run retries: "" the lane's config, "now" (Hybrid: deep tries it right
     # away, at your urgency), "off" (you picked one model: it answers alone).
     retry: str = ""
+    # Memory notes of the profile that started it. Private: shown to local coders in `_work`,
+    # never part of `task` (which reaches Claude on escalate, the router, lessons and traces),
+    # and left out of `to_dict()` so no API answer carries them. Only `_save` writes them.
+    notes: list[str] = field(default_factory=list)
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
 
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+    def to_dict(self, *, private: bool = False) -> dict[str, Any]:
+        data = asdict(self)
+        if not private:
+            data.pop("notes", None)
+        return data
 
 
 def extract_diff(text: str) -> tuple[str, str]:
@@ -332,7 +339,9 @@ class Orchestrator:
             self.runs[run.id] = run
         folder = self.settings.home / "runs"
         folder.mkdir(parents=True, exist_ok=True)
-        (folder / f"{run.id}.json").write_text(json.dumps(run.to_dict(), indent=2), "utf-8")
+        (folder / f"{run.id}.json").write_text(
+            json.dumps(run.to_dict(private=True), indent=2), "utf-8"
+        )
 
     def get(self, run_id: str) -> Run:
         with self._lock:
@@ -379,20 +388,27 @@ class Orchestrator:
         retried_from: str | None = None,
         by: str = "",
         retry: str = "",
+        notes: Sequence[str] = (),
     ) -> Run:
         return self.finish(
             self.begin(
                 task, lane=lane, task_id=task_id, escalate=escalate,
                 escalated_from=escalated_from, group=group, retried_from=retried_from, by=by,
-                retry=retry,
+                retry=retry, notes=notes,
             )
         )  # fmt: skip
 
     def start_background(
-        self, task: str, *, lane: str | None = None, by: str = "", retry: str = ""
+        self,
+        task: str,
+        *,
+        lane: str | None = None,
+        by: str = "",
+        retry: str = "",
+        notes: Sequence[str] = (),
     ) -> Run:
         """Route and save the run now; do the work on a thread. Events report its progress."""
-        run = self.begin(task, lane=lane, by=by, retry=retry)
+        run = self.begin(task, lane=lane, by=by, retry=retry, notes=notes)
         if self.retry_inline:  # tests and evals: no threads
             return self.finish(run)
         threading.Thread(target=self.finish, args=(run,), name=f"run-{run.id}", daemon=True).start()
@@ -410,8 +426,12 @@ class Orchestrator:
         retried_from: str | None = None,
         by: str = "",
         retry: str = "",
+        notes: Sequence[str] = (),
     ) -> Run:
-        """Route the task and save the run as running. `finish` does the work."""
+        """Route the task and save the run as running. `finish` does the work.
+
+        `notes` are the starter's memory notes: they reach local coders only (see `Run.notes`).
+        """
         decision = self.router.route(task, lane=ESCALATION_LANE if escalate else lane)
         reason = decision.reason
         if (
@@ -446,6 +466,7 @@ class Orchestrator:
             by=by,
             project=self.repo.name,
             retry=retry,
+            notes=[n for n in notes if n.strip()] if lane_cfg.kind == "local" else [],
         )
         self._save(run)
         self._emit("route", run, reason=reason, confidence=decision.confidence)
@@ -540,7 +561,7 @@ class Orchestrator:
 
             job = JobQueue(self.settings.home).add(
                 run.task, lane=target, task_id=run.task_id, group=run.group, retried_from=run.id,
-                project=self.repo.name,
+                project=self.repo.name, by=run.by, notes=run.notes,
             )  # fmt: skip
             run.retry_job = job.id
             run.question = f"{run.question} {target.capitalize()} will try it tonight.".strip()
@@ -559,7 +580,7 @@ class Orchestrator:
             with gpu_job(urgency, run.by):  # RETRY waits for a quiet GPU in balanced mode
                 retry = self.start(
                     run.task, lane=target, task_id=run.task_id, group=run.group,
-                    retried_from=run.id, by=run.by,
+                    retried_from=run.id, by=run.by, notes=run.notes,
                 )  # fmt: skip
             run.retry_run = retry.id
             verdict = "is ready for you" if retry.state == "ready" else "needs you too"
@@ -706,11 +727,13 @@ class Orchestrator:
         blocks = lane.edit_format == "blocks"
         system = (CODER_BLOCKS_PROMPT if blocks else CODER_PROMPT) if wants_diff else ANSWER_PROMPT
         learned = self._lessons_for(run.task) if wants_diff and lane.kind == "local" else ""
-        budget = Budget.for_window(lane.context_tokens).shrunk(tokens(learned))
+        noted = notes_section(run.notes) if lane.kind == "local" else ""
+        budget = Budget.for_window(lane.context_tokens).shrunk(tokens(learned) + tokens(noted))
         repo_text = build_coder_context(self.repo, run.task, budget=budget, home=self.settings.home)
+        extra = "".join(f"\n\n{part}" for part in (noted, learned) if part)
         messages: list[Message] = [
             {"role": "system", "content": system},
-            {"role": "user", "content": repo_text + (f"\n\n{learned}" if learned else "")},
+            {"role": "user", "content": repo_text + extra},
         ]
         shown = context_files(self.repo, run.task, budget, home=self.settings.home)
         self._emit("context", run, files=shown, budget_tokens=budget.total)
@@ -930,6 +953,17 @@ class Orchestrator:
         return self.start(
             original.task, escalate=True, escalated_from=original.id, task_id=original.task_id
         )
+
+
+MAX_NOTES = 6
+
+
+def notes_section(notes: Sequence[str]) -> str:
+    """The starter's memory notes, for a local coder's prompt. Never part of the task text."""
+    kept = [n.strip() for n in notes if n.strip()][:MAX_NOTES]
+    if not kept:
+        return ""
+    return "Notes from the user (keep to these):\n" + "\n".join(f"- {n}" for n in kept)
 
 
 def _better(new: Verdict, old: Verdict) -> bool:

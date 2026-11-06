@@ -1160,6 +1160,12 @@ def memory_reject(memory_id: str) -> None:
     console.print(f"rejected: {_memory_store().decide(memory_id, 'owner', 'rejected').text}")
 
 
+@memory_app.command("reindex")
+def memory_reindex() -> None:
+    """Rebuild the notes search index from the notes themselves (after a crash, or to check)."""
+    console.print(f"indexed {_memory_store().reindex()} kept notes")
+
+
 @memory_app.command("forget")
 def memory_forget(memory_id: str) -> None:
     _memory_store().forget(memory_id, "owner")

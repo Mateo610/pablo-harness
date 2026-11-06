@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import threading
 import uuid
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
@@ -67,12 +68,17 @@ class Job:
     group: str | None = None  # set when this job retries a run, so approving one rejects the other
     retried_from: str | None = None
     project: str = ""  # the project it changes; "" is the one `pablo serve` started in
+    by: str = ""  # profile whose run this retries, so the retry is still theirs
+    notes: list[str] = field(default_factory=list)  # their memory notes (see Run.notes)
     created_at: str = field(default_factory=lambda: now_local().isoformat(timespec="seconds"))
     started_at: str | None = None
     finished_at: str | None = None
 
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+    def to_dict(self, *, private: bool = False) -> dict[str, Any]:
+        data = asdict(self)
+        if not private:
+            data.pop("notes", None)  # memory notes stay in the file, out of API answers
+        return data
 
 
 class JobQueue:
@@ -90,7 +96,7 @@ class JobQueue:
     def _write(self, jobs: list[Job]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps([j.to_dict() for j in jobs], indent=2), "utf-8")
+        tmp.write_text(json.dumps([j.to_dict(private=True) for j in jobs], indent=2), "utf-8")
         tmp.replace(self.path)
 
     def all(self) -> list[Job]:
@@ -106,9 +112,11 @@ class JobQueue:
         group: str | None = None,
         retried_from: str | None = None,
         project: str = "",
+        by: str = "",
+        notes: Sequence[str] = (),
     ) -> Job:
         job = Job(task=task, lane=lane, task_id=task_id, group=group, retried_from=retried_from,
-                  project=project)  # fmt: skip
+                  project=project, by=by, notes=list(notes))  # fmt: skip
         with self._lock:
             jobs = self._read()
             jobs.append(job)
@@ -184,6 +192,8 @@ class OvernightRunner:
                             task_id=job.task_id,
                             group=job.group,
                             retried_from=job.retried_from,
+                            by=job.by,
+                            notes=job.notes,
                         )
                     job = self.queue.update(
                         job.id,

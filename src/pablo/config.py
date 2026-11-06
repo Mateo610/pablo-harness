@@ -229,6 +229,17 @@ class LearnConfig(BaseModel):
     example_tokens: int = 1500
 
 
+class ChatConfig(BaseModel):
+    """How chat prompts are laid out (src/pablo/convos.py)."""
+
+    # True: the system prompt holds only what stays put between turns (instructions and your
+    # notes, newest first), and the per-message parts (recall, the repo for this message, the
+    # plan) ride on your message. llama.cpp then reuses its cache for the system prompt and the
+    # history instead of reading the whole prompt again every turn. Off until a timing on Pablo
+    # shows the first word comes sooner and the chat eval holds.
+    stable_prefix: bool = False
+
+
 class PracticeConfig(BaseModel):
     """Nightly practice (src/pablo/practice.py): checkable tasks made from these repos, run in
     the overnight window after the queue, at night urgency. Never the eval suite's repos."""
@@ -249,6 +260,7 @@ class Settings(BaseModel):
     learn: LearnConfig = Field(default_factory=LearnConfig)
     practice: PracticeConfig = Field(default_factory=PracticeConfig)
     projects: ProjectsConfig = Field(default_factory=ProjectsConfig)
+    chat: ChatConfig = Field(default_factory=ChatConfig)
     lanes: dict[str, Lane]
     home: Path = Field(default_factory=lambda: default_home())
 
