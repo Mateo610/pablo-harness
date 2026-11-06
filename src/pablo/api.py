@@ -114,6 +114,10 @@ class MemoryIn(BaseModel):
     scope: str = "profile"
 
 
+class NoteEditIn(BaseModel):
+    text: str
+
+
 def asdict_profile(p: Any) -> dict[str, Any]:
     return dict(p.__dict__)
 
@@ -719,7 +723,15 @@ def create_app(
 
     @app.post("/api/memories")
     def add_memory(body: MemoryIn, request: Request) -> dict[str, Any]:
-        return store.remember(profile_of(request), body.text, scope=body.scope).__dict__
+        return store.keep(profile_of(request), body.text, scope=body.scope).__dict__
+
+    @app.patch("/api/memories/{mid}")
+    def edit_memory(mid: str, body: NoteEditIn, request: Request) -> dict[str, Any]:
+        try:
+            mem: Memory = _found(store.edit, mid, profile_of(request), body.text)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return dict(mem.__dict__)
 
     @app.post("/api/memories/{mid}/keep")
     def keep_memory(mid: str, request: Request) -> dict[str, Any]:

@@ -392,3 +392,109 @@ def test_the_stable_layout_keeps_the_system_prompt_the_same_turn_to_turn(
     assert last["content"].startswith("[Pablo, not the user:")
     assert "From earlier conversations" in last["content"] and "chokes on commas" in last["content"]
     assert last["content"].endswith("remind me what broke in the payee parser?")
+
+
+def test_recall_brings_back_your_words_not_the_models(tmp_path: Path) -> None:
+    store = Store(tmp_path / "pablo.db")
+    store.ensure_profile(OWNER, "Owner", "owner")
+    old = store.create(OWNER, "old", project="alpha")
+    now = store.create(OWNER, "now", project="alpha")
+    store.add_message(old.id, "user", "why does the payee parser drop rows?")
+    store.add_message(old.id, "assistant", "The payee parser drops rows with quoted commas.")
+    hits = store.recall(OWNER, "payee parser rows", exclude=now.id, project="alpha")
+    assert [h["role"] for h in hits] == ["user"]
+
+
+def test_recall_needs_two_shared_words(tmp_path: Path) -> None:
+    store = Store(tmp_path / "pablo.db")
+    store.ensure_profile(OWNER, "Owner", "owner")
+    old = store.create(OWNER, "old", project="alpha")
+    now = store.create(OWNER, "now", project="alpha")
+    store.add_message(old.id, "user", "rename the file for the voice server")
+    assert store.recall(OWNER, "which file holds the judge prompt?", exclude=now.id,
+                        project="alpha") == []  # fmt: skip
+    assert store.recall(OWNER, "the voice server file", exclude=now.id, project="alpha")
+    assert store.recall(OWNER, "voice", exclude=now.id, project="alpha")  # one word asked
+
+
+def test_recall_prefers_recent_over_old_at_the_same_match(tmp_path: Path) -> None:
+    from datetime import UTC, datetime
+
+    store = Store(tmp_path / "pablo.db")
+    store.ensure_profile(OWNER, "Owner", "owner")
+    a = store.create(OWNER, "a", project="alpha")
+    b = store.create(OWNER, "b", project="alpha")
+    now = store.create(OWNER, "now", project="alpha")
+    store.add_message(a.id, "user", "the payee parser chokes on commas")
+    store.add_message(b.id, "user", "the payee parser chokes on tabs")
+    old = "2026-01-01T00:00:00+00:00"
+    store._q("update messages set created_at = ? where conversation_id = ?", (old, a.id))
+    hits = store.recall(OWNER, "payee parser chokes", exclude=now.id, project="alpha",
+                        now=datetime(2026, 11, 6, tzinfo=UTC))  # fmt: skip
+    assert [h["conversation_id"] for h in hits] == [b.id, a.id]
+
+
+def test_the_same_note_is_never_kept_or_suggested_twice(settings: Settings, repo: Path) -> None:
+    chat, _ = make(settings, repo, "Noted.\nREMEMBER: Tests run in the sandbox.")
+    conv = chat.start(lane="coder")
+    first = chat.say(conv.id, "checks run in the gVisor sandbox", do=False).proposed
+    again = chat.say(conv.id, "yes, the sandbox", do=False).proposed
+    assert len(first) == 1 and again == []  # already waiting
+    chat.store.decide(first[0].id, OWNER, "rejected")
+    assert chat.say(conv.id, "the sandbox, again", do=False).proposed == []  # you said no
+    kept = chat.say(conv.id, "remember: tests run in the sandbox").kept[0]
+    assert kept.status == "kept"  # your own words win over an earlier no
+    assert chat.say(conv.id, "remember: Tests run in the SANDBOX!").kept[0].id == kept.id
+    assert len(chat.store.memories(OWNER, status="kept")) == 1
+
+
+def test_keeping_what_was_suggested_keeps_the_suggestion(tmp_path: Path) -> None:
+    store = Store(tmp_path / "pablo.db")
+    store.ensure_profile(OWNER, "Owner", "owner")
+    waiting = store.propose(OWNER, "commits use the noreply address")
+    assert waiting is not None
+    kept = store.keep(OWNER, "commits use the noreply address")
+    assert kept.id == waiting.id and kept.status == "kept"
+    assert store.propose(OWNER, "commits use the noreply address please") is None  # near-same
+    assert store.propose(OWNER, "commits use the noreply address", scope="project:x") is None
+
+
+def test_a_note_can_be_edited_and_search_follows(tmp_path: Path) -> None:
+    store = Store(tmp_path / "pablo.db")
+    store.ensure_profile(OWNER, "Owner", "owner")
+    note = store.keep(OWNER, "tests run with pytest")
+    store.edit(note.id, OWNER, "tests run with unittest")
+    assert [m["text"] for m in store.search(OWNER, "unittest")["memories"]] == [
+        "tests run with unittest"
+    ]
+    assert store.search(OWNER, "pytest")["memories"] == []
+    with pytest.raises(ValueError):
+        store.edit(note.id, OWNER, "  ")
+    with pytest.raises(KeyError):
+        store.edit(note.id, "sam", "mine now")
+
+
+def test_old_suggestions_are_set_aside(tmp_path: Path) -> None:
+    from datetime import UTC, datetime
+
+    store = Store(tmp_path / "pablo.db")
+    store.ensure_profile(OWNER, "Owner", "owner")
+    old = store.propose(OWNER, "likes long replies")
+    fresh = store.propose(OWNER, "uses uv for installs")
+    assert old is not None and fresh is not None
+    store._q("update memories set created_at = '2026-01-01T00:00:00+00:00' where id = ?",
+             (old.id,))  # fmt: skip
+    assert store.expire_proposals(now=datetime(2026, 11, 6, tzinfo=UTC)) == 1
+    assert [m.id for m in store.memories(OWNER, status="proposed")] == [fresh.id]
+    assert store.propose(OWNER, "likes long replies") is None  # set aside counts as a no
+
+
+def test_the_api_edits_a_note(settings: Settings, repo: Path) -> None:
+    chat, _ = make(settings, repo)
+    client = TestClient(create_app(chat.orch), client=("127.0.0.1", 50000))
+    note = client.post("/api/memories", json={"text": "uses pytest"}).json()
+    assert client.post("/api/memories", json={"text": "Uses pytest."}).json()["id"] == note["id"]
+    edited = client.patch(f"/api/memories/{note['id']}", json={"text": "uses unittest"})
+    assert edited.json()["text"] == "uses unittest"
+    assert client.patch(f"/api/memories/{note['id']}", json={"text": ""}).status_code == 400
+    assert client.patch("/api/memories/nope", json={"text": "x"}).status_code == 404

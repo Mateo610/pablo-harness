@@ -22,7 +22,7 @@ import sqlite3
 import threading
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -203,13 +203,45 @@ def said_remember(text: str) -> tuple[str, bool] | None:
     return m.group("fact").strip(), bool(m.group("here"))
 
 
-def fts_query(text: str, limit: int = 12) -> str:
-    """Any user text as a safe FTS5 query: its distinct words, OR'ed, each quoted."""
+def query_words(text: str, limit: int = 12) -> list[str]:
+    """The distinct search words of a text, in order: 3+ characters, no stop words."""
     words: list[str] = []
     for w in _WORD.findall(text.lower()):
         if w not in _STOP and w not in words:
             words.append(w)
-    return " OR ".join(f'"{w}"' for w in words[:limit])
+    return words[:limit]
+
+
+def fts_query(text: str, limit: int = 12) -> str:
+    """Any user text as a safe FTS5 query: its distinct words, OR'ed, each quoted."""
+    return " OR ".join(f'"{w}"' for w in query_words(text, limit))
+
+
+RECALL_HALF_LIFE_DAYS = 30.0
+PROPOSAL_DAYS = 14  # a suggested note you never decided on is set aside after this
+_NOTE_WORD = re.compile(r"[a-z0-9_]+")
+
+
+def same_note(a: str, b: str) -> bool:
+    """Do two notes say the same thing? The same words ignoring case and punctuation, or
+    (both 3+ words long) nearly the same set of words."""
+    wa, wb = _NOTE_WORD.findall(a.lower()), _NOTE_WORD.findall(b.lower())
+    if wa == wb:
+        return True
+    sa, sb = set(wa), set(wb)
+    if len(sa) < 3 or len(sb) < 3:
+        return False
+    return len(sa & sb) / len(sa | sb) >= 0.8
+
+
+def _age_days(stamp: str, now: datetime) -> float:
+    try:
+        then = datetime.fromisoformat(stamp)
+    except ValueError:
+        return 0.0
+    if then.tzinfo is None:
+        then = then.replace(tzinfo=UTC)
+    return max(0.0, (now - then).total_seconds() / 86400)
 
 
 @dataclass
@@ -417,6 +449,65 @@ class Store:
         self._tx(*steps)
         return mem
 
+    def _matching(self, profile: str, text: str, scopes: list[str]) -> list[Memory]:
+        found = self.memories(profile, scopes=scopes)
+        return [m for m in found if same_note(m.text, text)]
+
+    def keep(self, profile: str, text: str, *, scope: str = "profile",
+             source: str | None = None) -> Memory:  # fmt: skip
+        """You said it: keep it. A note you already kept comes back instead of a copy; a
+        matching suggestion still waiting is kept rather than added again."""
+        for m in self._matching(profile, text, [scope]):
+            if m.status == "kept":
+                return m
+            if m.status == "proposed":
+                return self.decide(m.id, profile, "kept")
+        return self.remember(profile, text, scope=scope, source=source)
+
+    def propose(self, profile: str, text: str, *, scope: str = "profile",
+                source: str | None = None) -> Memory | None:  # fmt: skip
+        """The model suggests it. Nothing new when the same note is already kept, already
+        waiting, or one you rejected: a suggestion you said no to isn't asked again."""
+        self.expire_proposals()
+        if not text.strip():
+            return None
+        scopes = sorted({scope, "profile"})  # a project suggestion a profile note covers
+        if self._matching(profile, text, scopes):
+            return None
+        return self.remember(profile, text, scope=scope, status="proposed", source=source)
+
+    def edit(self, mid: str, profile: str, text: str) -> Memory:
+        """Change a note's words. A kept note's search row changes with it."""
+        rows = self._q("select * from memories where id = ? and profile_id = ?", (mid, profile))
+        if not rows:
+            raise KeyError(f"no memory {mid}")
+        mem = Memory(**dict(rows[0]))
+        mem.text = text.strip()[:500]
+        if not mem.text:
+            raise ValueError("a note needs some text; forget it instead")
+        steps: list[tuple[str, tuple[Any, ...]]] = [
+            ("update memories set text = ? where id = ?", (mem.text, mid)),
+            ("delete from memories_fts where id = ?", (mid,)),
+        ]
+        if mem.status == "kept":
+            steps.append(("insert into memories_fts(text, id, profile_id) values (?, ?, ?)",
+                          (mem.text, mid, profile)))  # fmt: skip
+        self._tx(*steps)
+        return mem
+
+    def expire_proposals(self, days: float = PROPOSAL_DAYS, now: datetime | None = None) -> int:
+        """Suggestions left waiting longer than `days` are set aside (rejected), so the list
+        on Home stays short and the same suggestion isn't made again. Returns how many."""
+        cutoff = ((now or datetime.now(UTC)) - timedelta(days=days)).isoformat(timespec="seconds")
+        with self._lock:
+            cur = self._db.execute(
+                "update memories set status = 'rejected', decided_at = ? "
+                "where status = 'proposed' and created_at < ?",
+                (_now(), cutoff),
+            )
+            self._db.commit()
+            return int(cur.rowcount)
+
     def memories(
         self, profile: str, *, status: MemoryStatus | None = None, scopes: list[str] | None = None
     ) -> list[Memory]:
@@ -465,15 +556,24 @@ class Store:
     # search ---------------------------------------------------------------------------------
 
     def search(
-        self, profile: str, text: str, limit: int = 20, *, project: str | None = None
+        self,
+        profile: str,
+        text: str,
+        limit: int = 20,
+        *,
+        project: str | None = None,
+        role: str | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
-        """Your messages and kept notes that match. `project` keeps messages to one project."""
+        """Your messages and kept notes that match. `project` keeps messages to one project,
+        `role` to one speaker."""
         q = fts_query(text)
         if not q:
             return {"messages": [], "memories": []}
         where, args = "messages_fts match ? and c.profile_id = ?", [q, profile]
         if project is not None:
             where, args = where + " and c.project = ?", [*args, project]
+        if role is not None:
+            where, args = where + " and m.role = ?", [*args, role]
         msgs = self._q(
             "select m.id, m.conversation_id, m.role, m.content, m.created_at, c.title "
             "from messages_fts f join messages m on m.id = f.rowid "
@@ -489,11 +589,39 @@ class Store:
         return {"messages": [dict(r) for r in msgs], "memories": [dict(r) for r in mems]}
 
     def recall(
-        self, profile: str, text: str, *, exclude: str, project: str, k: int = 3
+        self,
+        profile: str,
+        text: str,
+        *,
+        exclude: str,
+        project: str,
+        k: int = 3,
+        now: datetime | None = None,
     ) -> list[dict[str, Any]]:
-        """The best-matching lines from your other conversations about the same project."""
-        hits = self.search(profile, text, limit=k * 4, project=project)["messages"]
-        return [h for h in hits if h["conversation_id"] != exclude][:k]
+        """What you said in your other conversations about the same project, when it matches.
+
+        Only your own messages: a model's old reply, right or wrong, never comes back as
+        "from earlier conversations". A hit must share two of the message's words (one, if
+        the message has only one), so a lone "file" or "test" doesn't pull in noise. Among
+        hits, more shared words first, halved every 30 days of age.
+        """
+        wanted = query_words(text)
+        if not wanted:
+            return []
+        need = min(2, len(wanted))
+        when = now or datetime.now(UTC)
+        hits = self.search(profile, text, limit=k * 8, project=project, role="user")["messages"]
+        scored: list[tuple[float, int, dict[str, Any]]] = []
+        for i, hit in enumerate(hits):
+            if hit["conversation_id"] == exclude:
+                continue
+            shared = len(set(wanted) & set(query_words(hit["content"], limit=10_000)))
+            if shared < need:
+                continue
+            decay = 0.5 ** (_age_days(hit["created_at"], when) / RECALL_HALF_LIFE_DAYS)
+            scored.append((shared * decay, -i, hit))  # ties keep bm25's order
+        scored.sort(key=lambda row: (row[0], row[1]), reverse=True)
+        return [hit for _, _, hit in scored[:k]]
 
     def relevant_memories(self, profile: str, project: str, text: str, k: int = 12) -> list[str]:
         """Up to k kept notes for this profile and project: all of them when they fit, else the
@@ -635,7 +763,7 @@ class Chat:
         if said:
             fact, here = said
             scope = f"project:{conv.project}" if here else "profile"
-            mem = self.store.remember(profile, fact, scope=scope, source=cid)
+            mem = self.store.keep(profile, fact, scope=scope, source=cid)
             reply = self.store.add_message(cid, "assistant", f"Kept: {mem.text}", lane=name)
             return Turn(conv, user, reply, kept=[mem])
 
@@ -672,11 +800,11 @@ class Chat:
         facts = [(m.group(2), bool(m.group(1))) for m in _REMEMBER.finditer(answer)]
         visible = _CONTROL.sub("", _REMEMBER.sub("", _RUN.sub("", answer))).strip()
         proposed = [
-            self.store.remember(
-                profile, f, scope=f"project:{conv.project}" if here else "profile",
-                status="proposed", source=cid,
-            )
+            m
             for f, here in facts[:3]
+            if (m := self.store.propose(
+                profile, f, scope=f"project:{conv.project}" if here else "profile", source=cid,
+            )) is not None
         ]  # fmt: skip
         extra: list[str] = []
         plan_obj: Plan | None = None

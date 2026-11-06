@@ -26,7 +26,11 @@ finishes.
   - any message starting "remember that…" became a note without reaching the model (questions
     included);
   - a note and its search row were separate commits; now one transaction, a self-check on open,
-    and `pablo memory reindex`.
+    and `pablo memory reindex`;
+  - the same note could be suggested every turn and kept twice. Now a match (same words, or 80%
+    of them) is never added again, a suggestion you rejected isn't made again, suggestions left
+    14 days are set aside, and notes can be edited (`PATCH /api/memories/{id}`,
+    `pablo memory edit`).
 
 ## Weaknesses
 
@@ -42,9 +46,11 @@ finishes.
 - **[suspected]** Typed chat put per-message parts (ranked notes, recall, repo context) in the
   system prompt, so llama.cpp re-read the whole prompt every turn. `chat.stable_prefix` moves them
   onto your message; off until timed.
-- **[suspected]** Recall matches any shared word and includes the model's own replies, so an old
-  wrong answer can come back as "from earlier conversations". No recency weight.
-- **[gap]** Notes have no dedupe, edit or supersede; long chats drop old turns with no summary.
+- **[suspected]** Recall used to match any shared word and include the model's own replies. Now:
+  your messages only, two shared words, halved every 30 days. The thresholds are guesses; no
+  recall test measures them yet.
+- **[gap]** Long chats drop old turns with no summary. A note that replaces another (`supersedes`)
+  isn't modelled: edit the old note instead. The cockpit has no edit button yet (API and CLI do).
 
 ## Ideas
 
@@ -55,8 +61,8 @@ finishes.
 | Ask "apply it?" back when consent words are mixed with changes ("yes, but…") | fewer wrong applies (observed) |
 | Time first-word latency per turn and log it | p50/p95 on Agents |
 | `chat.stable_prefix: true` | first-token latency on turn 2+ drops on Pablo; the chat set holds |
-| Recall from your own messages only, with a minimum score and recency decay | a small recall test: right hits up, wrong ones down |
-| Dedupe proposals against kept notes; `supersedes` for a note that replaces one | proposals waiting on Home stop repeating (observed) |
+| A recall test: 20 questions with the earlier message they should find | hit rate and wrong hits, before tuning the two-word floor or the half-life |
+| A rolling summary of the turns a long chat drops | a planning chat still knows its first decisions on turn 40 (observed) |
 
 ## Open questions
 
