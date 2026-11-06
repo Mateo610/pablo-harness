@@ -96,8 +96,8 @@ lanes:
     retry_if: broken             # broken: only failed / no diff / didn't apply / checks worse · needs_you: any
     thinking:                    # the chat's "Extended thinking" switch (Base and Hybrid)
       model: pablo/coder-think   # same weights, --reasoning on (llama-swap coder-think)
-      max_tokens: 12000          # thinking comes first and shares the 16k window...
-      context_tokens: 4000       # ...so the prompt gets less of it (raise with -c on coder-think)
+      max_tokens: 16000          # thinking comes first and shares the 32k window
+      context_tokens: 10500      # coder-think is -c 32768, KV q8_0; measured to fit alone on the 3090
 
   coder-candidate:
     role: LoRA candidate under eval; never auto-routed, never training data

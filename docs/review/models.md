@@ -5,7 +5,7 @@
 | Role | Model | How we run it |
 |---|---|---|
 | Router | Qwen3.5-4B Q4_K_M | CPU, always loaded |
-| Base (coder) | Qwen3.6-35B-A3B UD-Q4_K_S | GPU, `--reasoning off`, 16k window (~10.5k for context), ~121 tok/s |
+| Base (coder) | Qwen3.6-35B-A3B UD-Q4_K_S | GPU, `--reasoning off`, 16k window (~10.5k for context), ~121 tok/s. Extended thinking is the same weights, `--reasoning on`, 32k window, prompt budget 10500 |
 | Judge | Qwen3.8-27B dense UD-Q4_K_M | GPU, `--reasoning off`, threshold 0.75 |
 | Best (deep) | gpt-oss-120b MXFP4 | experts on CPU (`--n-cpu-moe 25`), 64k window, reasoning on, ~25 tok/s |
 | No guardrails (advisor) | Mistral Small 3.2 24B heretic Q5_K_M | GPU, talks only (builds only in unfiltered projects) |
@@ -27,6 +27,13 @@
 - **[measured]** Hybrid plan mode on 5 small tools from an empty project (`90319fc`): accepted
   1/5, planned 5/5, finished 5/5, mean steps 3.8, wall 1059 s. Seven approvals were clean but
   the judge was unsure. None rejected. No project errored.
+- **[measured]** Extended thinking in Chat, Base, hello repo. `coder-think` is `-c 32768` and
+  held the 3090 alone: process 19668 MiB, card 20451/24576 MiB, router on CPU. Thinking on
+  (model already warm): question 2.3 s to the first word, 2.5 s for the reply, no run; a
+  docstring 1.9 s / 2.5 s, then `needs_you` at 139 s; a plan 13.1 s / 13.9 s, drafted, not
+  built. Thinking off: question 4.4 s / 4.8 s and it started a run (`needs_you` at 19 s);
+  docstring 4.5 s / 4.7 s, `needs_you` at 13 s; plan 4.5 s / 5.4 s. None came back ready: the
+  hello check image is not built, so the checks never ran. The suite with `--think` is still open.
 
 ## Published numbers vs ours
 
@@ -52,7 +59,7 @@ the reason to keep it.
 ## Weaknesses
 
 - **[suspected]** Base with thinking off may be leaving accuracy on the table on the hardest
-  tasks. Never measured.
+  tasks. Chat latency is measured (above). The suite with `--think` is not.
 - **[measured]** Best is slow: 12,917 s for one suite run, minutes per task.
 - **[suspected]** Q4_K_S for the coder was chosen to fit VRAM, not by measuring Q4 vs Q5.
 - **[gap]** No comparison against a frontier model on our suite.
@@ -61,7 +68,7 @@ the reason to keep it.
 
 | Idea | How we'd know |
 |---|---|
-| Coder with reasoning on: built as the chat's Extended thinking switch (`pablo eval --think`) | suite, 3 runs with `--think`; seconds to first word in Chat |
+| Coder with reasoning on, on the suite (`pablo eval --cascade --think --repeat 3`) | pass rate and false ready against the clean baseline at `2e20e05` (89% ± 7%, false ready 8). Chat first-word times are already in |
 | Claude once on the 36 tasks (only suite tasks leave the box; built, on hold until there's an API key) | pass rate and false ready next to ours |
 | Q5 coder if it fits with the KV cache | suite, 3 runs, plus tok/s |
 | Re-check the leaderboards for newer open coders every month or so | a bake-off when one fits the 3090 |

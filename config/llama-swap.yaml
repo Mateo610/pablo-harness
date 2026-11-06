@@ -39,12 +39,14 @@ models:
       ${PORT}
 
   # The coder with reasoning on: the chat's "Extended thinking" switch (lanes.yaml coder.thinking).
+  # A repeated flag does not override the script's, so reasoning and context are env vars.
   coder-think:
     ttl: 0
     proxy: http://127.0.0.1:${PORT}
     cmd: >
+      /usr/bin/env PABLO_CODER_REASONING=on PABLO_CODER_CONTEXT=32768
       /home/mateo610/Desktop/pablo-harness/pablo-harness-main/scripts/llama-coder.sh
-      ${PORT} --reasoning on --alias coder-think
+      ${PORT} --alias coder-think
 
   coder-candidate:
     ttl: 0

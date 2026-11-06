@@ -24,7 +24,7 @@ Tags: **[measured]** a number says so · **[observed]** seen in use, not counted
 
 | Area | Health | Biggest weakness | Next step |
 |---|---|---|---|
-| [Models](models.md) | measured on our suite | the base coder runs with thinking off at Q4; we never measured either choice | eval coder with thinking on, on a few hard tasks |
+| [Models](models.md) | measured on our suite; thinking timed in Chat | the `--think` suite, and Q4 vs Q5, are still open | `pablo eval --cascade --think` on a free night |
 | [Evals](evals.md) | chat and build measured | plan mode accepts 1 of 5 small tools | first runs of holdout and Claude (M7e) |
 | [Context](context.md) | measured, mixed | the coder sees ~10.5k tokens; the repo map didn't beat the spread | measure what the misses were missing |
 | [Editing](editing.md) | strong | fix-on-red never cleared the noise floor | per-task view of what fix rounds change |
