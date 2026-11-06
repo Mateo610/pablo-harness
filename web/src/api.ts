@@ -272,6 +272,17 @@ export interface VoiceStatus {
   tts_state?: "running" | "paused" | "starting" | "unknown" | "down";
 }
 
+export type ProjectMode = "standard" | "unfiltered";
+export interface Project {
+  name: string;
+  path: string;
+  title: string;
+  about: string;
+  mode: ProjectMode;
+  default: boolean;
+  created_at: string;
+}
+
 export type GpuMode = "interactive" | "balanced" | "deep";
 export interface GpuLease {
   model: string;
@@ -348,12 +359,16 @@ export const api = {
   gpu: () => call<GpuState>("/api/gpu"),
   setGpuMode: (mode: GpuMode) => call<GpuState>("/api/gpu/mode", { method: "POST", body: JSON.stringify({ mode }) }),
   runs: (limit = 50) => call<Run[]>(`/api/runs?limit=${limit}`),
-  repo: () => call<RepoStatus>("/api/repo"),
+  repo: (project = "") => call<RepoStatus>(`/api/repo${project ? `?project=${encodeURIComponent(project)}` : ""}`),
   stats: (days = 1) => call<Stats>(`/api/stats?days=${days}`),
   conversations: () => call<Conversation[]>("/api/conversations"),
-  conversation: (id: string) => call<{ conversation: Conversation; messages: ChatMessage[] }>(`/api/conversations/${id}`),
-  newConversation: (lane = "auto", title = "") =>
-    call<Conversation>("/api/conversations", { method: "POST", body: JSON.stringify({ lane, title }) }),
+  conversation: (id: string) =>
+    call<{ conversation: Conversation; messages: ChatMessage[]; unfiltered?: boolean }>(`/api/conversations/${id}`),
+  newConversation: (lane = "auto", title = "", project = "") =>
+    call<Conversation>("/api/conversations", { method: "POST", body: JSON.stringify({ lane, title, project }) }),
+  projects: () => call<Project[]>("/api/projects"),
+  createProject: (title: string, about: string, mode: ProjectMode) =>
+    call<Project>("/api/projects", { method: "POST", body: JSON.stringify({ title, about, mode }) }),
   renameConversation: (id: string, title: string) =>
     call<Conversation>(`/api/conversations/${id}`, { method: "PATCH", body: JSON.stringify({ title }) }),
   deleteConversation: (id: string) => call<{ deleted: string }>(`/api/conversations/${id}`, { method: "DELETE" }),
@@ -406,8 +421,9 @@ export const api = {
     conversation: string,
     onEvent: (e: VoiceEvent) => void,
     signal?: AbortSignal,
+    project = "",
   ): Promise<void> => {
-    const q = new URLSearchParams({ lane, conversation });
+    const q = new URLSearchParams({ lane, conversation, project });
     const res = await fetch(`/api/voice/turn?${q}`, { method: "POST", headers: { "Content-Type": "audio/wav" }, body: wav, signal });
     if (!res.ok || !res.body) {
       const body = (await res.json().catch(() => ({}))) as { detail?: string };

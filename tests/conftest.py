@@ -19,6 +19,7 @@ def settings(tmp_path: Path) -> Settings:
         lane.retry_when = "off"  # tests that want coder → deep retries turn it on
     s.gpu.idle_s = 0  # tests are the only user; test_gpu sets its own
     s.gpu.residents = []  # never start or stop a real service from a test
+    s.projects.root = ""  # <home>/projects: the test's own folder
     s.voice = VoiceConfig()  # never the real engines from lanes.yaml; voice tests inject fakes
     return s
 

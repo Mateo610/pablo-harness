@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, type ChatMessage, type Conversation, type Lane, type Me, type Memory, type SearchHits } from "./api";
 import { laneColor, laneName } from "./components";
-import { ago, go, RunCard, useEvents, usePoll } from "./hud";
+import { ago, go, pickProject, ProjectPicker, RunCard, useEvents, usePoll, useProject } from "./hud";
 import { Markdown } from "./Markdown";
 
 type Mode = "chat" | "advisor";
@@ -63,7 +63,17 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
   const bottom = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLTextAreaElement>(null);
 
-  const options = useMemo(() => modelOptions(lanes, me), [lanes, me]);
+  const [projects] = usePoll(api.projects, 60000);
+  const [chosen, setChosen] = useProject();
+  const [convUnfiltered, setConvUnfiltered] = useState(false);
+  const startIn = pickProject(projects, chosen);
+  // An open conversation keeps its own project; a new one starts in the chosen project.
+  const unfiltered = conv ? convUnfiltered : startIn?.mode === "unfiltered";
+  const options = useMemo(() => {
+    if (!unfiltered) return modelOptions(lanes, me);
+    const raw = lanes.find((l) => l.name === "advisor");
+    return [{ key: "auto", name: "No guardrails", desc: "This project runs on one model end to end: it talks, plans, writes and reviews. Nothing else is used.", meta: raw?.display || "advisor" }];
+  }, [lanes, me, unfiltered]);
   const mine = (convs ?? []).filter((c) => (advisor ? c.lane === "advisor" : c.lane !== "advisor"));
 
   const load = useCallback((cid: string) => {
@@ -72,6 +82,7 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
       .then((r) => {
         setConv(r.conversation);
         setMessages(r.messages);
+        setConvUnfiltered(Boolean(r.unfiltered));
         if (!advisor) setLane(r.conversation.lane);
       })
       .catch((e: ApiError) => setError(e.status === 404 ? "That conversation is gone." : e.message));
@@ -113,7 +124,7 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
     try {
       let cid = conv?.id;
       if (!cid) {
-        const made = await api.newConversation(lane);
+        const made = await api.newConversation(unfiltered ? "auto" : lane, "", advisor ? "" : startIn?.name ?? "");
         cid = made.id;
         go(advisor ? "advisor" : "chat", cid);
       }
@@ -199,9 +210,16 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
         <header className="h-head" style={{ padding: "14px 28px", borderBottomColor: advisor ? "#1c1636" : undefined }}>
           {advisor && <span className="h-bot-mark orb" style={{ width: 40, height: 40 }} aria-hidden="true" />}
           <h1 style={{ margin: 0, fontSize: 18, fontWeight: 600 }}>{conv?.title ?? (advisor ? "Advisor" : "New conversation")}</h1>
-          {conv && (
+          {conv ? (
             <span className="h-chip" style={{ color: "var(--sys)" }}>
-              {conv.project}
+              {projects?.find((p) => p.name === conv.project)?.title ?? conv.project}
+            </span>
+          ) : (
+            !advisor && <ProjectPicker projects={projects} value={chosen} onChange={setChosen} />
+          )}
+          {unfiltered && !advisor && (
+            <span className="h-chip" style={{ color: "var(--lane-advisor)" }}>
+              no guardrails · one model
             </span>
           )}
           {advisor && <span className="h-mono h-dim" style={{ fontSize: 12 }}>Mistral Small 3.2 24B heretic · on Pablo</span>}

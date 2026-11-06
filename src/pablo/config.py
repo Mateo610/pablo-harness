@@ -200,6 +200,12 @@ class ResidentConfig(BaseModel):
     warmup_s: float = 90.0
 
 
+class ProjectsConfig(BaseModel):
+    # Where projects live: every git repo directly inside is one, and new ones are made here.
+    # Empty means <home>/projects.
+    root: str = ""
+
+
 class GpuConfig(BaseModel):
     """The GPU scheduler (src/pablo/gpu.py). `mode` is the starting mode; the owner's switch
     on Home overrides it (saved in ~/.pablo/gpu-mode.json, read by every Pablo process)."""
@@ -239,6 +245,7 @@ class Settings(BaseModel):
     gpu: GpuConfig = Field(default_factory=GpuConfig)
     learn: LearnConfig = Field(default_factory=LearnConfig)
     practice: PracticeConfig = Field(default_factory=PracticeConfig)
+    projects: ProjectsConfig = Field(default_factory=ProjectsConfig)
     lanes: dict[str, Lane]
     home: Path = Field(default_factory=lambda: default_home())
 
@@ -266,6 +273,11 @@ class Settings(BaseModel):
                     f"lane '{name}' retry_on must be another local lane, not {target!r}"
                 )
         return self
+
+    def projects_root(self) -> Path:
+        return (
+            Path(self.projects.root).expanduser() if self.projects.root else self.home / "projects"
+        )
 
     def lane(self, name: str) -> Lane:
         try:

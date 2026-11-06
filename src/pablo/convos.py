@@ -36,6 +36,7 @@ from pablo.repomap import load_or_build
 if TYPE_CHECKING:
     from pablo.gateway import Message
     from pablo.orchestrator import Orchestrator, Run
+    from pablo.projects import Workspace
 
 Role = Literal["owner", "member"]
 MemoryStatus = Literal["proposed", "kept", "rejected"]
@@ -441,21 +442,53 @@ class Chat:
     CONTEXT = Budget(total=5000, files=3200, tree=700, max_files=4)
 
     def __init__(
-        self, orch: Orchestrator, store: Store | None = None, *, background: bool = False
+        self,
+        orch: Orchestrator,
+        store: Store | None = None,
+        *,
+        background: bool = False,
+        workspace: Workspace | None = None,
     ) -> None:
-        """`background`: runs a turn starts are worked on a thread (the API); else inline."""
+        """`background`: runs a turn starts are worked on a thread (the API); else inline.
+        `workspace`: conversations in other projects talk to that project's orchestrator."""
         self.orch = orch
+        self.workspace = workspace
         self.background = background
         self.store = store or Store(orch.settings.home / "pablo.db")
         self.store.ensure_profile(OWNER, "Owner", "owner")
         self.project = orch.repo.name
 
-    def start(self, profile: str = OWNER, title: str = "", lane: str = AUTO) -> Conversation:
-        self._lane(lane)  # unknown lanes fail here, not on the first message
-        return self.store.create(profile, title, lane=lane, project=self.project)
+    def start(
+        self, profile: str = OWNER, title: str = "", lane: str = AUTO, project: str = ""
+    ) -> Conversation:
+        project = project or self.project
+        orch = self._orch_named(project)  # unknown projects fail here
+        if self.unfiltered(project):
+            lane = AUTO  # one model drives the whole project
+        self._lane(lane, orch)  # unknown lanes fail here, not on the first message
+        return self.store.create(profile, title, lane=lane, project=project)
 
-    def _lane(self, name: str) -> Lane:
-        return self.orch.settings.lane("coder" if name == AUTO else name)
+    def _orch_named(self, project: str) -> Orchestrator:
+        if self.workspace is None or project in ("", self.project):
+            return self.orch
+        return self.workspace.orch(project)
+
+    def orch_for(self, conv: Conversation) -> Orchestrator:
+        try:
+            return self._orch_named(conv.project)
+        except KeyError:  # the project's folder is gone; talk about the default one
+            return self.orch
+
+    def unfiltered(self, project: str) -> bool:
+        if self.workspace is None:
+            return False
+        try:
+            return self.workspace.project(project or self.project).mode == "unfiltered"
+        except KeyError:
+            return False
+
+    def _lane(self, name: str, orch: Orchestrator | None = None) -> Lane:
+        return (orch or self.orch).settings.lane("coder" if name == AUTO else name)
 
     def say(
         self,
@@ -472,8 +505,10 @@ class Chat:
         """`do`: True starts a run with your words as the task, False only talks, None lets
         the model decide (a RUN line). `confirm` is required for a remote lane, every time."""
         conv = self.store.conversation(cid, profile)
-        name = lane or conv.lane
-        cfg = self._lane(name)
+        orch = self.orch_for(conv)
+        unfiltered = self.unfiltered(conv.project)
+        name = AUTO if unfiltered else (lane or conv.lane)
+        cfg = self._lane(name, orch)
         remote = cfg.kind == "remote" or cfg.requires_approval
         if remote and not confirm:
             raise PermissionError(f"'{name}' leaves Pablo: confirm this send first")
@@ -500,12 +535,14 @@ class Chat:
             profile, conv.project, "" if spoken else text
         )  # fmt: skip
         if do:
-            run = self._run(text, name, notes, profile)
+            run = self._run(text, name, notes, profile, orch, unfiltered)
             body = self._run_line(run)
             reply = self.store.add_message(cid, "assistant", body, lane=name, run_id=run.id)
             return Turn(conv, user, reply, run=run.to_dict(), shared_memory=bool(notes))
 
-        messages = self._prompt(profile, conv, cfg, name, history, text, notes, remote, spoken)
+        messages = self._prompt(
+            profile, conv, cfg, name, history, text, notes, remote, spoken, orch
+        )
         sampling: dict[str, Any] = {
             "temperature": cfg.temperature,
             "top_p": cfg.top_p,
@@ -514,9 +551,9 @@ class Chat:
         }
         with gpu_job(Priority.VOICE if spoken else Priority.CHAT, profile):
             done = (
-                stream_complete(self.orch.backend, cfg.model, messages, on_delta, **sampling)
+                stream_complete(orch.backend, cfg.model, messages, on_delta, **sampling)
                 if on_delta
-                else self.orch.backend.complete(cfg.model, messages, **sampling)
+                else orch.backend.complete(cfg.model, messages, **sampling)
             )
         answer = done.text
         self.store.record_usage(profile, name, done.prompt_tokens, done.completion_tokens)
@@ -528,7 +565,7 @@ class Chat:
         ]
         run_obj = None
         if task and do is not False:
-            run_obj = self._run(task, name, notes, profile)
+            run_obj = self._run(task, name, notes, profile, orch, unfiltered)
             visible = f"{visible}\n\n{self._run_line(run_obj)}".strip()
         reply = self.store.add_message(
             cid, "assistant", visible or "(no reply)", lane=name,
@@ -537,7 +574,16 @@ class Chat:
         return Turn(conv, user, reply, run=run_obj.to_dict() if run_obj else None,
                     proposed=proposed, shared_memory=bool(notes) and not remote)  # fmt: skip
 
-    def _run(self, task: str, lane: str, notes: list[str], profile: str) -> Run:
+    def _run(
+        self,
+        task: str,
+        lane: str,
+        notes: list[str],
+        profile: str,
+        orch: Orchestrator | None = None,
+        unfiltered: bool = False,
+    ) -> Run:
+        orch = orch or self.orch
         if notes:
             task += "\n\nNotes from the user (keep to these):\n" + "\n".join(
                 f"- {n}" for n in notes[:6]
@@ -545,9 +591,11 @@ class Chat:
         # Hybrid (AUTO): the router picks, checks and the judge review, and deep retries a
         # broken change right away. A model you picked by name answers alone: no retry.
         target, retry = (None, "now") if lane == AUTO else (lane, "off")
+        if unfiltered:  # the one model, by name: no router, no retry elsewhere
+            target, retry = "coder", "off"
         if self.background:
-            return self.orch.start_background(task, lane=target, by=profile, retry=retry)
-        return self.orch.start(task, lane=target, by=profile, retry=retry)
+            return orch.start_background(task, lane=target, by=profile, retry=retry)
+        return orch.start(task, lane=target, by=profile, retry=retry)
 
     @staticmethod
     def _run_line(run: Run) -> str:
@@ -556,10 +604,11 @@ class Chat:
 
     GLANCE_TOKENS = 1200
 
-    def repo_glance(self) -> str:
+    def repo_glance(self, orch: Orchestrator | None = None) -> str:
         """The repo map, clipped: the same text until the repo changes."""
+        orch = orch or self.orch
         try:
-            repo_map = load_or_build(self.orch.repo, self.orch.settings.home)
+            repo_map = load_or_build(orch.repo, orch.settings.home)
         except Exception:  # the map is a nicety; a voice turn must not fail on it
             return "(map unavailable)"
         return clip(repo_map.render(limit=160), self.GLANCE_TOKENS)
@@ -575,7 +624,9 @@ class Chat:
         notes: list[str],
         remote: bool,
         spoken: bool = False,
+        orch: Orchestrator | None = None,
     ) -> list[Message]:
+        orch = orch or self.orch
         system = ADVISOR_PROMPT if not (name == AUTO or cfg.writes_code) else CHAT_PROMPT
         parts = [system + (SPOKEN if spoken else "")]
         if not remote:
@@ -588,7 +639,7 @@ class Chat:
                 # reuses its cache and the first word comes sooner: no per-message recall or
                 # file picking, just a compact map of the repo. A run still gets full context.
                 if name == AUTO or cfg.writes_code:
-                    parts.append("The repo at a glance:\n" + self.repo_glance())
+                    parts.append("The repo at a glance:\n" + self.repo_glance(orch))
             else:
                 recalled = self.store.recall(profile, text, exclude=conv.id)
                 if recalled:
@@ -597,7 +648,7 @@ class Chat:
                     ))  # fmt: skip
             if (name == AUTO or cfg.writes_code) and not spoken:
                 context = build_coder_context(
-                    self.orch.repo, text, budget=self.CONTEXT, home=self.orch.settings.home
+                    orch.repo, text, budget=self.CONTEXT, home=orch.settings.home
                 )
                 parts.append("The repo, for this message:\n" + context)
         sys_text = "\n\n".join(parts)

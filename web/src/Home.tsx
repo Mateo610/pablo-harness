@@ -1,7 +1,8 @@
 // Home: the machine, your conversations, what needs you, what Pablo remembers, the repo.
-import { api, type Conversation, type Me, type Resources, type Run } from "./api";
+import { useState } from "react";
+import { api, type Conversation, type Me, type Project, type ProjectMode, type Resources, type Run } from "./api";
 import { laneColor, laneName } from "./components";
-import { ago, gb, go, kTokens, ModeSwitch, pct, STATE_COLOR, usePoll, useEvents } from "./hud";
+import { ago, gb, go, kTokens, ModeSwitch, pct, STATE_COLOR, usePoll, useEvents, useProject } from "./hud";
 
 export function Home({ me, res }: { me: Me | null; res: Resources | null }) {
   const [convs] = usePoll(api.conversations, 15000);
@@ -12,6 +13,8 @@ export function Home({ me, res }: { me: Me | null; res: Resources | null }) {
   const [repo] = usePoll(api.repo, 60000);
   const [jobs] = usePoll(api.queue, 30000);
   const [sched, reloadSched] = usePoll(api.gpu, 5000);
+  const [projects, reloadProjects] = usePoll(api.projects, 30000);
+  const [, setProject] = useProject();
   useEvents((e) => {
     if (["needs_you", "judged", "decided"].includes(e.kind)) reloadInbox();
   });
@@ -67,6 +70,13 @@ export function Home({ me, res }: { me: Me | null; res: Resources | null }) {
         <Vital label="CPU" device={res?.cpu_threads ? `${res.cpu_threads} threads` : "—"} value={res?.cpu_pct != null ? String(Math.round(res.cpu_pct)) : "—"} unit="%" width={`${Math.round(res?.cpu_pct ?? 0)}%`} color="var(--lane-router)" note="sandbox checks pinned to their own cores" />
         <Vital label="RAM" device={res?.ram_total_mb ? `${Math.round(res.ram_total_mb / 1024)} GB` : "—"} value={res ? gb(res.ram_used_mb) : "—"} unit={res ? `/ ${gb(res.ram_total_mb)} GB` : ""} width={res ? pct(res.ram_used_mb, res.ram_total_mb) : "0%"} color="var(--lane-advisor)" note="deep needs ~38 GB when it loads" />
       </section>
+
+      <Projects
+        projects={projects}
+        owner={Boolean(me?.can_approve)}
+        onOpen={(p) => (setProject(p.name), go("chat"))}
+        onMade={(p) => (reloadProjects(), setProject(p.name), go("chat"))}
+      />
 
       <div className="h-cols">
         <section className="h-col-main" aria-label="Conversations">
@@ -201,5 +211,76 @@ function NeedsRow({ run }: { run: Run }) {
         {run.certainty != null ? ` ${run.certainty.toFixed(2)}` : ""} · {run.question.slice(0, 70)}
       </span>
     </a>
+  );
+}
+
+function Projects({ projects, owner, onOpen, onMade }: { projects: Project[] | null; owner: boolean; onOpen: (p: Project) => void; onMade: (p: Project) => void }) {
+  const [making, setMaking] = useState(false);
+  const [title, setTitle] = useState("");
+  const [about, setAbout] = useState("");
+  const [mode, setMode] = useState<ProjectMode>("standard");
+  const [error, setError] = useState("");
+  const make = () =>
+    api
+      .createProject(title, about, mode)
+      .then((p) => (setMaking(false), setTitle(""), setAbout(""), setMode("standard"), setError(""), onMade(p)))
+      .catch((e: Error) => setError(e.message));
+  return (
+    <section aria-label="Projects" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+        <h2 className="h-cap">Projects</h2>
+        {owner && !making && (
+          <button className="h-btn" onClick={() => setMaking(true)}>
+            + NEW PROJECT
+          </button>
+        )}
+      </div>
+      {making && (
+        <div className="h-frame h-pad" style={{ gap: 10 }}>
+          <label className="h-cap" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            Name
+            <input className="h-input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Plant watcher" autoFocus />
+          </label>
+          <label className="h-cap" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            What it's about
+            <textarea className="h-input" rows={2} value={about} onChange={(e) => setAbout(e.target.value)} placeholder="Reads soil sensors and texts me when to water." />
+          </label>
+          <div className="h-seg" role="radiogroup" aria-label="Which models build it">
+            <button role="radio" aria-checked={mode === "standard"} aria-pressed={mode === "standard"} onClick={() => setMode("standard")}>
+              Standard · all models
+            </button>
+            <button role="radio" aria-checked={mode === "unfiltered"} aria-pressed={mode === "unfiltered"} onClick={() => setMode("unfiltered")}>
+              No guardrails · one model
+            </button>
+          </div>
+          <span className="h-dim" style={{ fontSize: 12 }}>
+            {mode === "unfiltered"
+              ? "The no-guardrails model talks, plans, writes and reviews everything here. Best, Hybrid and Claude are never used. Fixed once made."
+              : "Base, Best and Hybrid build it; Claude only if you escalate. Fixed once made."}
+          </span>
+          {error && <span style={{ color: "var(--status-fail)", fontSize: 13 }}>{error}</span>}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="h-btn solid" disabled={!title.trim()} onClick={make}>
+              START IT
+            </button>
+            <button className="h-btn" onClick={() => setMaking(false)}>
+              CANCEL
+            </button>
+          </div>
+        </div>
+      )}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
+        {(projects ?? []).map((p) => (
+          <button key={p.name} className="h-frame h-pad" style={{ textAlign: "left", cursor: "pointer", gap: 6 }} onClick={() => onOpen(p)}>
+            <span style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+              <span style={{ fontSize: 15, fontWeight: 600 }}>{p.title}</span>
+              {p.default && <span className="h-chip" style={{ color: "var(--sys)" }}>main</span>}
+              {p.mode === "unfiltered" && <span className="h-chip" style={{ color: "var(--lane-advisor)" }}>no guardrails</span>}
+            </span>
+            <span className="h-dim" style={{ fontSize: 12.5, lineHeight: 1.5 }}>{p.about || p.path}</span>
+          </button>
+        ))}
+      </div>
+    </section>
   );
 }

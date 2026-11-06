@@ -31,6 +31,7 @@ from pablo.overnight import (
     now_local,
 )
 from pablo.plan import Plan, Status
+from pablo.projects import Workspace
 from pablo.resources import snapshot
 from pablo.swap import read_running
 from pablo.voice import (
@@ -48,6 +49,13 @@ class TaskIn(BaseModel):
     task: str
     lane: str | None = None
     task_id: str | None = None
+    project: str = ""
+
+
+class ProjectIn(BaseModel):
+    title: str
+    about: str = ""
+    mode: Literal["standard", "unfiltered"] = "standard"
 
 
 class StatusIn(BaseModel):
@@ -74,6 +82,7 @@ class JobIn(BaseModel):
 class ConversationIn(BaseModel):
     title: str = ""
     lane: str = AUTO
+    project: str = ""
 
 
 class RenameIn(BaseModel):
@@ -136,6 +145,7 @@ def create_app(
     orch: Orchestrator,
     access: Access | None = None,
     voice_engines: tuple[Transcriber, Speaker] | None = None,
+    workspace: Workspace | None = None,
 ) -> FastAPI:
     app = FastAPI(title="Pablo harness", version=__version__)
     queue = JobQueue(orch.settings.home)
@@ -151,7 +161,9 @@ def create_app(
     repo: Path = orch.repo
     gate = access or Access(orch.settings.home)
     app.state.access = gate
-    chat = Chat(orch, background=True)
+    ws = workspace or Workspace(orch)
+    app.state.workspace = ws
+    chat = Chat(orch, background=True, workspace=ws)
     store = chat.store
 
     @app.middleware("http")
@@ -215,8 +227,9 @@ def create_app(
         if body.lane == "claude" and not caller.is_owner:
             raise HTTPException(403, "Only the owner can send work to Claude.")
         try:
+            target = ws.orch(body.project)
             run = await run_in_threadpool(
-                orch.start, body.task, lane=body.lane, task_id=body.task_id, by=caller.profile
+                target.start, body.task, lane=body.lane, task_id=body.task_id, by=caller.profile
             )
         except PermissionError as exc:
             raise HTTPException(403, str(exc)) from exc
@@ -240,7 +253,7 @@ def create_app(
         except VoiceOff as exc:
             raise HTTPException(503, str(exc)) from exc
 
-    async def _hear(request: Request) -> str:
+    async def _hear(request: Request, where: Path | None = None) -> str:
         audio = await request.body()
         if not audio:
             raise HTTPException(400, "no audio in the request")
@@ -248,7 +261,7 @@ def create_app(
             raise HTTPException(413, "that recording is too long")
         stt, _ = _voice()
         mime = request.headers.get("content-type", "audio/wav")
-        hint = await run_in_threadpool(vocabulary, repo, orch.settings.home)
+        hint = await run_in_threadpool(vocabulary, where or repo, orch.settings.home)
         try:
             return str(await run_in_threadpool(stt.transcribe, audio, mime, hint))
         except Exception as exc:  # the engine is a separate process; say what broke
@@ -283,7 +296,7 @@ def create_app(
 
     @app.post("/api/voice/turn", response_model=None)
     async def voice_turn(
-        request: Request, lane: str = "coder", conversation: str = ""
+        request: Request, lane: str = "coder", conversation: str = "", project: str = ""
     ) -> StreamingResponse:
         """One turn of a voice call: audio in; NDJSON out.
 
@@ -304,8 +317,11 @@ def create_app(
         if conversation:
             conv = _found(store.conversation, conversation, who)
         else:
-            conv = chat.start(who, lane=lane)
-        text = await _hear(request)
+            try:
+                conv = chat.start(who, lane=lane, project=project)
+            except KeyError as exc:
+                raise HTTPException(404, str(exc).strip("'\"")) from exc
+        text = await _hear(request, chat.orch_for(conv).repo)
         _, tts = _voice()
         voice_name = orch.settings.voice.voices.get(lane, "")
         mime = "audio/mpeg" if orch.settings.voice.tts_format == "mp3" else "audio/wav"
@@ -426,7 +442,7 @@ def create_app(
 
     def _decide(fn_name: str, run_id: str) -> dict[str, Any]:
         try:
-            return dict(getattr(orch, fn_name)(run_id).to_dict())
+            return dict(getattr(ws.for_run(run_id), fn_name)(run_id).to_dict())
         except KeyError as exc:
             raise HTTPException(404, f"no run {run_id}") from exc
         except (ValueError, RuntimeError) as exc:
@@ -441,7 +457,7 @@ def create_app(
 
         def go() -> dict[str, Any]:
             try:
-                return orch.approve(run_id, body.hunks, force=body.force).to_dict()
+                return ws.for_run(run_id).approve(run_id, body.hunks, force=body.force).to_dict()
             except KeyError as exc:
                 raise HTTPException(404, f"no run {run_id}") from exc
             except PartialChecksFailed as exc:
@@ -569,7 +585,7 @@ def create_app(
         if body.lane == "claude":
             owner_only(request)
         try:
-            return chat.start(profile_of(request), body.title, body.lane).__dict__
+            return chat.start(profile_of(request), body.title, body.lane, body.project).__dict__
         except KeyError as exc:
             raise HTTPException(400, str(exc).strip("'")) from exc
 
@@ -579,6 +595,7 @@ def create_app(
         return {
             "conversation": conv.__dict__,
             "messages": [m.__dict__ for m in store.messages(cid)],
+            "unfiltered": chat.unfiltered(conv.project),
         }
 
     @app.patch("/api/conversations/{cid}")
@@ -668,10 +685,28 @@ def create_app(
         return orch.gpu.snapshot()
 
     @app.get("/api/repo")
-    def repo_info() -> dict[str, Any]:
+    def repo_info(project: str = "") -> dict[str, Any]:
         from pablo.stats import repo_status
 
-        return repo_status(repo)
+        try:
+            return repo_status(ws.orch(project).repo)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc).strip("'\"")) from exc
+
+    # ---- projects ---------------------------------------------------------------------------
+    @app.get("/api/projects")
+    def list_projects() -> list[dict[str, Any]]:
+        return [p.to_dict() for p in ws.projects()]
+
+    @app.post("/api/projects")
+    def create_project(body: ProjectIn, request: Request) -> dict[str, Any]:
+        owner_only(request)  # a new folder on Pablo's disk
+        try:
+            return ws.create(body.title, body.about, body.mode).to_dict()
+        except FileExistsError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except (ValueError, RuntimeError) as exc:
+            raise HTTPException(400, str(exc)) from exc
 
     @app.get("/api/stats")
     def stats(days: int = 1) -> dict[str, Any]:

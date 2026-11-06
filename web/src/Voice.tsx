@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, type Me, type VoiceEvent, type VoiceStatus } from "./api";
 import { audioContext, Player, record, releaseMicrophone, rms, type Recorder } from "./audio";
-import { ago, RunCard, usePoll } from "./hud";
+import { ago, pickProject, ProjectPicker, RunCard, usePoll, useProject } from "./hud";
 import { Markdown } from "./Markdown";
 
 const WHO = {
@@ -34,6 +34,9 @@ export function Voice({ me }: { me: Me | null }) {
   const [error, setError] = useState("");
   const [status] = usePoll(api.voiceStatus, 30000);
   const [gpu] = usePoll(api.gpu, 10000);
+  const [projects] = usePoll(api.projects, 60000);
+  const [chosen, setChosen] = useProject();
+  const project = pickProject(projects, chosen);
   const paused = gpu?.mode === "deep";
   const spokes = useRef<(HTMLElement | null)[]>([]);
   const rec = useRef<Recorder | null>(null);
@@ -113,7 +116,7 @@ export function Voice({ me }: { me: Me | null }) {
         }
       };
       try {
-        await api.voiceTurn(wav, who, conv, onEvent, control.signal);
+        await api.voiceTurn(wav, who, conv, onEvent, control.signal, project?.name ?? "");
       } catch (e) {
         if ((e as Error).name !== "AbortError") setError((e as ApiError).message);
         setLines((l) => (l.length && l[l.length - 1].role === "assistant" && !l[l.length - 1].text ? l.slice(0, -1) : l));
@@ -233,6 +236,11 @@ export function Voice({ me }: { me: Me | null }) {
       <section className="h-page" style={{ flex: 999, minWidth: 0 }}>
         <header className="h-head">
           <h1 className="h-title">VOICE</h1>
+          {conv ? (
+            <span className="h-chip" style={{ color: "var(--sys)" }}>{project?.title}</span>
+          ) : (
+            <ProjectPicker projects={projects} value={chosen} onChange={setChosen} />
+          )}
           {conv && (
             <a className="h-mono" style={{ fontSize: 12, color: "var(--sys)" }} href={`#/chat/${conv}`}>
               open as chat

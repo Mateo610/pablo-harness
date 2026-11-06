@@ -10,6 +10,9 @@ gateway:
 thresholds:
   judge_needs_you: 0.75   # below this certainty, the item lands in "Needs you"
 
+projects:                 # every git repo in root is a project; new ones are made here
+  root: ~/projects
+
 gpu:                      # one GPU, many people (src/pablo/gpu.py)
   mode: balanced          # interactive · balanced · deep; the switch on Home overrides it
   idle_s: 120             # balanced: retries and night work wait this long after live activity

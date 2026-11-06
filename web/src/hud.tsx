@@ -1,6 +1,6 @@
 // Shared bits for cockpit v2: routing, polling, the event bus, run cards, small formatters.
 import { useEffect, useRef, useState } from "react";
-import { api, ApiError, subscribe, type GpuLease, type GpuMode, type GpuState, type HarnessEvent, type Me, type Run } from "./api";
+import { api, ApiError, subscribe, type GpuLease, type GpuMode, type GpuState, type HarnessEvent, type Me, type Project, type Run } from "./api";
 import { DiffView, laneColor, stateLabel, laneName } from "./components";
 
 export type Route = { page: string; id: string };
@@ -23,6 +23,57 @@ export function useRoute(): Route {
 export const go = (page: string, id = "") => {
   window.location.hash = id ? `#/${page}/${id}` : `#/${page}`;
 };
+
+/** The project new conversations and voice calls start in. Per browser; "" is the default. */
+const PROJECT_KEY = "pablo.project";
+const projectListeners = new Set<(p: string) => void>();
+function readProject(): string {
+  try {
+    return localStorage.getItem(PROJECT_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+export function useProject(): [string, (p: string) => void] {
+  const [project, set] = useState(readProject);
+  useEffect(() => {
+    projectListeners.add(set);
+    return () => void projectListeners.delete(set);
+  }, []);
+  const choose = (p: string) => {
+    try {
+      localStorage.setItem(PROJECT_KEY, p);
+    } catch {
+      /* private window: it just isn't remembered */
+    }
+    projectListeners.forEach((l) => l(p));
+  };
+  return [project, choose];
+}
+
+/** Which project to show: the chosen one if it still exists, else the default. */
+export function pickProject(projects: Project[] | null, chosen: string): Project | null {
+  if (!projects?.length) return null;
+  return projects.find((p) => p.name === chosen) ?? projects.find((p) => p.default) ?? projects[0];
+}
+
+export function ProjectPicker({ projects, value, onChange }: { projects: Project[] | null; value: string; onChange: (p: string) => void }) {
+  const current = pickProject(projects, value);
+  if (!projects || projects.length < 2) return current ? <span className="h-chip" style={{ color: "var(--sys)" }}>{current.title}</span> : null;
+  return (
+    <label className="h-mono h-dim" style={{ fontSize: 12, display: "inline-flex", gap: 6, alignItems: "center" }}>
+      project
+      <select className="h-input" style={{ padding: "4px 8px", width: "auto" }} value={current?.name ?? ""} onChange={(e) => onChange(e.target.value)}>
+        {projects.map((p) => (
+          <option key={p.name} value={p.name}>
+            {p.title}
+            {p.mode === "unfiltered" ? " · no guardrails" : ""}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
 
 /** Calls `load` now and every `ms`; keeps the last good value. */
 export function usePoll<T>(load: () => Promise<T>, ms: number, deps: unknown[] = []): [T | null, () => void] {
