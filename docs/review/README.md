@@ -29,7 +29,7 @@ Tags: **[measured]** a number says so · **[observed]** seen in use, not counted
 | [Context](context.md) | measured, mixed | the coder sees ~10.5k tokens; the repo map didn't beat the spread | measure what the misses were missing |
 | [Editing](editing.md) | strong | fix-on-red never cleared the noise floor | per-task view of what fix rounds change |
 | [Verification](verification.md) | strong core, blind spot | checks pass when the coder writes a test that agrees with its own bug | spec checks with assertion-only failures, measured off-suite |
-| [Judge](judge.md) | measured | 2 tasks no judge has ever caught; one clean Qwen run so far | tonight's clean baseline |
+| [Judge](judge.md) | measured | Qwen judge no better than the heretic on the suite; 2 tasks no judge catches | replay both judges on the 45 new diffs |
 | [Routing and Hybrid](routing.md) | measured | the cascade's quality comes from deep, and deep is slow | learned routing on real outcomes |
 | [Learning](learning.md) | built, unmeasured | LoRA window of 256 tokens can't hold a real example | measure lessons (examples, failures) on the suite |
 | [GPU](gpu.md) | built, lightly tested | no latency numbers under contention; voice wake cost unknown | the evening checklist, then timings |

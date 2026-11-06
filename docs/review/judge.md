@@ -15,6 +15,11 @@ tests, ignoring a stated constraint). Swapping from the coder costs ~7.6 s; a ju
   coder alone, 5–9 for the cascade with the old judge, and 4 in the one clean Qwen run (one run,
   not three).
 - **[measured]** No judge has caught `harness-memory-units` or `textkit-reading-time`.
+- **[measured]** Clean Qwen cascade (`2e20e05`): 34, 29, 33 of 36 (96/108), false ready 8, judge
+  said "needs you" on 7 changes that were right, mean wall 2943 s. Heretic cascade (`5fe0997`,
+  `84a7349`): 33, 32, 34 (99/108), false ready 5, 3 right changes held back, 2586 s. Task by task,
+  8 tasks differ by one run each, 5 favoring the heretic and 3 the Qwen judge: noise. Leaving out
+  the two tasks no judge catches, false ready is 2 vs 3.
 
 ## Weaknesses
 
@@ -22,7 +27,9 @@ tests, ignoring a stated constraint). Swapping from the coder costs ~7.6 s; a ju
   change that's wrong), and it's still 1–3 per run.
 - **[suspected]** The judge sees the coder's own tests passing and believes them: it shares the
   coder's blind spot (see verification.md).
-- **[gap]** Only one clean run with the Qwen judge. Tonight's run is its real baseline.
+- **[measured]** On the suite the Qwen judge is not better than the heretic, and it may be more
+  cautious (7 vs 3 right changes held back) and a little slower. The replay bake-off (same 143
+  diffs, both judges) said the opposite. 45 new replay diffs from `2e20e05` can settle it.
 - **[suspected]** One threshold for every task type. A refactor and a new feature probably
   deserve different bars.
 
