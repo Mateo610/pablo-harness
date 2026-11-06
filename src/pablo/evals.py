@@ -365,6 +365,7 @@ def run_suite(
     infra_wait_s: float = 30.0,
     pause: Callable[[float], None] = time.sleep,
     think: bool = False,
+    unfiltered: bool = False,
 ) -> SuiteReport:
     """Run `lane` on every task (or `only` those ids) and score each against its hidden test.
 
@@ -380,6 +381,12 @@ def run_suite(
         work = Path(tmp)
         # A throwaway home: eval runs and their traces disappear with this directory.
         isolated = settings.model_copy(update={"home": work / "home"}, deep=True)
+        if unfiltered:
+            # An unfiltered project's setup: the no-guardrails model writes and judges, alone.
+            from pablo.projects import unfiltered_settings
+
+            isolated = unfiltered_settings(isolated)
+            lane, cascade = "coder", False
         # The GPU is real: queue with every other Pablo process through the real home's table.
         isolated.gpu.shared_dir = settings.gpu.shared_dir or str(settings.home)
         for cfg in isolated.lanes.values():
@@ -483,6 +490,8 @@ def run_suite(
     cfg = settings.lane(lane)
     thinks = think and cfg.thinking is not None
     name = f"{lane}→{cfg.retry_on}" if cascade and cfg.retry_on else lane
+    if unfiltered:
+        name, cfg = "unfiltered", settings.lane("advisor")
     return SuiteReport(
         lane=f"{name} (thinking)" if thinks else name,
         model=cfg.thinking.model if thinks and cfg.thinking else cfg.model,

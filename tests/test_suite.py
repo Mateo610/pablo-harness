@@ -308,3 +308,18 @@ def test_claude_is_scored_only_by_hand_and_as_an_escalation(settings: Settings) 
 
     refused = CliRunner().invoke(app, ["eval", "--lane", "claude", "--fake"])
     assert refused.exit_code == 2  # a usage error: the message asks for --allow-remote
+
+
+def test_an_unfiltered_eval_runs_on_the_advisor_alone(settings: Settings) -> None:
+    perfect = _coder(cheat=False).scripts["pablo/coder"]
+    judge = json.dumps({"certainty": 0.9, "summary": "ok", "question": ""})
+
+    def advisor(model: str, msgs: Sequence[Message]) -> str:
+        return judge if "review changes" in msgs[0]["content"] else perfect(model, msgs)
+
+    backend = FakeBackend(scripts={"pablo/advisor": advisor})
+    report = run_suite(settings, backend, only={"ledger-by-payee-sums"}, python=PY,
+                       sandbox=LocalSandbox(), cascade=True, unfiltered=True)  # fmt: skip
+    assert report.lane == "unfiltered" and report.model == "pablo/advisor"
+    assert report.results[0].hidden_passed
+    assert {m for m, _ in backend.calls} == {"pablo/advisor"}  # no coder, judge or deep

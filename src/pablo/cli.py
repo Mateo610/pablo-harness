@@ -668,6 +668,12 @@ def eval_suite(
     think: Annotated[
         bool, typer.Option(help="Extended thinking: the lane's thinking variant writes each change")
     ] = False,
+    unfiltered: Annotated[
+        bool,
+        typer.Option(
+            help="Score an unfiltered project's setup: the advisor model writes and judges"
+        ),
+    ] = False,
 ) -> None:
     """Score a lane on the coder suite against hidden tests (evals/suite or evals/holdout)."""
     from contextlib import nullcontext
@@ -708,9 +714,14 @@ def eval_suite(
 
     with hold:
         if not fake:
-            _eval_preflight(settings, backend, gpu, lane, cascade)
+            if unfiltered:
+                from pablo.projects import unfiltered_settings
+
+                _eval_preflight(unfiltered_settings(settings), backend, gpu, "coder", False)
+            else:
+                _eval_preflight(settings, backend, gpu, lane, cascade)
         reports, stopped = _eval_runs(settings, backend, lane, only, repeat, cascade, spec, learn,
-                             lessons, fake, write, show, sealed, think)  # fmt: skip
+                             lessons, fake, write, show, sealed, think, unfiltered)  # fmt: skip
     if reports and sealed:
         _sealed_report(reports, write, fake)
     elif reports:
@@ -758,6 +769,7 @@ def _eval_runs(
     show: Any,
     sealed: bool = False,
     think: bool = False,
+    unfiltered: bool = False,
 ) -> tuple[list[Any], bool]:
     from pablo.evals import HOLDOUT, SUITE, InfraError, append_result, append_sealed, run_suite
     from pablo.judge_replay import append_cases
@@ -782,6 +794,7 @@ def _eval_runs(
                 lessons=lessons,
                 root=HOLDOUT if sealed else SUITE,
                 think=think,
+                unfiltered=unfiltered,
             )
         except InfraError as exc:
             console.print(f"[red]stopped: the box failed, not the model[/] {exc}")
