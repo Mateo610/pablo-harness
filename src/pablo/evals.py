@@ -364,6 +364,7 @@ def run_suite(
     lessons: Path | None = None,
     infra_wait_s: float = 30.0,
     pause: Callable[[float], None] = time.sleep,
+    think: bool = False,
 ) -> SuiteReport:
     """Run `lane` on every task (or `only` those ids) and score each against its hidden test.
 
@@ -405,7 +406,7 @@ def run_suite(
         else:
 
             def start(o: Orchestrator, text: str) -> Any:
-                return o.start(text, lane=lane)
+                return o.start(text, lane=lane, think=think)
 
         for task in load_suite(root):
             if only and task.id not in only:
@@ -479,11 +480,12 @@ def run_suite(
                 )
             if on_task:
                 on_task(result)
+    cfg = settings.lane(lane)
+    thinks = think and cfg.thinking is not None
+    name = f"{lane}→{cfg.retry_on}" if cascade and cfg.retry_on else lane
     return SuiteReport(
-        lane=f"{lane}→{settings.lane(lane).retry_on}"
-        if cascade and settings.lane(lane).retry_on
-        else lane,
-        model=settings.lane(lane).model,
+        lane=f"{name} (thinking)" if thinks else name,
+        model=cfg.thinking.model if thinks and cfg.thinking else cfg.model,
         results=results,
         commit=commit,
         replay=replay,

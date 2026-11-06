@@ -79,7 +79,15 @@ class Plans:
     # drafting -----------------------------------------------------------------------------
 
     def draft(
-        self, project: str, goal: str, steps: list[str], *, lane: str, by: str, conversation: str
+        self,
+        project: str,
+        goal: str,
+        steps: list[str],
+        *,
+        lane: str,
+        by: str,
+        conversation: str,
+        think: bool = False,
     ) -> Plan:
         """Replace the project's plan with a new draft. Steps already done are history: a new
         draft only replaces a plan that is a draft, paused, or done."""
@@ -101,6 +109,7 @@ class Plans:
                 lane=lane,
                 by=by,
                 conversation=conversation,
+                think=think,
             )
             self._save(name, plan)
             return plan
@@ -174,7 +183,7 @@ class Plans:
             target, retry = "coder", "off"
         try:
             run = orch.start(task, lane=target, task_id=step_id, by=plan.by if plan else "",
-                             retry=retry)  # fmt: skip
+                             retry=retry, think=bool(plan and plan.think))  # fmt: skip
         except Exception:
             self._mark(project, step_id, "blocked", None, pause=True)
             return

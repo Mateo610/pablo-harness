@@ -13,6 +13,16 @@ from pydantic import BaseModel, Field, model_validator
 ESCALATION_LANE = "claude"
 
 
+class Thinking(BaseModel):
+    """Extended thinking for a lane: the same weights served with reasoning on."""
+
+    model: str  # gateway alias of the thinking variant, e.g. pablo/coder-think
+    # Thinking spends tokens before the answer, and they share the window with the prompt.
+    max_tokens: int = 12_000
+    context_tokens: int = 8_000
+    timeout_s: float = 1800.0
+
+
 class Lane(BaseModel):
     name: str = ""
     role: str
@@ -34,6 +44,7 @@ class Lane(BaseModel):
     # Prompt budget in tokens. The coder's 16k window leaves ~10.5k for context;
     # a lane with a bigger window (deep: 64k) gets more of the repo.
     context_tokens: int = 10_500
+    thinking: Thinking | None = None  # the chat's "Extended thinking" switch uses this
     # Whether the router may send work here on its own. False keeps a lane available
     # by hand (--lane, compare, the overnight queue) but out of automatic routing.
     routable: bool = True

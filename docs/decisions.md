@@ -158,4 +158,4 @@ replacement is re-indented). A SEARCH that is missing or matches twice gets one 
 the exact error and the closest lines in the file; if that fails the run lands in "Needs you".
 Diff replies are still accepted in either mode, and `edit_format: diff` restores the old prompt.
 The M4 soak reran those three sandbox tasks 20 times: 0 needed a repair pass, and all 20 were ready.
-
+| 2026-11-06 | The judge stays at reasoning off (Matt). Chat gets an "Extended thinking" switch, for Base and Hybrid only: the reply, the change it starts and every step of a plan it drafts use the coder's thinking variant (`coder.thinking` → `pablo/coder-think`, same weights with `--reasoning on`, more output room, a smaller prompt budget to share the 16k window). Runs record `think`; the run card says "extended thinking". Never on voice, never in unfiltered projects, not for Best (it already reasons). `pablo eval --think` measures it | On replay, thinking made the Qwen judge stricter (false ready 12 → 7) but ~15× slower, too slow for every change. As a switch you flip for a hard question or change, the cost is yours to choose. |

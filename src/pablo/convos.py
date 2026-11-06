@@ -539,14 +539,22 @@ class Chat:
         confirm: bool = False,
         on_delta: Delta | None = None,
         spoken: bool = False,
+        think: bool = False,
     ) -> Turn:
         """`do`: True starts a run with your words as the task, False only talks, None lets
-        the model decide (a RUN line). `confirm` is required for a remote lane, every time."""
+        the model decide (a RUN line). `confirm` is required for a remote lane, every time.
+        `think`: extended thinking, for Base and Hybrid in chat: the reply, the runs and the
+        plan it starts use the coder's thinking variant. Never spoken (it's slow)."""
         conv = self.store.conversation(cid, profile)
         orch = self.orch_for(conv)
         unfiltered = self.unfiltered(conv.project)
         name = AUTO if unfiltered else (lane or conv.lane)
         cfg = self._lane(name, orch)
+        think = think and not spoken and not unfiltered and cfg.thinking is not None
+        if think and cfg.thinking is not None:
+            t = cfg.thinking
+            cfg = cfg.model_copy(update={"model": t.model, "max_tokens": t.max_tokens,
+                                         "timeout_s": t.timeout_s})  # fmt: skip
         remote = cfg.kind == "remote" or cfg.requires_approval
         if remote and not confirm:
             raise PermissionError(f"'{name}' leaves Pablo: confirm this send first")
@@ -573,7 +581,7 @@ class Chat:
             profile, conv.project, "" if spoken else text
         )  # fmt: skip
         if do:
-            run = self._run(text, name, notes, profile, orch, unfiltered)
+            run = self._run(text, name, notes, profile, orch, unfiltered, think)
             body = self._run_line(run)
             reply = self.store.add_message(cid, "assistant", body, lane=name, run_id=run.id)
             return Turn(conv, user, reply, run=run.to_dict(), shared_memory=bool(notes))
@@ -584,7 +592,8 @@ class Chat:
         sampling: dict[str, Any] = {
             "temperature": cfg.temperature,
             "top_p": cfg.top_p,
-            "max_tokens": min(cfg.max_tokens, self.CHAT_MAX_TOKENS),
+            # Thinking spends its tokens before the reply starts: give it the variant's room.
+            "max_tokens": cfg.max_tokens if think else min(cfg.max_tokens, self.CHAT_MAX_TOKENS),
             "timeout_s": cfg.timeout_s,
         }
         with gpu_job(Priority.VOICE if spoken else Priority.CHAT, profile):
@@ -605,7 +614,7 @@ class Chat:
         plan_obj: Plan | None = None
         decided: Run | None = None
         if can_run and do is not False:
-            plan_obj = self._planning(conv, name, profile, answer, extra)
+            plan_obj = self._planning(conv, name, profile, answer, extra, think)
             if plan_obj is not None:
                 task = ""  # a plan takes the place of a single run
             if _APPLY.search(answer) and _SAYS_APPLY.search(text):
@@ -616,7 +625,7 @@ class Chat:
                 plan_obj = self._build(conv, profile, extra) or plan_obj
         run_obj = None
         if task and do is not False:
-            run_obj = self._run(task, name, notes, profile, orch, unfiltered)
+            run_obj = self._run(task, name, notes, profile, orch, unfiltered, think)
             extra.append(self._run_line(run_obj))
         visible = "\n\n".join(x for x in [visible, *extra] if x).strip()
         reply = self.store.add_message(
@@ -631,7 +640,13 @@ class Chat:
     # plan mode and spoken approvals ------------------------------------------------------
 
     def _planning(
-        self, conv: Conversation, lane: str, profile: str, answer: str, out: list[str]
+        self,
+        conv: Conversation,
+        lane: str,
+        profile: str,
+        answer: str,
+        out: list[str],
+        think: bool = False,
     ) -> Plan | None:
         steps = [m.group(1) for m in _STEP.finditer(answer)]
         if not steps or self.plans is None:
@@ -639,7 +654,7 @@ class Chat:
         goal = next((m.group(1) for m in _PLAN.finditer(answer)), "")
         try:
             plan = self.plans.draft(conv.project, goal, steps, lane=lane, by=profile,
-                                    conversation=conv.id)  # fmt: skip
+                                    conversation=conv.id, think=think)  # fmt: skip
         except (PlanBusy, ValueError) as exc:
             out.append(f"(The plan wasn't changed: {exc}.)")
             return None
@@ -740,6 +755,7 @@ class Chat:
         profile: str,
         orch: Orchestrator | None = None,
         unfiltered: bool = False,
+        think: bool = False,
     ) -> Run:
         orch = orch or self.orch
         if notes:
@@ -752,8 +768,8 @@ class Chat:
         if unfiltered:  # the one model, by name: no router, no retry elsewhere
             target, retry = "coder", "off"
         if self.background:
-            return orch.start_background(task, lane=target, by=profile, retry=retry)
-        return orch.start(task, lane=target, by=profile, retry=retry)
+            return orch.start_background(task, lane=target, by=profile, retry=retry, think=think)
+        return orch.start(task, lane=target, by=profile, retry=retry, think=think)
 
     @staticmethod
     def _run_line(run: Run) -> str:

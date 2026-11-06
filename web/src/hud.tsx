@@ -182,6 +182,7 @@ export function RunCard({ id, me, initial }: { id: string; me: Me | null; initia
         </span>
         <span className="h-mono" style={{ fontSize: 12, color: laneColor(run.lane) }}>
           {laneName(run.lane)}
+          {run.think ? " · extended thinking" : ""}
         </span>
         {run.retried_from && <span className="h-mono h-faint" style={{ fontSize: 12 }}>retry of {run.retried_from}</span>}
         <span className="h-mono h-dim h-diffstat" style={{ marginLeft: "auto", fontSize: 12 }}>

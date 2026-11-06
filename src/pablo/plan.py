@@ -52,6 +52,7 @@ class Plan(BaseModel):
     lane: str = "auto"  # which model builds it: "auto" is Hybrid
     by: str = ""  # who started it
     conversation: str = ""  # where it was planned, so progress can be reported there
+    think: bool = False  # extended thinking: each step's coder thinks first
 
     @classmethod
     def load(cls, root: Path) -> Plan:

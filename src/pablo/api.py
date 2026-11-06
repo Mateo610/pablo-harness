@@ -103,6 +103,7 @@ class SayIn(BaseModel):
     do: bool | None = None  # True: run it · False: just talk · None: the model decides
     confirm: bool = False  # required for a lane that leaves Pablo (Claude), every send
     stream: bool = False  # reply as NDJSON: {"type": "delta"} pieces, then "done" or "error"
+    think: bool = False  # extended thinking (Base and Hybrid only; slower, more careful)
 
 
 class ModeIn(BaseModel):
@@ -678,7 +679,7 @@ def create_app(
         if lane == "claude":
             owner_only(request)
         kw: dict[str, Any] = {"profile": who, "lane": body.lane, "do": body.do,
-                              "confirm": body.confirm}  # fmt: skip
+                              "confirm": body.confirm, "think": body.think}  # fmt: skip
         if not body.stream:
             try:
                 turn = await run_in_threadpool(chat.say, cid, body.text, **kw)

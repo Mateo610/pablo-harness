@@ -51,6 +51,23 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
   const [streamed, setStreamed] = useState("");
   const [status, setStatus] = useState("");
   const [lane, setLane] = useState(advisor ? "advisor" : "auto");
+  // Extended thinking: Base and Hybrid only, remembered per browser. Slower, more careful.
+  const [thinkOn, setThinkOn] = useState(() => {
+    try {
+      return localStorage.getItem("pablo.think") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleThink = () =>
+    setThinkOn((on) => {
+      try {
+        localStorage.setItem("pablo.think", on ? "0" : "1");
+      } catch {
+        /* not remembered in a private window */
+      }
+      return !on;
+    });
   const [act, setAct] = useState<Act>("auto");
   const [menu, setMenu] = useState(false);
   const [confirm, setConfirm] = useState<string | null>(null);
@@ -70,6 +87,7 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
   // An open conversation keeps its own project; a new one starts in the chosen project.
   const unfiltered = conv ? convUnfiltered : startIn?.mode === "unfiltered";
   const projectName = conv ? conv.project : startIn?.name ?? "";
+  const canThink = !advisor && !unfiltered && (lane === "coder" || lane === "auto") && Boolean(lanes.find((l) => l.name === "coder")?.thinking);
   const options = useMemo(() => {
     if (!unfiltered) return modelOptions(lanes, me);
     const raw = lanes.find((l) => l.name === "advisor");
@@ -130,7 +148,7 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
         go(advisor ? "advisor" : "chat", cid);
       }
       const doIt = advisor || lane === "claude" ? null : act === "do" ? true : act === "talk" ? false : null;
-      const turn = await api.sayStream(cid, text, { lane, do: doIt, confirm: confirmed }, (piece) =>
+      const turn = await api.sayStream(cid, text, { lane, do: doIt, confirm: confirmed, think: canThink && thinkOn }, (piece) =>
         setStreamed((s) => s + piece),
       );
       setConv(turn.conversation);
@@ -286,7 +304,7 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
                       <span className="h-caret" aria-hidden="true" />
                     </div>
                   ) : (
-                    <span className="h-thinking">{status || (lane === "deep" ? `${laneName("deep")} is thinking (this takes a while)…` : "thinking…")}</span>
+                    <span className="h-thinking">{status || (lane === "deep" ? `${laneName("deep")} is thinking (this takes a while)…` : canThink && thinkOn ? "thinking it through (extended)…" : "thinking…")}</span>
                   )}
                 </div>
               </div>
@@ -369,6 +387,17 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
                     </div>
                   )}
                 </div>
+              )}
+              {canThink && (
+                <button
+                  className="h-btn"
+                  aria-pressed={thinkOn}
+                  onClick={toggleThink}
+                  title="The base model thinks before it answers and before it writes code. Slower: often a minute or more."
+                  style={thinkOn ? { color: "var(--sys)", borderColor: "var(--sys-line)" } : undefined}
+                >
+                  {thinkOn ? "● " : "○ "}EXTENDED THINKING
+                </button>
               )}
               {!advisor && lane !== "claude" && (
                 <div className="h-seg" role="group" aria-label="What to do">

@@ -53,6 +53,13 @@ model_list:
       api_base: http://127.0.0.1:8100/v1
       api_key: "none"
 
+  # The coder with reasoning on: the chat's "Extended thinking" switch.
+  - model_name: pablo/coder-think
+    litellm_params:
+      model: openai/coder-think
+      api_base: http://127.0.0.1:8100/v1
+      api_key: "none"
+
   # The same judge with reasoning on, for the replay comparison only (not a lane).
   - model_name: pablo/judge-qwen-think
     litellm_params:

@@ -38,6 +38,14 @@ models:
       /home/mateo610/Desktop/pablo-harness/pablo-harness-main/scripts/llama-coder.sh
       ${PORT}
 
+  # The coder with reasoning on: the chat's "Extended thinking" switch (lanes.yaml coder.thinking).
+  coder-think:
+    ttl: 0
+    proxy: http://127.0.0.1:${PORT}
+    cmd: >
+      /home/mateo610/Desktop/pablo-harness/pablo-harness-main/scripts/llama-coder.sh
+      ${PORT} --reasoning on --alias coder-think
+
   coder-candidate:
     ttl: 0
     proxy: http://127.0.0.1:${PORT}
@@ -131,6 +139,7 @@ routing:
           exclusive: false
           members:
             - coder
+            - coder-think
             - coder-candidate
             - judge
             - advisor

@@ -162,6 +162,7 @@ class Run:
     # "" (no round) · kept · no edit blocks · didn't apply · not better
     fix_outcome: str = ""
     project: str = ""  # the project (repo folder name) the run changes
+    think: bool = False  # extended thinking: the lane's thinking variant writes it
     # How a Needs-you run retries: "" the lane's config, "now" (Hybrid: deep tries it right
     # away, at your urgency), "off" (you picked one model: it answers alone).
     retry: str = ""
@@ -379,20 +380,27 @@ class Orchestrator:
         retried_from: str | None = None,
         by: str = "",
         retry: str = "",
+        think: bool = False,
     ) -> Run:
         return self.finish(
             self.begin(
                 task, lane=lane, task_id=task_id, escalate=escalate,
                 escalated_from=escalated_from, group=group, retried_from=retried_from, by=by,
-                retry=retry,
+                retry=retry, think=think,
             )
         )  # fmt: skip
 
     def start_background(
-        self, task: str, *, lane: str | None = None, by: str = "", retry: str = ""
+        self,
+        task: str,
+        *,
+        lane: str | None = None,
+        by: str = "",
+        retry: str = "",
+        think: bool = False,
     ) -> Run:
         """Route and save the run now; do the work on a thread. Events report its progress."""
-        run = self.begin(task, lane=lane, by=by, retry=retry)
+        run = self.begin(task, lane=lane, by=by, retry=retry, think=think)
         if self.retry_inline:  # tests and evals: no threads
             return self.finish(run)
         threading.Thread(target=self.finish, args=(run,), name=f"run-{run.id}", daemon=True).start()
@@ -410,6 +418,7 @@ class Orchestrator:
         retried_from: str | None = None,
         by: str = "",
         retry: str = "",
+        think: bool = False,
     ) -> Run:
         """Route the task and save the run as running. `finish` does the work."""
         decision = self.router.route(task, lane=ESCALATION_LANE if escalate else lane)
@@ -432,11 +441,12 @@ class Orchestrator:
         if lane_cfg.requires_approval and not escalate:
             raise PermissionError(f"lane '{lane_cfg.name}' only runs when you escalate")
 
+        think = think and lane_cfg.thinking is not None  # lanes without a variant just answer
         run = Run(
             id=uuid.uuid4().hex[:10],
             task=task,
             lane=lane_cfg.name,
-            model=lane_cfg.model,
+            model=lane_cfg.thinking.model if think and lane_cfg.thinking else lane_cfg.model,
             route_reason=reason,
             complexity=decision.complexity,
             task_id=task_id,
@@ -446,6 +456,7 @@ class Orchestrator:
             by=by,
             project=self.repo.name,
             retry=retry,
+            think=think,
         )
         self._save(run)
         self._emit("route", run, reason=reason, confidence=decision.confidence)
@@ -641,6 +652,16 @@ class Orchestrator:
         run.explanation = strip_blocks(answer.text) or run.explanation
         return asked, answer, fixed
 
+    def lane_for(self, run: Run) -> Lane:
+        """The run's lane, as its thinking variant when the run asked for extended thinking."""
+        lane = self.settings.lane(run.lane)
+        if not run.think or lane.thinking is None:
+            return lane
+        t = lane.thinking
+        return lane.model_copy(update={"model": t.model, "max_tokens": t.max_tokens,
+                                       "context_tokens": t.context_tokens,
+                                       "timeout_s": t.timeout_s})  # fmt: skip
+
     def _complete(self, run: Run, lane: Lane, messages: list[Message]) -> Completion:
         return cast(
             Completion,
@@ -701,7 +722,7 @@ class Orchestrator:
         return follow, second
 
     def _work(self, run: Run) -> None:
-        lane = self.settings.lane(run.lane)
+        lane = self.lane_for(run)
         wants_diff = lane.writes_code or run.lane in ("coder", ESCALATION_LANE)
         blocks = lane.edit_format == "blocks"
         system = (CODER_BLOCKS_PROMPT if blocks else CODER_PROMPT) if wants_diff else ANSWER_PROMPT

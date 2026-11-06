@@ -8,6 +8,8 @@ export interface Lane {
   model: string;
   /** The model's own name, for menus and labels. */
   display?: string;
+  /** set when the lane has an "Extended thinking" variant */
+  thinking?: { model: string; max_tokens: number; context_tokens: number } | null;
   color: string;
   kind: "local" | "remote";
   train_ok: boolean;
@@ -64,6 +66,7 @@ export interface Run {
   group: string | null;
   /** This run retries that one on another local lane (coder → deep). */
   retried_from?: string | null;
+  think?: boolean;
   /** The retry started for this run, or the overnight job that will run it. */
   retry_run?: string | null;
   retry_job?: string | null;
@@ -392,13 +395,13 @@ export const api = {
   sayStream: async (
     id: string,
     text: string,
-    opts: { lane?: string; do?: boolean | null; confirm?: boolean },
+    opts: { lane?: string; do?: boolean | null; confirm?: boolean; think?: boolean },
     onDelta: (piece: string) => void,
   ): Promise<Turn> => {
     const res = await fetch(`/api/conversations/${id}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, lane: opts.lane ?? null, do: opts.do ?? null, confirm: opts.confirm ?? false, stream: true }),
+      body: JSON.stringify({ text, lane: opts.lane ?? null, do: opts.do ?? null, confirm: opts.confirm ?? false, think: opts.think ?? false, stream: true }),
     });
     if (!res.ok || !res.body) {
       const body = (await res.json().catch(() => ({}))) as { detail?: string };

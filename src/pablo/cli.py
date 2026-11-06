@@ -665,6 +665,9 @@ def eval_suite(
             "costs API calls. Nothing from your repos is sent."
         ),
     ] = False,
+    think: Annotated[
+        bool, typer.Option(help="Extended thinking: the lane's thinking variant writes each change")
+    ] = False,
 ) -> None:
     """Score a lane on the coder suite against hidden tests (evals/suite or evals/holdout)."""
     from contextlib import nullcontext
@@ -707,7 +710,7 @@ def eval_suite(
         if not fake:
             _eval_preflight(settings, backend, gpu, lane, cascade)
         reports, stopped = _eval_runs(settings, backend, lane, only, repeat, cascade, spec, learn,
-                             lessons, fake, write, show, sealed)  # fmt: skip
+                             lessons, fake, write, show, sealed, think)  # fmt: skip
     if reports and sealed:
         _sealed_report(reports, write, fake)
     elif reports:
@@ -754,6 +757,7 @@ def _eval_runs(
     write: bool,
     show: Any,
     sealed: bool = False,
+    think: bool = False,
 ) -> tuple[list[Any], bool]:
     from pablo.evals import HOLDOUT, SUITE, InfraError, append_result, append_sealed, run_suite
     from pablo.judge_replay import append_cases
@@ -777,6 +781,7 @@ def _eval_runs(
                 learn={x.strip() for x in learn.split(",") if x.strip()} or None,
                 lessons=lessons,
                 root=HOLDOUT if sealed else SUITE,
+                think=think,
             )
         except InfraError as exc:
             console.print(f"[red]stopped: the box failed, not the model[/] {exc}")
