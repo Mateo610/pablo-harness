@@ -29,17 +29,19 @@ flaky and never-passed tasks. `eval-judge` scores judges on replayed real diffs.
 - **[gap]** No held-out set. We look at failures of these same 36 tasks to decide what to try, so
   over time we risk tuning to them (rule 7 forbids prompts tuned on hidden tests, but choosing
   ideas from suite failures is a softer version of the same thing).
-- **[gap]** Nothing measures chat, plans or voice: whether the model writes a plan when it should,
-  how long the first spoken word takes, how often "apply it" lands on the right change.
+- **[measured]** Chat behavior at `2563ea6`: Hybrid typed 14/22, spoken 16/22 (tables in
+  conversation.md). First spoken word, and whether "apply it" lands, are still unmeasured.
 - **[observed]** A run takes 25–45 minutes (hours for Best alone), so one evening buys one
   comparison.
 
-## Built 2026-11-06, waiting for their first runs (M7e)
+## M7e · 2026-11-06
 
 - **[gap]** `pablo eval --set holdout`: 12 harder tasks (gradebook repo), totals only.
 - **[gap]** `pablo eval-build`: plan mode on 5 small tools, acceptance tests on the result.
-- **[gap]** `pablo eval-chat`: talk / run / plan on 22 labeled messages, typed and spoken.
-- **[gap]** `pablo eval --lane claude --allow-remote`: Claude on the main suite, for scale.
+- **[measured]** `pablo eval-chat` at `2563ea6`: typed 14/22 (talk 3/8, run 5/8, plan 6/6),
+  spoken 16/22 (talk 2/8, run 8/8, plan 6/6).
+- **[gap]** `pablo eval --lane claude --allow-remote`: Claude on the main suite, for scale. On hold
+  until there is an API key.
 
 ## Ideas
 

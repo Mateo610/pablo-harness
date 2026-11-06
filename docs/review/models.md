@@ -21,6 +21,9 @@
   Mistral would have flagged 55 of 125 good runs.
 - **[measured]** At first, gpt-oss-120b didn't beat the coder (M4b: 1 better, 1 worse, 4 same).
   After the context fix it scored 34/36. The first result was about context, not the model.
+- **[measured]** Hybrid chat (this coder, reasoning off) on 22 labeled messages at `2563ea6`:
+  typed 14/22, spoken 16/22. Plan 6/6 both ways. Spoken run 8/8; typed run 5/8 (3 became plans).
+  Talk 3/8 typed and 2/8 spoken: a question usually starts a run.
 
 ## Published numbers vs ours
 

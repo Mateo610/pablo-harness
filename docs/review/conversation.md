@@ -13,12 +13,26 @@ finishes.
 
 - **[measured]** Voice prompts keep the same system prompt every turn so llama.cpp reuses its
   cache; plan state rides ahead of your message for the same reason.
-- **[gap]** Nothing here has been measured on the real models. Tests use scripted replies.
+- **[measured]** Hybrid chat (coder, reasoning off) on the 22-message set at `2563ea6`. Typed
+  14/22: talk 3/8, run 5/8, plan 6/6. Spoken 16/22: talk 2/8, run 8/8, plan 6/6. Confusion
+  (rows are what we wanted, columns are talk / run / plan):
+
+  | | talk | run | plan |
+  |---|---|---|---|
+  | typed talk | 3 | 4 | 1 |
+  | typed run | 0 | 5 | 3 |
+  | typed plan | 0 | 0 | 6 |
+  | spoken talk | 2 | 6 | 0 |
+  | spoken run | 0 | 8 | 0 |
+  | spoken plan | 0 | 0 | 6 |
+
+  Wall 71 s typed, 33 s spoken. Runs were recorded, not started.
 
 ## Weaknesses
 
-- **[suspected]** The biggest unknown: does Qwen choose RUN, PLAN or just talk at the right times?
-  The prompt asks; nothing checks.
+- **[measured]** Questions start work. Talk is 3/8 typed and 2/8 spoken; the rest became a run
+  (one typed question became a plan). Spoken run and both plan columns are 8/8 and 6/6. Typed
+  run is 5/8; the other three became plans.
 - **[suspected]** Consent is a word list (`apply`, `yes`, `looks good`, …). "Yes, but change the
   name first" counts as yes. Safe enough while only you can apply, and the model must also write
   `APPLY:`, but crude.
@@ -31,7 +45,7 @@ finishes.
 
 | Idea | How we'd know |
 |---|---|
-| The chat-behavior set from evals.md (talk / RUN / PLAN) | accuracy per model; prompt changes measured against it |
+| Tighten the chat prompt so a question stays talk, on this same 22-message set | typed talk above 3/8 and spoken talk above 2/8, without losing the 6/6 plans or the spoken 8/8 runs |
 | Spoken summaries of a diff in one sentence ("adds a threshold function and two tests") from the judge's summary | you approve by voice without opening the screen (observed) |
 | Ask "apply it?" back when consent words are mixed with changes ("yes, but…") | fewer wrong applies (observed) |
 | Time first-word latency per turn and log it | p50/p95 on Agents |

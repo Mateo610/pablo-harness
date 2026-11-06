@@ -2632,3 +2632,23 @@ False ready: ledger-comments, textkit-slug-accents, ledger-comments, textkit-slu
 |---|---|---|---|---|---|---|
 | false ready | 8 | 7 | 7 | 7 | 7 | 6 |
 | missed | 30 | 35 | 45 | 57 | 62 | 98 |
+
+### Chat behavior · auto · `2563ea6`
+
+Right 14/22 (64%) · by label {'talk': 0.375, 'run': 0.625, 'plan': 1.0}
+
+| wanted \ chose | talk | run | plan |
+|---|---|---|---|
+| talk | 3 | 4 | 1 |
+| run | 0 | 5 | 3 |
+| plan | 0 | 0 | 6 |
+
+### Chat behavior · auto · spoken · `2563ea6`
+
+Right 16/22 (73%) · by label {'talk': 0.25, 'run': 1.0, 'plan': 1.0}
+
+| wanted \ chose | talk | run | plan |
+|---|---|---|---|
+| talk | 2 | 6 | 0 |
+| run | 0 | 8 | 0 |
+| plan | 0 | 0 | 6 |
