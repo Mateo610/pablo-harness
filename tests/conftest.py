@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from pablo.config import SandboxConfig, Settings, load_settings
+from pablo.config import SandboxConfig, Settings, VoiceConfig, load_settings
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -18,6 +18,7 @@ def settings(tmp_path: Path) -> Settings:
     for lane in s.lanes.values():
         lane.retry_when = "off"  # tests that want coder → deep retries turn it on
     s.gpu.idle_s = 0  # tests are the only user; test_gpu sets its own
+    s.voice = VoiceConfig()  # never the real engines from lanes.yaml; voice tests inject fakes
     return s
 
 
