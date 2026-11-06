@@ -2652,3 +2652,15 @@ Right 16/22 (73%) · by label {'talk': 0.25, 'run': 1.0, 'plan': 1.0}
 | talk | 2 | 6 | 0 |
 | run | 0 | 8 | 0 |
 | plan | 0 | 0 | 6 |
+
+### Build set · auto · `90319fc`
+
+Accepted 1/5 · planned 5 (asked twice 0) · finished 5 · mean steps 3.8 · wall 1058.6 s
+
+| Project | Planned | Steps | Approved | Rejected | Finished | Acceptance | Wall |
+|---|---|---|---|---|---|---|---|
+| build-units | yes | 3 | 4 (1 unsure) | 0 | yes | fail | 55 s |
+| build-todo | yes | 4 | 4 (2 unsure) | 0 | yes | fail | 74 s |
+| build-csvstats | yes | 5 | 4 (2 unsure) | 0 | yes | fail | 62 s |
+| build-ratelimit | yes | 4 | 4 (1 unsure) | 0 | yes | **pass** | 70 s |
+| build-mdtoc | yes | 3 | 3 (1 unsure) | 0 | yes | fail | 796 s |

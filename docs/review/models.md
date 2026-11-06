@@ -24,6 +24,9 @@
 - **[measured]** Hybrid chat (this coder, reasoning off) on 22 labeled messages at `2563ea6`:
   typed 14/22, spoken 16/22. Plan 6/6 both ways. Spoken run 8/8; typed run 5/8 (3 became plans).
   Talk 3/8 typed and 2/8 spoken: a question usually starts a run.
+- **[measured]** Hybrid plan mode on 5 small tools from an empty project (`90319fc`): accepted
+  1/5, planned 5/5, finished 5/5, mean steps 3.8, wall 1059 s. Seven approvals were clean but
+  the judge was unsure. None rejected. No project errored.
 
 ## Published numbers vs ours
 

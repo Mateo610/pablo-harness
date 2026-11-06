@@ -27,9 +27,15 @@ finishes.
   | spoken plan | 0 | 0 | 6 |
 
   Wall 71 s typed, 33 s spoken. Runs were recorded, not started.
+- **[measured]** Plan mode on 5 empty projects at `90319fc` (`pablo eval-build`). Hybrid planned
+  5/5 on the first ask, finished 5/5, mean 3.8 steps. Acceptance passed 1/5 (`build-ratelimit`).
+  Seven steps were approved with clean checks while the judge was unsure. None were rejected.
+  Wall 1059 s, almost all of it `build-mdtoc` (796 s).
 
 ## Weaknesses
 
+- **[measured]** A finished plan is usually a tool that fails its acceptance test: 4 of 5 at
+  `90319fc`. The plan itself was written and built every time.
 - **[measured]** Questions start work. Talk is 3/8 typed and 2/8 spoken; the rest became a run
   (one typed question became a plan). Spoken run and both plan columns are 8/8 and 6/6. Typed
   run is 5/8; the other three became plans.

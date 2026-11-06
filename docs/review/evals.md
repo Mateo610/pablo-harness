@@ -37,7 +37,16 @@ flaky and never-passed tasks. `eval-judge` scores judges on replayed real diffs.
 ## M7e · 2026-11-06
 
 - **[gap]** `pablo eval --set holdout`: 12 harder tasks (gradebook repo), totals only.
-- **[gap]** `pablo eval-build`: plan mode on 5 small tools, acceptance tests on the result.
+- **[measured]** `pablo eval-build` at `90319fc`: accepted 1/5, planned 5/5, finished 5/5,
+  mean steps 3.8, wall 1059 s. No project errored.
+
+  | Project | Planned | Steps | Approved | Rejected | Finished | Acceptance | Wall |
+  |---|---|---|---|---|---|---|---|
+  | build-units | yes | 3 | 4 (1 unsure) | 0 | yes | fail | 55 s |
+  | build-todo | yes | 4 | 4 (2 unsure) | 0 | yes | fail | 74 s |
+  | build-csvstats | yes | 5 | 4 (2 unsure) | 0 | yes | fail | 62 s |
+  | build-ratelimit | yes | 4 | 4 (1 unsure) | 0 | yes | pass | 70 s |
+  | build-mdtoc | yes | 3 | 3 (1 unsure) | 0 | yes | fail | 796 s |
 - **[measured]** `pablo eval-chat` at `2563ea6`: typed 14/22 (talk 3/8, run 5/8, plan 6/6),
   spoken 16/22 (talk 2/8, run 8/8, plan 6/6).
 - **[gap]** `pablo eval --lane claude --allow-remote`: Claude on the main suite, for scale. On hold
