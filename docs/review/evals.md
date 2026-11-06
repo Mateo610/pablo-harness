@@ -34,15 +34,20 @@ flaky and never-passed tasks. `eval-judge` scores judges on replayed real diffs.
 - **[observed]** A run takes 25–45 minutes (hours for Best alone), so one evening buys one
   comparison.
 
+## Built 2026-11-06, waiting for their first runs (M7e)
+
+- **[gap]** `pablo eval --set holdout`: 12 harder tasks (gradebook repo), totals only.
+- **[gap]** `pablo eval-build`: plan mode on 5 small tools, acceptance tests on the result.
+- **[gap]** `pablo eval-chat`: talk / run / plan on 22 labeled messages, typed and spoken.
+- **[gap]** `pablo eval --lane claude --allow-remote`: Claude on the main suite, for scale.
+
 ## Ideas
 
 | Idea | How we'd know |
 |---|---|
-| Suite v3: 10–15 harder tasks (multi-file, a small feature, a refactor with a moved API), kept in a separate `holdout` set we only score, never study | spread and pass rate on holdout vs main; does the ranking of setups hold? |
 | More runs per comparison overnight (5 instead of 3), using the overnight window | spread shrinks enough to see 3-point effects |
 | Paired scoring: report per-task flips between A and B, not just means (a sign test) | fewer "can't tell" results at the same run count |
-| A plan-mode eval: 5 "build a small tool" prompts, scored by acceptance tests on the final repo after approving every step | pass rate, steps per project, how many steps needed you |
-| A chat-behavior set: 20 messages labeled talk / RUN / PLAN, scored on what the model chose | accuracy per lane, no GPU-hours needed beyond the replies |
+| Grow the holdout to ~25 tasks on a second new seed repo, so a single run means more | spread on the holdout |
 
 ## Open questions
 

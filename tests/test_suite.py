@@ -290,3 +290,21 @@ def test_preflight_names_the_model_that_doesnt_answer() -> None:
     assert preflight(backend, ["pablo/deep", "pablo/coder"]) == [
         "pablo/deep: Server error '500 Internal Server Error'"
     ]
+
+
+def test_claude_is_scored_only_by_hand_and_as_an_escalation(settings: Settings) -> None:
+    from typer.testing import CliRunner
+
+    from pablo.cli import app
+
+    perfect = _coder(cheat=False).scripts["pablo/coder"]
+    judge = json.dumps({"certainty": 0.9, "summary": "ok", "question": ""})
+    backend = FakeBackend(scripts={"pablo/escalate": perfect, "pablo/judge": lambda m, x: judge})
+    report = run_suite(settings, backend, lane="claude", only={"ledger-by-payee-sums"},
+                       python=PY, sandbox=LocalSandbox())  # fmt: skip
+    row = report.results[0]
+    assert row.hidden_passed and row.final_lane == "claude"
+    assert {m for m, _ in backend.calls} == {"pablo/escalate", "pablo/judge"}  # no local coder
+
+    refused = CliRunner().invoke(app, ["eval", "--lane", "claude", "--fake"])
+    assert refused.exit_code != 0 and "allow-remote" in refused.output

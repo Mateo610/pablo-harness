@@ -658,6 +658,13 @@ def eval_suite(
             help="main (evals/suite) or holdout (harder tasks; totals only, never studied)",
         ),
     ] = "main",
+    allow_remote: Annotated[
+        bool,
+        typer.Option(
+            help="Let a remote lane (claude) be scored: every suite task leaves the box, and it "
+            "costs API calls. Nothing from your repos is sent."
+        ),
+    ] = False,
 ) -> None:
     """Score a lane on the coder suite against hidden tests (evals/suite or evals/holdout)."""
     from contextlib import nullcontext
@@ -672,6 +679,13 @@ def eval_suite(
                        unload_url=settings.gpu.unload_url)  # fmt: skip
     hold = nullcontext() if fake else gpu.mode_for("deep")
 
+    lane_cfg = load_settings().lane(lane)
+    if (lane_cfg.kind == "remote" or lane_cfg.requires_approval) and not allow_remote:
+        raise typer.BadParameter(
+            f"'{lane}' leaves the box: add --allow-remote to send the suite's tasks to it"
+        )
+    if cascade and lane_cfg.kind == "remote":
+        raise typer.BadParameter("a remote lane doesn't cascade")
     if suite_set not in ("main", "holdout"):
         raise typer.BadParameter("--set is main or holdout")
     sealed = suite_set == "holdout"
