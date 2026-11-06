@@ -35,7 +35,7 @@ practice:                 # nightly checkable tasks from your repos (src/pablo/p
   teacher: deep           # tries what the coder missed; "" for none
 
 spec:                     # task-derived checks: tests from your request, written before the diff is seen
-  enabled: false          # turn on once `pablo eval --spec --repeat 3` shows fewer false ready
+  enabled: false          # M7d: false alarms averaged 2 per run, over the limit of 1
   lane: judge             # who writes them (the judge model is already loaded at that moment)
 
 voice:                    # M9b. Both engines are local processes; empty URLs turn voice off.

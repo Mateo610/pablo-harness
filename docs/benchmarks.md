@@ -2327,3 +2327,139 @@ Passed per run [32, 28, 27] · mean 81% ± 7% · false ready over all runs 7
 
 - Flaky (12): harness-clip-small-caps, harness-hunk-stats, harness-router-unknown-lane, inventory-move-bulk, inventory-remove-too-many, ledger-by-payee-sums, ledger-comments, ledger-load-line-commas, ledger-negative-format, ledger-thousands, textkit-slug-accents, textkit-slug-max-length
 - Never passed (2): harness-memory-units, textkit-reading-time
+
+### Coder suite · coder→deep (pablo/coder) · 2026-11-06T00:47:20+00:00 · `3cb60a6`
+
+Hidden-test pass rate 81% (file 90% · symbol 73% · none 82%) · no diff 6 · ready 24, of which passed 1.0 · false ready 0 · missed 5 · retried on another lane 6 (0 passed) · fix rounds tried 6 {'kept': 6}, kept 6 (6 passed) · certainty passed 0.83 / failed 0.2 · wall 2217.4 s · spec {'broken': 1, 'confirmed': 25, 'failed': 3, 'skipped': 1}, caught ['harness-memory-units'], false alarms ['textkit-wrap-max-lines', 'harness-router-unknown-lane']
+
+| task | refs | lane | state | diff | fixed | visible | hidden | certainty | wall s |
+|---|---|---|---|---|---|---|---|---|---|
+| ledger-by-payee-sums | file | coder | ready | yes |  | clean | pass | 0.95 | 21 |
+| ledger-load-line-commas | symbol | deep | failed | no |  | worse | FAIL | — | 84 |
+| ledger-negative-format | none | coder | ready | yes | kept | clean | pass | 0.95 | 35 |
+| ledger-thousands | symbol | coder | ready | yes |  | clean | pass | 0.90 | 19 |
+| ledger-comments | none | coder | ready | yes | kept | clean | pass | 0.90 | 26 |
+| ledger-move-format | file | deep | failed | no |  | worse | FAIL | — | 76 |
+| ledger-month-total | symbol | coder | needs_you | yes |  | clean | pass | 0.30 | 32 |
+| ledger-refunds-parse | none | coder | ready | yes |  | clean | pass | 0.90 | 25 |
+| ledger-largest | file | coder | ready | yes |  | clean | pass | 0.95 | 21 |
+| ledger-month-number | symbol | coder | ready | yes |  | clean | pass | 0.90 | 24 |
+| textkit-word-count | symbol | coder | ready | yes |  | clean | pass | 0.95 | 17 |
+| textkit-slug-accents | file | coder | ready | yes |  | clean | pass | 0.95 | 18 |
+| textkit-top-words-punctuation | none | coder | ready | yes |  | clean | pass | 0.90 | 22 |
+| textkit-wrap-max-lines | symbol | coder | needs_you | yes | kept | clean | pass | 0.30 | 31 |
+| textkit-truncate-words | none | coder | ready | yes |  | clean | pass | 0.90 | 29 |
+| textkit-move-truncate | file | coder | ready | yes |  | clean | pass | 0.90 | 20 |
+| textkit-slug-max-length | symbol | deep | failed | no |  | worse | FAIL | — | 98 |
+| textkit-reading-time | symbol | deep | failed | no |  | worse | FAIL | — | 86 |
+| textkit-top-words-ties | file | coder | ready | yes |  | clean | pass | 0.95 | 31 |
+| textkit-slug-separator | none | coder | ready | yes |  | clean | pass | 0.95 | 17 |
+| inventory-value-qty | symbol | coder | ready | yes |  | clean | pass | 0.95 | 24 |
+| inventory-remove-too-many | none | deep | failed | no |  | worse | FAIL | — | 77 |
+| inventory-bulk-threshold | file | coder | ready | yes |  | clean | pass | 1.00 | 34 |
+| inventory-find-any-case | none | coder | ready | yes |  | clean | pass | 0.95 | 19 |
+| inventory-csv-lenient | symbol | coder | ready | yes | kept | clean | pass | 0.90 | 26 |
+| inventory-merge-stock | file | coder | ready | yes |  | clean | pass | 0.95 | 21 |
+| inventory-low-stock | symbol | coder | ready | yes |  | clean | pass | 0.90 | 20 |
+| inventory-discount-range | none | coder | ready | yes |  | clean | pass | 0.95 | 19 |
+| inventory-move-bulk | file | coder | needs_you | yes | kept | clean | pass | 0.30 | 28 |
+| inventory-store-csv | symbol | coder | ready | yes |  | clean | pass | 0.90 | 22 |
+| harness-judge-fenced-json | none | coder | needs_you | yes | kept | clean | pass | 0.30 | 325 |
+| harness-certainty-percent | symbol | coder | ready | yes |  | clean | pass | 0.90 | 119 |
+| harness-memory-units | none | coder | needs_you | yes |  | clean | FAIL | 0.20 | 128 |
+| harness-hunk-stats | symbol | deep | failed | no |  | worse | FAIL | — | 370 |
+| harness-clip-small-caps | symbol | coder | ready | yes |  | clean | pass | 0.90 | 130 |
+| harness-router-unknown-lane | file | coder | needs_you | yes |  | clean | pass | 0.50 | 122 |
+
+### Coder suite · coder→deep (pablo/coder) · 2026-11-06T01:17:54+00:00 · `b737b55`
+
+Hidden-test pass rate 86% (file 100% · symbol 80% · none 82%) · no diff 2 · ready 30, of which passed 0.967 · false ready 1 · missed 2 · retried on another lane 2 (0 passed) · fix rounds tried 6 {'kept': 6}, kept 6 (5 passed) · certainty passed 0.88 / failed 0.47 · wall 1810.7 s · spec {'broken': 1, 'confirmed': 29, 'failed': 3, 'skipped': 1}, caught ['harness-memory-units'], false alarms ['ledger-move-format', 'harness-router-unknown-lane']
+
+| task | refs | lane | state | diff | fixed | visible | hidden | certainty | wall s |
+|---|---|---|---|---|---|---|---|---|---|
+| ledger-by-payee-sums | file | coder | ready | yes |  | clean | pass | 0.95 | 22 |
+| ledger-load-line-commas | symbol | coder | ready | yes |  | clean | pass | 0.90 | 28 |
+| ledger-negative-format | none | coder | ready | yes | kept | clean | pass | 0.95 | 25 |
+| ledger-thousands | symbol | coder | ready | yes |  | clean | pass | 0.90 | 20 |
+| ledger-comments | none | coder | ready | yes |  | clean | pass | 0.95 | 28 |
+| ledger-move-format | file | coder | needs_you | yes |  | clean | pass | 0.20 | 25 |
+| ledger-month-total | symbol | coder | ready | yes |  | clean | pass | 0.90 | 22 |
+| ledger-refunds-parse | none | coder | ready | yes | kept | clean | pass | 0.90 | 27 |
+| ledger-largest | file | coder | ready | yes |  | clean | pass | 0.95 | 21 |
+| ledger-month-number | symbol | coder | ready | yes |  | clean | pass | 0.90 | 25 |
+| textkit-word-count | symbol | coder | ready | yes |  | clean | pass | 0.90 | 15 |
+| textkit-slug-accents | file | coder | ready | yes |  | clean | pass | 0.95 | 18 |
+| textkit-top-words-punctuation | none | coder | ready | yes |  | clean | pass | 0.90 | 23 |
+| textkit-wrap-max-lines | symbol | deep | failed | no |  | worse | FAIL | — | 92 |
+| textkit-truncate-words | none | coder | ready | yes |  | clean | pass | 0.90 | 34 |
+| textkit-move-truncate | file | coder | ready | yes |  | clean | pass | 0.90 | 20 |
+| textkit-slug-max-length | symbol | deep | failed | no |  | worse | FAIL | — | 82 |
+| textkit-reading-time | symbol | coder | ready | yes |  | clean | FAIL | 0.90 | 57 |
+| textkit-top-words-ties | file | coder | ready | yes |  | clean | pass | 0.95 | 22 |
+| textkit-slug-separator | none | coder | ready | yes |  | clean | pass | 0.95 | 17 |
+| inventory-value-qty | symbol | coder | ready | yes |  | clean | pass | 0.95 | 24 |
+| inventory-remove-too-many | none | coder | ready | yes | kept | clean | pass | 0.90 | 25 |
+| inventory-bulk-threshold | file | coder | ready | yes |  | clean | pass | 1.00 | 24 |
+| inventory-find-any-case | none | coder | ready | yes |  | clean | pass | 0.95 | 19 |
+| inventory-csv-lenient | symbol | coder | ready | yes | kept | clean | pass | 0.90 | 28 |
+| inventory-merge-stock | file | coder | ready | yes |  | clean | pass | 0.95 | 22 |
+| inventory-low-stock | symbol | coder | ready | yes |  | clean | pass | 0.90 | 20 |
+| inventory-discount-range | none | coder | ready | yes |  | clean | pass | 0.95 | 19 |
+| inventory-move-bulk | file | coder | ready | yes | kept | clean | pass | 0.90 | 42 |
+| inventory-store-csv | symbol | coder | ready | yes |  | clean | pass | 0.90 | 25 |
+| harness-judge-fenced-json | none | coder | needs_you | yes | kept | clean | FAIL | 0.20 | 311 |
+| harness-certainty-percent | symbol | coder | ready | yes |  | clean | pass | 0.90 | 121 |
+| harness-memory-units | none | coder | needs_you | yes |  | clean | FAIL | 0.30 | 127 |
+| harness-hunk-stats | symbol | coder | ready | yes |  | clean | pass | 0.90 | 135 |
+| harness-clip-small-caps | symbol | coder | ready | yes |  | clean | pass | 0.90 | 120 |
+| harness-router-unknown-lane | file | coder | needs_you | yes |  | clean | pass | 0.30 | 124 |
+
+### Coder suite · coder→deep (pablo/coder) · 2026-11-06T01:44:05+00:00 · `b737b55`
+
+Hidden-test pass rate 83% (file 90% · symbol 80% · none 82%) · no diff 1 · ready 29, of which passed 0.966 · false ready 1 · missed 2 · retried on another lane 1 (0 passed) · fix rounds tried 5 {'kept': 5}, kept 5 (4 passed) · certainty passed 0.89 / failed 0.36 · wall 1547.7 s · spec {'broken': 1, 'confirmed': 28, 'failed': 5, 'skipped': 1}, caught ['textkit-slug-max-length', 'inventory-csv-lenient', 'harness-memory-units'], false alarms ['textkit-wrap-max-lines', 'harness-router-unknown-lane']
+
+| task | refs | lane | state | diff | fixed | visible | hidden | certainty | wall s |
+|---|---|---|---|---|---|---|---|---|---|
+| ledger-by-payee-sums | file | coder | ready | yes |  | clean | pass | 0.95 | 21 |
+| ledger-load-line-commas | symbol | coder | ready | yes |  | clean | pass | 0.90 | 28 |
+| ledger-negative-format | none | coder | ready | yes |  | clean | pass | 0.95 | 21 |
+| ledger-thousands | symbol | coder | ready | yes |  | clean | pass | 0.90 | 20 |
+| ledger-comments | none | coder | ready | yes |  | clean | pass | 0.95 | 27 |
+| ledger-move-format | file | deep | failed | no |  | worse | FAIL | — | 80 |
+| ledger-month-total | symbol | coder | ready | yes |  | clean | pass | 0.90 | 32 |
+| ledger-refunds-parse | none | coder | ready | yes | kept | clean | pass | 0.90 | 32 |
+| ledger-largest | file | coder | ready | yes |  | clean | pass | 0.95 | 21 |
+| ledger-month-number | symbol | coder | ready | yes |  | clean | pass | 0.90 | 25 |
+| textkit-word-count | symbol | coder | ready | yes |  | clean | pass | 0.95 | 16 |
+| textkit-slug-accents | file | coder | ready | yes |  | clean | pass | 0.95 | 18 |
+| textkit-top-words-punctuation | none | coder | ready | yes |  | clean | pass | 0.90 | 21 |
+| textkit-wrap-max-lines | symbol | coder | needs_you | yes | kept | clean | pass | 0.30 | 31 |
+| textkit-truncate-words | none | coder | ready | yes |  | clean | pass | 0.90 | 24 |
+| textkit-move-truncate | file | coder | ready | yes |  | clean | pass | 0.90 | 20 |
+| textkit-slug-max-length | symbol | coder | needs_you | yes |  | clean | FAIL | 0.20 | 54 |
+| textkit-reading-time | symbol | coder | ready | yes | kept | clean | FAIL | 0.90 | 23 |
+| textkit-top-words-ties | file | coder | ready | yes |  | clean | pass | 0.95 | 22 |
+| textkit-slug-separator | none | coder | ready | yes |  | clean | pass | 0.95 | 17 |
+| inventory-value-qty | symbol | coder | ready | yes |  | clean | pass | 0.95 | 24 |
+| inventory-remove-too-many | none | coder | ready | yes | kept | clean | pass | 0.95 | 25 |
+| inventory-bulk-threshold | file | coder | ready | yes |  | clean | pass | 1.00 | 24 |
+| inventory-find-any-case | none | coder | ready | yes |  | clean | pass | 0.95 | 19 |
+| inventory-csv-lenient | symbol | coder | needs_you | yes |  | clean | FAIL | 0.20 | 19 |
+| inventory-merge-stock | file | coder | ready | yes |  | clean | pass | 0.95 | 22 |
+| inventory-low-stock | symbol | coder | ready | yes |  | clean | pass | 0.90 | 20 |
+| inventory-discount-range | none | coder | ready | yes |  | clean | pass | 0.95 | 19 |
+| inventory-move-bulk | file | coder | ready | yes | kept | clean | pass | 0.90 | 36 |
+| inventory-store-csv | symbol | coder | ready | yes |  | clean | pass | 0.90 | 23 |
+| harness-judge-fenced-json | none | coder | needs_you | yes |  | clean | FAIL | 0.30 | 130 |
+| harness-certainty-percent | symbol | coder | ready | yes |  | clean | pass | 0.90 | 121 |
+| harness-memory-units | none | coder | needs_you | yes |  | clean | FAIL | 0.20 | 127 |
+| harness-hunk-stats | symbol | coder | ready | yes |  | clean | pass | 0.90 | 142 |
+| harness-clip-small-caps | symbol | coder | ready | yes |  | clean | pass | 0.90 | 122 |
+| harness-router-unknown-lane | file | coder | needs_you | yes |  | clean | pass | 0.30 | 124 |
+
+### Coder suite × 3 · coder→deep (pablo/coder) · `3cb60a6`
+
+Passed per run [29, 31, 30] · mean 83% ± 3% · false ready over all runs 2
+
+- Flaky (7): harness-hunk-stats, harness-judge-fenced-json, inventory-csv-lenient, inventory-remove-too-many, ledger-load-line-commas, ledger-move-format, textkit-wrap-max-lines
+- Never passed (3): harness-memory-units, textkit-reading-time, textkit-slug-max-length
