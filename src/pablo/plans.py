@@ -88,6 +88,7 @@ class Plans:
         by: str,
         conversation: str,
         think: bool = False,
+        request: str = "",
     ) -> Plan:
         """Replace the project's plan with a new draft. Steps already done are history: a new
         draft only replaces a plan that is a draft, paused, or done."""
@@ -110,6 +111,7 @@ class Plans:
                 by=by,
                 conversation=conversation,
                 think=think,
+                request=request.strip()[:4000],
             )
             self._save(name, plan)
             return plan
@@ -166,6 +168,10 @@ class Plans:
     def _task_for(self, plan: Plan, step: Task) -> str:
         done = [t for t in self.steps(plan) if t.status == "done"]
         lines = [step.detail or step.title, "", f"This is step {step.id} of a plan: {plan.goal}"]
+        if plan.request:
+            # The step was written by the planner; the request is what the user actually asked
+            # for, with the names and signatures every step must keep.
+            lines.append(f"The user's request (keep its names and behavior): {plan.request}")
         if done:
             lines.append("Already done and in the repo: " + "; ".join(t.title for t in done))
         later = [t.title for t in self.steps(plan) if t.status == "queued" and t.id != step.id]

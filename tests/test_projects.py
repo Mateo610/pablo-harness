@@ -137,3 +137,48 @@ def test_tonights_queue_and_the_brief_cover_every_project(settings: Settings, re
     brief = owner.post("/api/brief").json()
     assert "Night Owl: step 2 (add the alarm) waits for you." in brief["plan_line"]
     assert brief["items"][0]["project"] == "night-owl"
+
+
+def test_a_new_project_checks_its_first_steps(settings: Settings, repo: Path) -> None:
+    """An empty project gains checks as code arrives: no tests yet is fine, broken code isn't."""
+    from pablo.gateway import FakeBackend as Fake
+
+    def coder(text: str) -> FakeBackend:
+        return Fake(scripts={"pablo/coder": lambda m, x: f"Done.\n\n{text}",
+                             "pablo/judge": lambda m, x: JUDGE})  # fmt: skip
+
+    ws, _, _ = workspace(settings, repo)
+    made = ws.create("Fresh")
+    assert (Path(made.path) / ".pablo" / "checks.yaml").is_file()
+    orch = ws.orch("fresh")
+
+    good = "hello.py\n<<<<<<< SEARCH\n=======\ndef hello():\n    return 'hi'\n>>>>>>> REPLACE\n"
+    orch.backend.inner = coder(good)  # type: ignore[attr-defined]
+    run = orch.start("add hello()", lane="coder", retry="off")
+    assert run.state == "ready", run.verdict
+    status = {c["name"]: c["status"] for c in run.verdict["checks"]}
+    assert status == {"tests": "no tests yet", "imports": "passed"}
+
+    broken = "app.py\n<<<<<<< SEARCH\n=======\nimport pandas_not_here\n>>>>>>> REPLACE\n"
+    orch.backend.inner = coder(broken)  # type: ignore[attr-defined]
+    bad = orch.start("add app.py", lane="coder", retry="off")
+    assert bad.state != "ready"
+    assert {c["name"]: c["status"] for c in bad.verdict["checks"]}["imports"] == "regressed"
+
+    failing = ("test_hello.py\n<<<<<<< SEARCH\n=======\ndef test_no():\n    assert 1 == 2\n"
+               ">>>>>>> REPLACE\n")  # fmt: skip
+    orch.backend.inner = coder(failing)  # type: ignore[attr-defined]
+    red = orch.start("add a test", lane="coder", retry="off")
+    assert red.state != "ready"
+    assert {c["name"]: c["status"] for c in red.verdict["checks"]}["tests"] != "no tests yet"
+
+
+def test_deleting_every_test_is_still_a_regression(tmp_path: Path) -> None:
+    from pablo.verify import Check
+
+    gone = Check("tests", ["python", "-m", "pytest"], False, 5, 0.1, "no tests ran")
+    gone.before, gone.before_code = "passed", 0
+    assert gone.status == "regressed"
+    fresh = Check("tests", ["python", "-m", "pytest"], False, 5, 0.1, "no tests ran")
+    fresh.before, fresh.before_code = "failed", 5
+    assert fresh.status == "no tests yet"

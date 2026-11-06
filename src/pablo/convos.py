@@ -86,18 +86,26 @@ create virtual table if not exists memories_fts using fts5(
 """
 
 CHAT_PROMPT = """You are Pablo, a coding assistant running on the user's own server.
-Answer questions about the code and the plan directly and briefly.
 
-When the user wants a change made to the code, do not write the code here. Reply with one
-short sentence and then a line:
+First decide what the message asks for:
+- A question (what, how, why, which, is there, do we have, explain, what would it take) or
+  something to think through: answer it, briefly. Do not start any work, even if a change looks
+  useful; you can offer it in words ("Want me to add a test for that?").
+- One change, even one that touches several files (a rename and everything that uses it, a fix
+  and its test): one RUN line.
+- A larger piece of work made of stages that can each be built and tested on its own (a new
+  project, a feature with several parts): a plan.
+
+For one change, do not write the code here. Reply with one short sentence and then a line:
 RUN: <a complete task for the coder: what to change, where, and how to know it's done>
 The harness runs it, checks it, and shows the user the diff. Only one RUN line per reply.
 
-When the work takes several changes (a new project, a feature with parts), plan it instead of
-using RUN. One line each:
+For a plan, one line each:
 PLAN: <what done looks like, in one sentence>
 STEP: <a complete task for the coder that builds on the steps before it>
-Write 3 to 8 STEP lines; the first is the smallest thing that runs and can be tested. The user
+Write 3 to 8 STEP lines. Keep every name, signature, file and behavior the user asked for
+exactly as they said it. For a new project, the first step sets up the package the user named
+and a test runner with one passing test; later steps add a test for what they build. The user
 reviews the plan with you; to change it, write the whole plan again. When the user says to go
 ahead and build it, add a line: BUILD: go
 Each step waits for the user's approval before the next one starts.
@@ -116,8 +124,8 @@ write or change code and you never score anything. Keep it short unless asked to
 SPOKEN = """
 
 This turn is a voice call: your reply is read aloud. Talk like a person on a call: one to three
-short sentences, no code, no lists, no markdown, no file paths unless asked. The RUN and
-REMEMBER lines still work and are never read aloud."""
+short sentences, no code, no lists, no markdown, no file paths unless asked. A question still
+gets only an answer. The RUN, plan and REMEMBER lines still work and are never read aloud."""
 
 _RUN = re.compile(r"^\s*RUN:\s*(.+?)\s*$", re.M)
 _PLAN = re.compile(r"^\s*PLAN:\s*(.+?)\s*$", re.M)
@@ -614,7 +622,7 @@ class Chat:
         plan_obj: Plan | None = None
         decided: Run | None = None
         if can_run and do is not False:
-            plan_obj = self._planning(conv, name, profile, answer, extra, think)
+            plan_obj = self._planning(conv, name, profile, answer, extra, think, request=text)
             if plan_obj is not None:
                 task = ""  # a plan takes the place of a single run
             if _APPLY.search(answer) and _SAYS_APPLY.search(text):
@@ -647,6 +655,7 @@ class Chat:
         answer: str,
         out: list[str],
         think: bool = False,
+        request: str = "",
     ) -> Plan | None:
         steps = [m.group(1) for m in _STEP.finditer(answer)]
         if not steps or self.plans is None:
@@ -654,7 +663,7 @@ class Chat:
         goal = next((m.group(1) for m in _PLAN.finditer(answer)), "")
         try:
             plan = self.plans.draft(conv.project, goal, steps, lane=lane, by=profile,
-                                    conversation=conv.id, think=think)  # fmt: skip
+                                    conversation=conv.id, think=think, request=request)  # fmt: skip
         except (PlanBusy, ValueError) as exc:
             out.append(f"(The plan wasn't changed: {exc}.)")
             return None

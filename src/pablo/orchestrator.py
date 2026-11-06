@@ -247,6 +247,9 @@ class Orchestrator:
         self.repo = repo.resolve()
         self.bus = bus or EventBus()
         self.checks = checks
+        # A project that grows from empty (plan mode) reads its checks on every run instead:
+        # an empty repo has none, and the first step adds the code they apply to.
+        self.checks_from_repo = False
         self.swap = swap
         # Where checks run. lanes.yaml `sandbox:` decides unless the caller picks one.
         self.sandbox = sandbox or make_sandbox(settings.sandbox, self.repo)
@@ -515,7 +518,8 @@ class Orchestrator:
                 result = SpecResult("skipped", "nothing concrete to test in the request")
             else:
                 self._emit("status", run, lane=cfg.lane, text="running checks from your request")
-                result = run_spec(self.repo, run.diff, source, self.checks or DEFAULT_CHECKS,
+                checks = self.current_checks() or DEFAULT_CHECKS
+                result = run_spec(self.repo, run.diff, source, checks,
                                   self.sandbox, cfg.timeout_s)  # fmt: skip
         except Exception as exc:  # a spec check is extra evidence; it must never fail a run
             result = SpecResult("skipped", f"error: {exc}")
@@ -640,7 +644,7 @@ class Orchestrator:
                 run.fix_outcome = "didn't apply"
                 return messages, reply, verdict
         fixed = verify_diff(
-            self.repo, diff, self.checks, sandbox=self.sandbox, baselines=self.baselines
+            self.repo, diff, self.current_checks(), sandbox=self.sandbox, baselines=self.baselines
         )
         if not _better(fixed, verdict):
             self._emit("status", run, text=f"{run.lane} · fix didn't help, keeping the first try")
@@ -651,6 +655,18 @@ class Orchestrator:
         run.fix_outcome = "kept"
         run.explanation = strip_blocks(answer.text) or run.explanation
         return asked, answer, fixed
+
+    def current_checks(self) -> dict[str, list[str]] | None:
+        if self.checks_from_repo:
+            from pablo.demo import load_checks
+            from pablo.verify import IMPORTS_CHECK
+
+            checks = load_checks(self.repo)
+            # Before the first Python file exists there's nothing to import, but the diff may
+            # add one: check that it imports. The check passes on a repo with no modules.
+            checks.setdefault("imports", list(IMPORTS_CHECK))
+            return checks
+        return self.checks
 
     def lane_for(self, run: Run) -> Lane:
         """The run's lane, as its thinking variant when the run asked for extended thinking."""
@@ -747,7 +763,11 @@ class Orchestrator:
         if run.diff:
             self._emit("status", run, text=f"{run.lane} · running checks")
             verdict = verify_diff(
-                self.repo, run.diff, self.checks, sandbox=self.sandbox, baselines=self.baselines
+                self.repo,
+                run.diff,
+                self.current_checks(),
+                sandbox=self.sandbox,
+                baselines=self.baselines,
             )
 
         # Local models slip on exact text. Give the coder one chance to fix its own edits,
@@ -780,7 +800,11 @@ class Orchestrator:
                 run.diff = repaired
                 run.repaired = True
                 verdict = verify_diff(
-                    self.repo, run.diff, self.checks, sandbox=self.sandbox, baselines=self.baselines
+                    self.repo,
+                    run.diff,
+                    self.current_checks(),
+                    sandbox=self.sandbox,
+                    baselines=self.baselines,
                 )
 
         if wants_diff and run.diff and verdict is not None and verdict.applied:
@@ -892,7 +916,11 @@ class Orchestrator:
                 patch = select_hunks(run.diff, keep)
                 decision = "approved_partial"
                 verdict = verify_diff(
-                    self.repo, patch, self.checks, sandbox=self.sandbox, baselines=self.baselines
+                    self.repo,
+                    patch,
+                    self.current_checks(),
+                    sandbox=self.sandbox,
+                    baselines=self.baselines,
                 )
                 if not verdict.clean and not force:
                     raise PartialChecksFailed(verdict)

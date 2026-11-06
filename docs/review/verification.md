@@ -29,8 +29,11 @@ tests from the request before it sees the diff.
   `harness-router-unknown-lane` built a settings object incorrectly and errored before testing
   anything (3 of 3 runs), `textkit-wrap-max-lines` expected a wrap the function doesn't do,
   `ledger-move-format` guessed a negative-money format.
-- **[gap]** New projects start with no tests, so the first steps of a plan are verified only by
-  imports and the judge.
+- **[measured, fixed]** New projects had no checks at all until 2026-11-06: an empty repo's checks
+  were read once, as `{}`, so every plan step was "clean" with nothing run (build set at
+  `90319fc`: 4 of 5 tools failed acceptance; two were runtime errors any test catches). Projects
+  now read checks every run, always run imports, and start with pytest ("no tests yet" is not a
+  failure).
 
 ## Ideas
 

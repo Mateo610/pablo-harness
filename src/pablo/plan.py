@@ -53,6 +53,7 @@ class Plan(BaseModel):
     by: str = ""  # who started it
     conversation: str = ""  # where it was planned, so progress can be reported there
     think: bool = False  # extended thinking: each step's coder thinks first
+    request: str = ""  # the user's words the plan came from: every step sees them
 
     @classmethod
     def load(cls, root: Path) -> Plan:

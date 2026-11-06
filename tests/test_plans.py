@@ -148,3 +148,15 @@ def test_the_api_builds_a_plan_and_approving_a_step_moves_it_along(
     assert c.post("/api/plan/go").status_code == 409  # still waiting for you
     assert c.post(f"/api/runs/{step['run']}/approve").status_code == 200
     assert c.get("/api/plan").json()["state"] == "done" and (repo / "greet.py").is_file()
+
+
+def test_every_step_sees_the_users_own_words(settings: Settings, repo: Path) -> None:
+    chat, plans, _, fake = make(settings, repo)
+    conv = chat.start()
+    chat.say(conv.id, "let's plan a greeter: greet(name) in greet.py returns 'hi ' + name")
+    plan = plans.get()
+    assert plan and "greet(name) in greet.py" in plan.request
+    chat.say(conv.id, "go")
+    step_prompt = next(m for _, m in fake.calls if "step 1 of a plan" in m[-1]["content"])
+    assert "The user's request (keep its names and behavior):" in step_prompt[-1]["content"]
+    assert "returns 'hi ' + name" in step_prompt[-1]["content"]

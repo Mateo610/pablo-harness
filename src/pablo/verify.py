@@ -88,6 +88,9 @@ def count_failures(output: str) -> int | None:
     return sum(found) if found else None
 
 
+PYTEST_NO_TESTS = 5  # pytest's exit code when it collected no tests
+
+
 @dataclass
 class Check:
     name: str
@@ -99,6 +102,7 @@ class Check:
     # The same check on the unedited copy, run only when this one fails.
     before: Before = ""
     before_failures: int | None = None
+    before_code: int | None = None
 
     @property
     def failures(self) -> int | None:
@@ -106,9 +110,11 @@ class Check:
 
     @property
     def status(self) -> str:
-        """passed, regressed, already failing (no worse), still failing, or failed."""
+        """passed, no tests yet, regressed, already failing (no worse), still failing, or failed."""
         if self.passed:
             return "passed"
+        if self.no_tests and self.before == "failed" and self.before_code == PYTEST_NO_TESTS:
+            return "no tests yet"  # a new project: nothing to collect before or after
         if self.before == "passed":
             return "regressed"
         if self.before == "failed":
@@ -118,9 +124,17 @@ class Check:
             return "still failing"
         return "failed"
 
+    @property
+    def no_tests(self) -> bool:
+        """pytest collected nothing (exit 5). Not a failure on its own; deleting every test is
+        still a regression, because the copy before the diff had tests that passed."""
+        return self.exit_code == PYTEST_NO_TESTS and any("pytest" in c for c in self.command)
+
     def label(self) -> str:
         if self.passed:
             return f"{self.name} passed"
+        if self.status == "no tests yet":
+            return f"{self.name}: no tests yet"
         if self.status == "already failing":
             counts = f"{self.before_failures} → {self.failures}"
             return f"{self.name} FAILED (already failing before this diff: {counts})"
@@ -150,7 +164,9 @@ class Verdict:
     @property
     def clean(self) -> bool:
         """Applied, and no check is worse than on the unedited copy."""
-        return self.applied and all(c.status in ("passed", "already failing") for c in self.checks)
+        return self.applied and all(
+            c.status in ("passed", "already failing", "no tests yet") for c in self.checks
+        )
 
     def summary(self) -> str:
         if not self.applied:
@@ -301,13 +317,19 @@ class Baselines:
     """Check results on the unedited copy, keyed by its contents, so each is run once."""
 
     def __init__(self) -> None:
-        self._seen: dict[tuple[str, str, tuple[str, ...], str], tuple[bool, int | None]] = {}
+        self._seen: dict[
+            tuple[str, str, tuple[str, ...], str], tuple[bool, int | None, int | None]
+        ] = {}
 
-    def get(self, key: tuple[str, str, tuple[str, ...], str]) -> tuple[bool, int | None] | None:
+    def get(
+        self, key: tuple[str, str, tuple[str, ...], str]
+    ) -> tuple[bool, int | None, int | None] | None:
         return self._seen.get(key)
 
     def put(
-        self, key: tuple[str, str, tuple[str, ...], str], value: tuple[bool, int | None]
+        self,
+        key: tuple[str, str, tuple[str, ...], str],
+        value: tuple[bool, int | None, int | None],
     ) -> None:
         self._seen[key] = value
 
@@ -377,7 +399,8 @@ def _compare_with_baseline(
         if seen is None:
             todo.append((check, key))
         else:
-            check.before, check.before_failures = ("passed" if seen[0] else "failed"), seen[1]
+            check.before = "passed" if seen[0] else "failed"
+            check.before_failures, check.before_code = seen[1], seen[2]
     if not todo:
         return
     with tempfile.TemporaryDirectory(prefix="pablo-baseline-") as tmp:
@@ -385,7 +408,11 @@ def _compare_with_baseline(
         shutil.copytree(repo, scratch, ignore=IGNORE)
         for check, key in todo:
             then = run_check(check.name, check.command, scratch, timeout_s, box)
-            value = (then.passed, count_failures(then.output_tail) if not then.passed else 0)
+            value = (
+                then.passed,
+                count_failures(then.output_tail) if not then.passed else 0,
+                then.exit_code,
+            )
             baselines.put(key, value)
             check.before = "passed" if then.passed else "failed"
-            check.before_failures = value[1]
+            check.before_failures, check.before_code = value[1], value[2]

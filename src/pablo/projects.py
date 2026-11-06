@@ -38,6 +38,10 @@ Mode = Literal["standard", "unfiltered"]
 UNFILTERED_LANE = "advisor"  # the no-guardrails model drives unfiltered projects
 _SLUG = re.compile(r"[^a-z0-9]+")
 GITIGNORE = "__pycache__/\n*.pyc\n.venv/\nnode_modules/\ndist/\n.env\n"
+CHECKS_YAML = (
+    "# Checks every change in this project must not make worse. Python files also get the\n"
+    "# imports check automatically.\ntests: python -m pytest -q -p no:cacheprovider\n"
+)
 
 
 def slug(name: str) -> str:
@@ -190,6 +194,7 @@ class Workspace:
             gpu=b.gpu,
         )
         orch.retry_inline = b.retry_inline
+        orch.checks_from_repo = True  # new projects gain their checks as code arrives
         return orch
 
     def create(self, title: str, about: str = "", mode: Mode = "standard") -> Project:
@@ -214,6 +219,8 @@ class Workspace:
             readme += f"\n{about.strip()}\n"
         (path / "README.md").write_text(readme, "utf-8")
         (path / ".gitignore").write_text(GITIGNORE, "utf-8")
+        # Tests run from the first step; "no tests yet" isn't a failure until some exist.
+        (path / ".pablo" / "checks.yaml").write_text(CHECKS_YAML, "utf-8")
         who = ["-c", "user.name=Pablo", "-c", "user.email=pablo@localhost"]
         for cmd in (["init", "-q", "-b", "main"], ["add", "-A"],
                     [*who, "commit", "-q", "-m", f"Start {title.strip()}"]):  # fmt: skip
