@@ -11,6 +11,7 @@ import re
 import threading
 import uuid
 from collections.abc import Callable, Sequence
+from contextlib import suppress
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -47,6 +48,7 @@ from pablo.verify import (
     Verdict,
     _recount_hunks,
     apply_diff,
+    tree_hash,
     verify_diff,
 )
 
@@ -128,9 +130,16 @@ ANSWER_PROMPT = """You are a specialist on a small local team. Answer directly a
 
 
 class PartialChecksFailed(RuntimeError):
-    def __init__(self, verdict: Verdict) -> None:
-        super().__init__(f"checks failed on the hunks you kept: {verdict.summary()}")
+    def __init__(self, verdict: Verdict, what: str = "the hunks you kept") -> None:
+        super().__init__(f"checks failed on {what}: {verdict.summary()}")
         self.verdict = verdict
+
+
+class StaleChecksFailed(PartialChecksFailed):
+    """The repo changed since the diff was checked, and on today's repo the checks fail."""
+
+    def __init__(self, verdict: Verdict) -> None:
+        super().__init__(verdict, "today's repo (it changed since this was checked)")
 
 
 @dataclass
@@ -267,6 +276,7 @@ class Orchestrator:
         self.traces = TraceStore(settings.traces_dir)
         self.runs: dict[str, Run] = {}
         self._lock = threading.Lock()
+        self._deciding = threading.RLock()
 
     # ---- helpers -------------------------------------------------------------
     def _emit(self, kind: str, run: Run, **data: Any) -> None:
@@ -339,9 +349,12 @@ class Orchestrator:
             self.runs[run.id] = run
         folder = self.settings.home / "runs"
         folder.mkdir(parents=True, exist_ok=True)
-        (folder / f"{run.id}.json").write_text(
-            json.dumps(run.to_dict(private=True), indent=2), "utf-8"
-        )
+        # Write a temp file and rename it over: a crash mid-write leaves the old run whole,
+        # never a half file that `recent()` would skip (and the inbox would lose).
+        path = folder / f"{run.id}.json"
+        tmp = path.with_name(f".{run.id}.{threading.get_ident()}.tmp")
+        tmp.write_text(json.dumps(run.to_dict(private=True), indent=2), "utf-8")
+        tmp.replace(path)
 
     def get(self, run_id: str) -> Run:
         with self._lock:
@@ -880,6 +893,10 @@ class Orchestrator:
         If those checks fail you get PartialChecksFailed; `force` applies it anyway.
         Partial approvals are not training data: the model's output wasn't what you kept.
         """
+        with self._deciding:  # two approvals of one run (a double click, chat + button) apply once
+            return self._approve(run_id, hunks, force=force)
+
+    def _approve(self, run_id: str, hunks: list[str] | None, *, force: bool) -> Run:
         run = self.get(run_id)
         if run.state not in ("ready", "needs_you"):
             raise ValueError(f"run {run_id} is {run.state}")
@@ -899,6 +916,8 @@ class Orchestrator:
                 if not verdict.clean and not force:
                     raise PartialChecksFailed(verdict)
                 run.applied_hunks = [h for h in every if h in keep]
+        if patch and decision == "approved":
+            self._recheck_if_stale(run, force=force)
         if patch:
             ok, err = apply_diff(self.repo, patch)
             if not ok:
@@ -920,7 +939,37 @@ class Orchestrator:
                     )
                 ):
                     self.reject(other.id)
+            self._cancel_night_retries(run.group)
         return run
+
+    def _cancel_night_retries(self, group: str) -> None:
+        """You approved one of the group: a retry still queued for tonight has nothing to do."""
+        from pablo.overnight import JobQueue
+
+        queue = JobQueue(self.settings.home)
+        for job in queue.pending():
+            if job.group == group:
+                with suppress(KeyError, ValueError):  # it started or went meanwhile
+                    queue.cancel(job.id)
+
+    def _recheck_if_stale(self, run: Run, *, force: bool) -> None:
+        """A whole diff was checked against the repo as it was then. If the repo has changed
+        since (another approval, your own edits), check it again before it lands: a diff can
+        still apply cleanly and break what changed. A change that was clean and now isn't
+        stops here unless `force`; one that already failed you accepted as it was."""
+        checked = (run.verdict or {}).get("tree", "")
+        if not checked or checked == tree_hash(self.repo):
+            return
+        verdict = verify_diff(
+            self.repo, run.diff, self.checks, sandbox=self.sandbox, baselines=self.baselines
+        )
+        was_clean = bool((run.verdict or {}).get("clean"))
+        run.verdict = verdict.to_dict()
+        self._emit("evidence", run, summary=verdict.summary(), passed=verdict.passed,
+                   clean=verdict.clean, recheck=True)  # fmt: skip
+        if was_clean and not verdict.clean and not force:
+            self._save(run)
+            raise StaleChecksFailed(verdict)
 
     def reject(self, run_id: str) -> Run:
         run = self.get(run_id)

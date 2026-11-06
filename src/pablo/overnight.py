@@ -10,10 +10,13 @@ any other run, and you still approve them.
 
 from __future__ import annotations
 
+import fcntl
 import json
+import os
 import threading
 import uuid
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
@@ -82,11 +85,25 @@ class Job:
 
 
 class JobQueue:
-    """A JSON file of jobs. Small and inspectable on purpose."""
+    """A JSON file of jobs. Small and inspectable on purpose.
+
+    Many `JobQueue`s touch one file: `pablo serve`, a retry thread, the CLI. Every read and
+    every read-change-write holds an flock on `queue.lock`, which works across threads and
+    processes alike, so no change is lost to another one landing in between.
+    """
 
     def __init__(self, home: Path) -> None:
         self.path = home / "queue.json"
-        self._lock = threading.Lock()
+
+    @contextmanager
+    def _locked(self) -> Iterator[None]:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with (self.path.parent / "queue.lock").open("a+") as fh:
+            fcntl.flock(fh, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(fh, fcntl.LOCK_UN)
 
     def _read(self) -> list[Job]:
         if not self.path.is_file():
@@ -94,14 +111,19 @@ class JobQueue:
         return [Job(**row) for row in json.loads(self.path.read_text("utf-8"))]
 
     def _write(self, jobs: list[Job]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".tmp")
+        tmp = self.path.with_name(f".queue.{os.getpid()}.{threading.get_ident()}.tmp")
         tmp.write_text(json.dumps([j.to_dict(private=True) for j in jobs], indent=2), "utf-8")
         tmp.replace(self.path)
 
     def all(self) -> list[Job]:
-        with self._lock:
+        with self._locked():
             return self._read()
+
+    def get(self, job_id: str) -> Job:
+        found = next((j for j in self.all() if j.id == job_id), None)
+        if found is None:
+            raise KeyError(job_id)
+        return found
 
     def add(
         self,
@@ -117,14 +139,14 @@ class JobQueue:
     ) -> Job:
         job = Job(task=task, lane=lane, task_id=task_id, group=group, retried_from=retried_from,
                   project=project, by=by, notes=list(notes))  # fmt: skip
-        with self._lock:
+        with self._locked():
             jobs = self._read()
             jobs.append(job)
             self._write(jobs)
         return job
 
     def update(self, job_id: str, **changes: Any) -> Job:
-        with self._lock:
+        with self._locked():
             jobs = self._read()
             for job in jobs:
                 if job.id == job_id:
@@ -134,13 +156,31 @@ class JobQueue:
                     return job
         raise KeyError(job_id)
 
-    def cancel(self, job_id: str) -> Job:
-        job = next((j for j in self.all() if j.id == job_id), None)
-        if job is None:
-            raise KeyError(job_id)
-        if job.status != "queued":
-            raise ValueError(f"job {job_id} is {job.status}")
-        return self.update(job_id, status="cancelled")
+    def cancel(self, job_id: str, why: str = "") -> Job:
+        """Cancel a job that hasn't started. The check and the change happen under one lock,
+        so a job the runner just picked up is never marked cancelled while it runs."""
+        with self._locked():
+            jobs = self._read()
+            job = next((j for j in jobs if j.id == job_id), None)
+            if job is None:
+                raise KeyError(job_id)
+            if job.status != "queued":
+                raise ValueError(f"job {job_id} is {job.status}")
+            job.status, job.error = "cancelled", why
+            self._write(jobs)
+            return job
+
+    def claim(self, job_id: str) -> Job | None:
+        """Mark a queued job running, under the lock; None if it was cancelled or taken."""
+        with self._locked():
+            jobs = self._read()
+            job = next((j for j in jobs if j.id == job_id), None)
+            if job is None or job.status != "queued":
+                return None
+            job.status = "running"
+            job.started_at = now_local().isoformat(timespec="seconds")
+            self._write(jobs)
+            return job
 
     def pending(self) -> list[Job]:
         return [j for j in self.all() if j.status == "queued"]
@@ -177,12 +217,22 @@ class OvernightRunner:
                     if self.cfg.default_lane in self.orch.settings.lanes
                     else None
                 )
-                self.queue.update(
-                    job.id, status="running", started_at=now_local().isoformat(timespec="seconds")
-                )
+                target = self.orch
+                try:
+                    if self.workspace is not None and job.project:
+                        target = self.workspace.orch(job.project)  # KeyError: project gone
+                except KeyError:
+                    pass  # claimed and failed below, with the reason
+                if job.group and _group_decided(target, job.group):
+                    with suppress(KeyError, ValueError):
+                        self.queue.cancel(job.id, "you already approved a change for this task")
+                    continue
+                claimed = self.queue.claim(job.id)  # cancelled since the list was read: skip
+                if claimed is None:
+                    continue
+                job = claimed
                 self._emit("queue", job, status="running", text=f"tonight · {job.task[:60]}")
                 try:
-                    target = self.orch
                     if self.workspace is not None and job.project:
                         target = self.workspace.orch(job.project)  # KeyError: project gone
                     with gpu_job(Priority.NIGHT):  # yields to anyone working, even at night
@@ -213,6 +263,11 @@ class OvernightRunner:
         finally:
             self._running.release()
         return finished
+
+
+def _group_decided(orch: Orchestrator, group: str) -> bool:
+    """Has a run of this group (the run a night retry retries) been approved?"""
+    return any(r.group == group and r.state == "approved" for r in orch.recent(200))
 
 
 # ---- the brief -----------------------------------------------------------------
