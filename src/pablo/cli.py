@@ -870,6 +870,39 @@ def eval_build(
         console.print("appended to evals/build-results.jsonl and docs/benchmarks.md")
 
 
+@app.command("eval-chat")
+def eval_chat(
+    lane: Annotated[str, typer.Option(help="auto (Hybrid), coder, deep, advisor")] = "auto",
+    spoken: Annotated[bool, typer.Option(help="Ask as a voice call would")] = False,
+    fake: FakeOpt = False,
+    write: Annotated[
+        bool, typer.Option(help="Append to evals/chat-results.jsonl and docs/benchmarks.md")
+    ] = False,
+) -> None:
+    """Does the chat model talk, start one change, or plan, when it should? (evals/chat)"""
+    from pablo.chat_eval import append_chat, chat_markdown, chat_summary, run_chat_eval
+    from pablo.evals import current_commit
+
+    settings = _settings(fake)
+
+    def show(c: Any) -> None:
+        mark = "[green]ok[/]  " if c.chose == c.label else "[red]MISS[/]"
+        console.print(f"  {mark} wanted {c.label:<4} chose {c.chose:<4} {c.text[:60]}")
+
+    cases = run_chat_eval(settings, _backend(settings, fake), lane=lane, spoken=spoken,
+                          on_case=show)  # fmt: skip
+    summary = chat_summary(cases, lane=lane, spoken=spoken, commit=current_commit(Path(".")))
+    text = chat_markdown(summary)
+    console.print(text.split("\n\n", 1)[1])
+    if write and not fake:
+        append_chat(summary)
+        docs = Path("docs/benchmarks.md")
+        if docs.is_file():
+            with docs.open("a", encoding="utf-8") as fh:
+                fh.write("\n" + text + "\n")
+        console.print("appended to evals/chat-results.jsonl and docs/benchmarks.md")
+
+
 @app.command("eval-judge")
 def eval_judge(
     fake: FakeOpt = False,
