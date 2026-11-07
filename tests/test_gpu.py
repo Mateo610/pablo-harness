@@ -377,3 +377,20 @@ def test_an_eval_queues_on_the_real_homes_table(settings: Settings) -> None:
     run_suite(settings, backend, only={"ledger-by-payee-sums"}, python=sys.executable,
               sandbox=LocalSandbox())  # fmt: skip
     assert seen and all(seen)  # the eval's leases are in the real home, not its throwaway one
+
+
+def test_an_unload_warms_the_router_again(tmp_path: Path) -> None:
+    """llama-swap's unload drops the CPU router too; it's asked for again straight away."""
+    import threading
+
+    box = Box(warm_after=1)
+    s = with_tts(tmp_path, box)
+    warmed: list[tuple[str, str]] = []
+    done = threading.Event()
+    s.keep_warm = ["router"]
+    s.warm = lambda url, model: (warmed.append((url, model)), done.set())  # type: ignore[assignment,func-returns-value]
+    with s.lease("pablo/deep"):
+        pass
+    s.ensure_resident("tts")
+    assert done.wait(2) and warmed == [("http://x/unload", "router")]
+    assert box.log == ["stop", "unload", "start"]

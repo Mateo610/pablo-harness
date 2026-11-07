@@ -173,9 +173,14 @@ class SentenceCutter:
     """
 
     MIN_CHARS = 24
+    # The first thing said is what you wait for. Speech takes time per word (about 2 s for one
+    # word, 8 s for twelve on Pablo, 2026-11-07), so the first piece ends at its first clause
+    # (a comma, colon or dash after FIRST_WORDS words) or its first sentence, however short.
+    FIRST_WORDS = 4
 
     def __init__(self) -> None:
         self._buf = ""
+        self._first = True
 
     def feed(self, delta: str) -> list[str]:
         self._buf += delta
@@ -188,12 +193,23 @@ class SentenceCutter:
             said = speakable(piece)
             if said:
                 out.append(said)
+                self._first = False
 
     def _next_cut(self) -> int | None:
-        """The first sentence end past MIN_CHARS that isn't inside a code block."""
-        for match in re.finditer(r"(?<=[.!?])\s+|\n", self._buf):
+        """The first sentence end past MIN_CHARS that isn't inside a code block. Before
+        anything has been said: the first clause or sentence end, however short."""
+        ends = r"(?<=[.!?])\s+|\n" + (r"|(?<=[,;:\u2014])\s+|\s+-\s+" if self._first else "")
+        for match in re.finditer(ends, self._buf):
             cut = match.end()
-            if cut >= self.MIN_CHARS and self._buf[:cut].count("```") % 2 == 0:
+            if self._buf[:cut].count("```") % 2:
+                continue
+            before = self._buf[match.start() - 1] if match.start() else ""
+            clause = (before != "" and before in ",;:\u2014") or "-" in match.group()
+            if self._first and clause:
+                if len(self._buf[:cut].split()) >= self.FIRST_WORDS:
+                    return cut
+                continue
+            if cut >= self.MIN_CHARS or (self._first and speakable(self._buf[:cut])):
                 return cut
         return None
 
