@@ -94,6 +94,23 @@ def test_sentences_come_out_as_soon_as_they_end() -> None:
     )
 
 
+def test_waiting_sentences_are_spoken_in_one_request() -> None:
+    import queue
+
+    from pablo.voice import gather
+
+    waiting: queue.Queue[str | None] = queue.Queue()
+    assert gather("One.", waiting) == ("One.", False)  # nothing waiting: speak it now
+    for line in ["Two.", "Three.", None]:
+        waiting.put(line)
+    assert gather("One.", waiting) == ("One. Two. Three.", True)
+    for line in ["b" * 30, "c" * 30, "d" * 30]:
+        waiting.put(line)
+    text, ended = gather("a" * 30, waiting, limit=70)
+    assert text == f"{'a' * 30} {'b' * 30} {'c' * 30}" and not ended
+    assert waiting.get_nowait() == "d" * 30  # past the limit: the next clip
+
+
 def test_a_voice_turn_streams_text_then_speech_into_a_conversation(
     settings: Settings, repo: Path
 ) -> None:
@@ -104,8 +121,13 @@ def test_a_voice_turn_streams_text_then_speech_into_a_conversation(
     assert kinds[:2] == ["conversation", "heard"] and kinds[-1] == "done"
     assert out[1]["text"] == "add a sub function"
     audio = [e for e in out if e["type"] == "audio"]
-    assert [a["seq"] for a in audio] == [0, 1, 2]
+    # The first sentence is spoken alone; later ones may share a clip (whatever was waiting).
+    assert [a["seq"] for a in audio] == list(range(len(audio))) and 2 <= len(audio) <= 3
     assert base64.b64decode(audio[0]["data"]) == b"RIFFSure, I can do that for you right now."
+    assert " ".join(a["text"] for a in audio) == (
+        "Sure, I can do that for you right now. It goes next to add in calc.py. "
+        "The checks will run before you see it."
+    )
     assert all("def sub" not in t and "RUN" not in t for t, _ in tts.said)  # never read code aloud
     assert SPOKEN.strip()[:30] in backend.calls[0][1][0]["content"]
     turn = out[-1]["turn"]

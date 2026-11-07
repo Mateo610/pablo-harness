@@ -10,6 +10,7 @@ streams, and each finished sentence is spoken while the next is still being writ
 
 from __future__ import annotations
 
+import queue
 import re
 from pathlib import Path
 from typing import Any, Protocol
@@ -200,6 +201,27 @@ class SentenceCutter:
     def flush(self) -> list[str]:
         said, self._buf = speakable(self._buf), ""
         return [said] if said else []
+
+
+CHUNK_CHARS = 400
+
+
+def gather(first: str, waiting: queue.Queue[str | None], *, limit: int = CHUNK_CHARS
+           ) -> tuple[str, bool]:  # fmt: skip
+    """`first` plus every sentence already waiting, up to `limit` characters: one request to
+    the voice server instead of one per sentence. Each request costs a round trip and comes back
+    with its own silence at both ends, which is what made the gaps between sentences.
+    Returns (text, whether the end of the reply was reached)."""
+    parts = [first]
+    while sum(len(p) + 1 for p in parts) < limit:
+        try:
+            nxt = waiting.get_nowait()
+        except queue.Empty:
+            return " ".join(parts), False
+        if nxt is None:
+            return " ".join(parts), True
+        parts.append(nxt)
+    return " ".join(parts), False
 
 
 _STEP_OF = re.compile(r"This is step ([\w.]+) of a plan")

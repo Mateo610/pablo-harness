@@ -46,6 +46,7 @@ from pablo.voice import (
     Transcriber,
     VoiceOff,
     engines,
+    gather,
     news_line,
     reachable,
     vocabulary,
@@ -443,7 +444,12 @@ def create_app(
             spoke: dict[str, Any] = {"n": 0, "error": ""}
 
             def speaker() -> None:  # synthesis overlaps generation
-                while (line := sentences.get()) is not None:
+                ended = False
+                while not ended and (line := sentences.get()) is not None:
+                    # The first sentence goes alone, so the voice starts fast; after that,
+                    # whatever is waiting goes in one request (fewer round trips and gaps).
+                    if spoke["n"] > 0:
+                        line, ended = gather(line, sentences)
                     try:
                         audio = tts.speak(line, voice_name)
                     except Exception as exc:
