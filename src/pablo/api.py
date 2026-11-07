@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from pablo import __version__
 from pablo.access import TOKEN_COOKIE, Access, Caller, Denied
+from pablo.board import plan_board
 from pablo.convos import AUTO, OWNER, Chat, Memory, MemoryStatus, PlanSize
 from pablo.details import first_paragraph, run_details
 from pablo.files import MAX_BYTES as FILE_MAX_BYTES
@@ -262,6 +263,13 @@ def create_app(
         except (ValueError, PlanBusy) as exc:
             raise HTTPException(409, str(exc)) from exc
         return started.model_dump(mode="json")
+
+    @app.get("/api/plans")
+    def plan_board_list(request: Request) -> list[dict[str, Any]]:
+        """Every chat's plan in every project (the Work board): yours, or all for the owner,
+        with progress, the step it's on, and the files two live plans share."""
+        caller = caller_of(request)
+        return plan_board(ws, plans, store, viewer=caller.profile, owner=caller.is_owner)
 
     @app.delete("/api/plan")
     def plan_discard(request: Request, conversation: str, project: str = "") -> dict[str, Any]:

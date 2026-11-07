@@ -9,6 +9,14 @@ starts a change; `PLAN:`/`STEP:` lines draft a plan; `BUILD: go` builds it a ste
 turn spoken: whisper.cpp in, Qwen3-TTS out, sentence by sentence, with spoken news when a run
 finishes.
 
+Since C14 (2026-11-07): two modes, **Auto** (the default, as above) and **Plan**, which only you
+turn on and which never starts a run or a build. Plan · Minor asks a question or two, then writes
+steps. Plan · Major interviews one question at a time, writes a spec (`SPEC:` … `END SPEC`, drawn
+as a card), then a plan in phases (`PHASE: title | done when`). Each chat has its own plan
+(`.pablo/plans/<conversation>.yaml`), shown in a panel beside the chat. Approve switches the chat
+to Auto, which builds it. A stuck step can be fixed, retried or skipped from its card. Work lists
+every chat's plan and warns when two live plans share files.
+
 ## What we know
 
 - **[measured]** Voice prompts keep the same system prompt every turn so llama.cpp reuses its
@@ -58,6 +66,15 @@ finishes.
   can't see the diff, so you approve on trust in the checks and judge.
 - **[measured]** Voice first word on Pablo, 2026-11-07, coder and the voice server already up. Five orchestrator turns: 4.58, 4.69, 4.37, 4.10, 4.80 s (median 4.58, worst 4.80). Five advisor turns: 11.19, 7.15, 8.47, 5.76, 5.83 s (median 7.15, worst 11.19). The 2.5 s target is missed. On a warm orchestrator turn, speech-to-text is ~1.96 s and the first token ~0.30 s after that; speaking the one-word reply takes about 2 s more. Wake after a deep run, not part of the warm time: 22.9 s from the transcript to the first audio. The Voice page showed "waking the voice…".
 - **[gap]** The phone layout is the old cockpit.
+- **[gap]** Plan mode's prompts (`src/pablo/prompts/plan_minor.md`, `plan_major.md`) have only met
+  scripted replies (`tests/test_plan_mode.py`). Nobody has seen whether Qwen asks one question at
+  a time, stops asking, writes a well-formed `SPEC:` block, or writes `PHASE:` lines. The chat
+  eval doesn't cover Plan mode.
+- **[suspected]** The Work board finds "planned" files by matching paths named in a step's text
+  (`board.named_paths`). A step that says "the reader module" names no file, so two plans can
+  collide without a warning until one of them has touched the file.
+- **[observed]** Under 1500 px the conversation list hides while the plan panel is open (the
+  thread would be ~470 px otherwise, 2026-11-07 screenshots).
 
 ## Ideas
 
@@ -67,6 +84,7 @@ finishes.
 | Spoken summaries of a diff in one sentence ("adds a threshold function and two tests") from the judge's summary | you approve by voice without opening the screen (observed) |
 | Ask "apply it?" back when consent words are mixed with changes ("yes, but…") | fewer wrong applies (observed) |
 | Log first-word latency on each turn and show it | p50/p95 on Agents; the 2026-11-07 sample is median 4.6 s, worst 4.8 s on the orchestrator |
+| A Plan-mode set for `pablo eval-chat`: does Minor ask ≤ 2 questions, does Major ask one at a time and end in a spec, then phases | questions per reply, turns to a spec, well-formed `PHASE:` lines (measured) |
 
 ## Open questions
 

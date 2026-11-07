@@ -121,6 +121,10 @@ This fits into the Work tab redesign (clearer, less crowded, distinct from Home)
    different parts of the same project.
 3. Clicking a row opens its chat with the plan panel showing.
 4. Teammates see only their own plans. The owner sees everyone's.
+5. *(Built 2026-11-07.)* The board sits at the top of Work, with the old Workbench's tools kept
+   under it (Matt). A finished plan stays on the board for a day. "Plans to touch" means the paths
+   named in a step's text, so a step that names no file can't be warned about until it has
+   touched one. A teammate is warned about anyone else's plan, but without a name.
 
 **Done when:** two chats running plans in one project both show live progress in Work, and an
 overlapping file shows the warning.

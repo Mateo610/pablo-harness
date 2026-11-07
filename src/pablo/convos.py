@@ -346,6 +346,12 @@ class Store:
             raise KeyError(f"no conversation {cid}")
         return Conversation(**dict(rows[0]))
 
+    def find_conversation(self, cid: str) -> Conversation | None:
+        """Any profile's conversation, for the box owner's views (the Work board). Never use it
+        to show a conversation's messages: that's `conversation(cid, profile)`."""
+        rows = self._q("select * from conversations where id = ?", (cid,))
+        return Conversation(**dict(rows[0])) if rows else None
+
     def conversations(self, profile: str, limit: int = 50) -> list[Conversation]:
         rows = self._q(
             "select * from conversations where profile_id = ? order by updated_at desc limit ?",

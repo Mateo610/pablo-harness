@@ -99,6 +99,29 @@ export interface Phase {
   tasks: PlanTask[];
 }
 
+/** One chat's plan on the Work board (C14d). */
+export interface BoardRow {
+  project: string;
+  project_title: string;
+  conversation: string;
+  title: string;
+  by: string;
+  /** your own chat: it opens from the board */
+  mine: boolean;
+  goal: string;
+  size: "" | PlanSize;
+  state: "draft" | "running" | "paused" | "done";
+  updated: string;
+  steps: { id: string; status: TaskStatus }[];
+  done: number;
+  total: number;
+  current: { id: string; title: string; status: TaskStatus; run: string | null } | null;
+  touched: string[];
+  planned: string[];
+  /** live plans in the same project that share files; "" conversation: someone else's */
+  overlaps: { conversation: string; title: string; files: string[] }[];
+}
+
 export interface Plan {
   project: string;
   goal: string;
@@ -366,6 +389,8 @@ export const api = {
   /** The project's plan; a chat's plan (`conversation`); or your newest live one (`latest`, voice). */
   plan: (project = "", conversation = "", latest = false) => call<Plan>(`/api/plan${planQuery(project, conversation, latest)}`),
   planGo: (project = "", conversation = "") => call<Plan>(`/api/plan/go${planQuery(project, conversation)}`, { method: "POST" }),
+  /** Every chat's plan in every project (the Work board): yours, or all of them for the owner. */
+  planBoard: () => call<BoardRow[]>("/api/plans"),
   /** Start over: throw a chat's draft (or paused, or finished) plan away. */
   planDiscard: (project: string, conversation: string) =>
     call<{ discarded: boolean }>(`/api/plan${planQuery(project, conversation)}`, { method: "DELETE" }),

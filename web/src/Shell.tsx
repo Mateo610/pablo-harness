@@ -9,6 +9,7 @@ import { ChatPage } from "./Chat";
 import { Home } from "./Home";
 import { initials, usePoll, useRoute } from "./hud";
 import { Voice } from "./Voice";
+import { Work } from "./Work";
 
 const ICONS: Record<string, JSX.Element> = {
   home: (
@@ -87,7 +88,7 @@ export function Shell() {
         {page === "advisor" && <ChatPage key="advisor" mode="advisor" id={route.id} me={me} lanes={lanes} />}
         {page === "voice" && <Voice me={me} />}
         {page === "agents" && <Agents lanes={lanes} res={res} />}
-        {page === "work" && <App />}
+        {page === "work" && <Work />}
       </main>
     </div>
   );
