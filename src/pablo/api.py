@@ -365,9 +365,18 @@ def create_app(
             run_in_threadpool(reachable, cfg.stt_url), run_in_threadpool(reachable, cfg.tts_url)
         )
         # The voice server may be paused for deep: it wakes on the next turn, so that's ready.
-        state = "running" if tts else (resident.state if resident else "down")
-        if state == "unknown":
+        # Trust the health check over this process's memory: another Pablo process (a CLI deep
+        # run, say) can stop the unit without this one hearing about it.
+        if tts:
+            state = "running"
+        elif resident is None:
+            state = "down"
+        elif resident.state == "starting":
+            state = "starting"
+        else:
             state = "paused"
+            if resident.state == "running":
+                resident.state = "paused"  # so the next turn wakes it, and says so
         return {"enabled": cfg.enabled, "stt": stt, "tts": tts, "voices": cfg.voices,
                 "tts_state": state}  # fmt: skip
 
