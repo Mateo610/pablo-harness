@@ -188,6 +188,102 @@ Run this after C14f is merged, on a night with nothing else on the GPU.
 
 **Report back:** the numbers from step 3 and the doc's `## Loop log`.
 
+## C14h–n · Major plans you can trust (planned 2026-11-07)
+
+Today a Major plan is only a prompt (`src/pablo/prompts/plan_major.md`). Nothing checks that the
+model asks one question per reply, writes every spec heading, or writes `PHASE:` lines that
+parse, and a phase's "done when" is never checked. With a ~30B local model, format drift is the
+likely failure. These parts close that gap the way GSD does, sized for one GPU. Do them **after
+"Try the new chat for real"**: the first Qwen transcripts say which failures matter most.
+Order: h and i first (one milestone), then j, k, l, m, n. Each works on its own.
+
+### C14h · Check each Major reply, and repair it once
+1. `src/pablo/plancheck.py`: pure checks on a Major reply, by stage:
+   - **Discuss:** exactly one question (one `?` sentence that isn't rhetorical, no numbered list
+     of questions), and no `SPEC:` or `PHASE:` lines yet.
+   - **Spec:** a `SPEC:` … `END SPEC` block with all six headings (Goal, Who it's for,
+     Requirements, Out of scope, Done when, Open questions), requirements as a list.
+   - **Plan:** a `PLAN:` line, 2–6 `PHASE: title | done when` lines (both halves filled in), each
+     followed by 2–6 `STEP:` lines, 24 at most, no step before the first phase.
+   The stage comes from the conversation: no spec yet → discuss or spec; a spec the user said
+   to use → plan.
+2. On a failed check, `Conversations.say` asks the same model again **once**, adding one line
+   that names what was wrong ("You asked three questions; ask only the most important one.").
+   If the second reply also fails, keep it, and record the failure.
+3. Record per Plan turn (in the turn's trace, no new store): stage, passed or failed, what
+   failed, whether the repair fixed it.
+4. **Plan-mode chat eval:** `evals/chat/plan.yaml`, 8–10 scripted Major conversations (a CLI
+   tool, a small web page, a refactor in an existing repo, a vague request, a request that
+   names exact function names), and a `--set plan` option on `pablo eval-chat` (today it reads
+   only `evals/chat/messages.yaml`). It scores: questions per reply, turns to a spec, first-try
+   format pass rate, pass rate after repair, and whether the user's names survive into the steps.
+**Done when:** the checks have unit tests for each failure; a malformed reply from `FakeBackend`
+gets one repair and the repaired reply is what the user sees; the plan set runs on Pablo and its
+numbers are in `docs/review/conversation.md`.
+
+### C14i · A plan checker on the bigger model
+1. Before a Major plan is shown, the reviewer lane (the bigger model, set in `config/lanes.yaml`;
+   the judge until a 70B is in) gets the spec and the plan. It answers in JSON: every requirement
+   and the step(s) that cover it, steps that name no file, steps with no way to check them,
+   phases that don't leave something runnable, and names from the user that changed.
+2. If anything is missing, the planner revises with that list. **At most 2 revisions**, then the
+   plan is shown with whatever is still missing listed under it ("Not covered: R4").
+3. Number the requirements in the spec (`R1`, `R2`…) so steps and the checker can point at them.
+**Done when:** on the plan set, coverage gaps found by the checker are fixed by a revision in
+most cases (the share is recorded, not assumed), and the checker adds no more than one extra
+model call per plan on average when the plan was already fine.
+
+### C14j · A gray-areas card instead of open-ended questions
+1. Major opens with a card: the 4–6 open decisions that matter for *this kind* of work, picked
+   by the model from the request and the repo (a UI: layout, empty states, interactions; a CLI:
+   flags, output format, errors; a data job: input shape, failures, reruns), each with the
+   default Pablo would use.
+2. You tick the ones you want to talk about. Pablo asks about those, one at a time. The rest go
+   into the spec under **Assumed** with their defaults, so you can see and change them.
+3. It's a selection, not a form: no text fields on the card, and "talk about all of them" and
+   "use every default" are one click each.
+**Done when:** a Major plan with every default chosen reaches a spec in one turn, and the plan
+set shows fewer questions per plan than C14h's baseline without worse coverage.
+
+### C14k · Read the repo first, and give steps detail
+1. Before the first question in a project with code, Pablo builds a short brief from the repo
+   map and symbol index it already has (`context.py`): stack, layout, test command, the modules
+   the request names. The interview prompt gets it, so it doesn't ask what the code answers.
+2. Steps carry detail: `STEP: <what> | files: a.py, tests/test_a.py | check: <how to tell>`.
+   `parse_phases` reads it into `Task.detail`, a new `Task.files`, and `Task.check`. A step's run
+   gets its files as context and its check as the "done" line.
+3. The Work board uses `Task.files` for "plans to touch" (exact, not guessed from text).
+**Done when:** in the plan set's existing-repo cases, steps name files that exist (or say
+"new"), and the board's overlap warning comes from `files:`.
+
+### C14l · Plan one phase at a time
+1. A Major plan writes **phase 1 in full** and later phases as outlines (title, done when, one
+   line each). An outline phase has no steps yet.
+2. When the plan reaches an outline phase, it pauses: Pablo asks 1–3 questions about that phase
+   (what phase 1 taught it, what changed), then writes its steps, checked as in C14h–i.
+3. `ROADMAP.md` shows outline phases as such. The Work board counts only written steps, and
+   says "phase 2 to plan" when that's where it stands.
+**Done when:** a 3-phase plan builds phase 1, stops for phase 2's questions, and phase 2's steps
+can use what phase 1 added (named files, functions).
+
+### C14m · "Done when" becomes a check you walk through
+1. When a phase's last step is approved, Pablo lists its testable items (from the phase's "done
+   when" and the requirements its steps cover) and asks about each one at a time: pass, fail, or
+   what's wrong. It works by voice too ("say pass or tell me what's off").
+2. A failure becomes a fix step, added to the phase and built like any other (C14c's Fix it with
+   the user's words as the feedback). The phase closes when every item passes or you skip it.
+3. The walkthrough is written to `.pablo/plans/<conversation>/UAT.md`.
+**Done when:** a phase with one failing item gets a fix step from your words, and closes after it.
+
+### C14n · Small things that make Major nicer
+- An interview progress line under the chat: Goal ✓ · Users ✓ · Scope … · Checks …
+- **Skip the questions:** write the spec now from what's known, with assumptions listed.
+- **Ask me everything at once:** all remaining questions in one reply, for people in a hurry.
+**Done when:** each is one click and works in a Major conversation at any point before the plan.
+
+**Not doing (for now):** GSD's parallel waves (one GPU: parallel steps would queue anyway) and
+separate research agents (the deep lane can be asked by hand).
+
 ---
 
 ## Don't
