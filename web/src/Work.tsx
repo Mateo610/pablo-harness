@@ -1,10 +1,14 @@
-// Work: the review desk. Every change waiting for a decision, grouped by project and by where
-// it came from; one open at a time with its history, its evidence, and buttons that say what
-// they do. Home is the overview and Chat is where you ask; Work is where you decide.
+// Work: where you decide. Three views, one switch:
+// - Changes (default): the review desk. Every change waiting for a decision, grouped by project
+//   and where it came from; one open at a time with its history, evidence and decision.
+// - Plans (C14d): every chat's plan across projects, with files two plans share.
+// - Workbench: the v1 tools that have no other home yet (project plan, compare, replay).
+// Home is the overview and Chat is where you ask; Work is where you decide.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ApiError, api, type HarnessEvent, type Me, type Run, type Verdict } from "./api";
+import { App } from "./App";
+import { ApiError, api, type BoardRow, type HarnessEvent, type Me, type Run, type TaskStatus, type Verdict } from "./api";
 import { laneColor, laneName, stateLabel } from "./components";
-import { ago, go, STATE_COLOR, useEvents } from "./hud";
+import { ago, go, STATE_COLOR, useEvents, usePoll } from "./hud";
 import { parseDiff } from "./hunks";
 
 type Filter = "needs" | "ready" | "stale" | "decided";
@@ -36,7 +40,37 @@ function lanePart(run: Run): string {
   return run.self_judged ? `${laneName("advisor")} · self-judged` : laneName(run.lane);
 }
 
+type View = "changes" | "plans" | "workbench";
+const VIEWS: { key: View; label: string }[] = [
+  { key: "changes", label: "CHANGES" },
+  { key: "plans", label: "PLANS" },
+  { key: "workbench", label: "WORKBENCH" },
+];
+
 export function Work({ me, focus }: { me: Me | null; focus: string }) {
+  // #/work/plans and #/work/workbench pick a view; any other id is a run to open in Changes.
+  const view: View = focus === "plans" || focus === "workbench" ? focus : "changes";
+  return (
+    <div className="w-shell">
+      <nav className="w-views h-seg" aria-label="Work views">
+        {VIEWS.map((v) => (
+          <button key={v.key} aria-pressed={view === v.key} onClick={() => go("work", v.key === "changes" ? "" : v.key)}>
+            {v.label}
+          </button>
+        ))}
+      </nav>
+      {view === "changes" && <Desk me={me} focus={focus} />}
+      {view === "plans" && <PlansBoard />}
+      {view === "workbench" && (
+        <section className="h-workbench" aria-label="Workbench">
+          <App />
+        </section>
+      )}
+    </div>
+  );
+}
+
+function Desk({ me, focus }: { me: Me | null; focus: string }) {
   const [inbox, setInbox] = useState<Run[] | null>(null);
   const [decided, setDecided] = useState<Run[]>([]);
   const [filter, setFilter] = useState<Filter>("needs");
@@ -619,4 +653,95 @@ function describe(e: HarnessEvent): string {
   if (typeof d.state === "string") return d.state.replace("_", " ");
   if (typeof d.question === "string") return d.question;
   return "";
+}
+
+const STATE_WORD: Record<BoardRow["state"], string> = { running: "building", paused: "paused", draft: "draft", done: "done" };
+const STEP_COLOR: Record<TaskStatus, string> = {
+  done: "var(--status-pass)",
+  skipped: "var(--ink-faint)",
+  active: "var(--sys)",
+  needs_you: "var(--accent)",
+  blocked: "var(--status-fail)",
+  queued: "var(--line)",
+};
+const STEP_WORD: Partial<Record<TaskStatus, string>> = { needs_you: "waiting for you", active: "building", blocked: "stopped", queued: "next" };
+
+function PlansBoard() {
+  const [rows, reload] = usePoll(api.planBoard, 8000);
+  useEvents((e) => {
+    if (["decided", "judged", "needs_you", "finished"].includes(e.kind)) reload();
+  });
+  const list = rows ?? [];
+  const waiting = list.filter((r) => r.current?.status === "needs_you").length;
+  const building = list.filter((r) => r.state === "running").length;
+  const clashes = list.filter((r) => r.overlaps.length > 0).length;
+  return (
+    <div className="h-work">
+      <div className="h-page">
+        <header className="h-head">
+          <h1 className="h-title">PLANS</h1>
+          <span className="h-mono h-dim" style={{ fontSize: 12 }}>
+            {list.length} plan{list.length === 1 ? "" : "s"} · {building} building ·{" "}
+            <span style={{ color: waiting ? "var(--accent)" : undefined }}>{waiting} waiting for you</span>
+            {clashes > 0 && <> · <span style={{ color: "var(--accent)" }}>{clashes} sharing files</span></>}
+          </span>
+        </header>
+        <section aria-label="Plans" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <span className="h-cap">Plans, from every chat</span>
+          {rows === null && <span className="h-dim">Loading…</span>}
+          {rows !== null && list.length === 0 && (
+            <div className="h-frame h-pad">
+              <span style={{ fontSize: 14 }}>No plans yet.</span>
+              <span className="h-dim" style={{ fontSize: 13 }}>Turn on Plan in Chat and say what you're planning. Each chat's plan shows here while it builds, and for a day after it's done.</span>
+            </div>
+          )}
+          {list.map((r) => (
+            <PlanRow key={`${r.project}/${r.conversation}`} row={r} />
+          ))}
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function PlanRow({ row: r }: { row: BoardRow }) {
+  const Title = r.mine ? "a" : "span";
+  return (
+    <article className={`h-frame h-pad h-planrow ${r.current?.status === "needs_you" ? "amber" : ""}`} style={{ gap: 8 }}>
+      <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
+        <span className="h-chip" style={{ color: "var(--sys)" }}>{r.project_title}</span>
+        {r.size && <span className="h-mono h-dim" style={{ fontSize: 11 }}>{r.size.toUpperCase()}</span>}
+        <Title {...(r.mine ? { href: `#/chat/${r.conversation}` } : {})} style={{ fontSize: 15, fontWeight: 600, flex: 1, minWidth: 200, color: "var(--ink)" }}>
+          {r.goal || "Untitled plan"}
+        </Title>
+        <span className="h-mono" style={{ fontSize: 11.5, color: r.state === "running" ? "var(--sys)" : "var(--ink-muted)" }}>
+          {STATE_WORD[r.state]} · {r.done}/{r.total}
+        </span>
+      </div>
+      <div className="h-steps" role="img" aria-label={`${r.done} of ${r.total} steps finished`}>
+        {r.steps.map((s) => (
+          <span key={s.id} title={`${s.id} · ${s.status.replace("_", " ")}`} style={{ background: STEP_COLOR[s.status] }} />
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 13 }}>
+        {r.current ? (
+          <span style={{ color: r.current.status === "needs_you" ? "var(--accent)" : "var(--ink-body)" }}>
+            Step {r.current.id} · {r.current.title}
+            <span className="h-mono h-faint" style={{ fontSize: 11 }}> · {STEP_WORD[r.current.status] ?? r.current.status}</span>
+          </span>
+        ) : (
+          <span className="h-dim">Every step finished.</span>
+        )}
+        <span className="h-faint" style={{ marginLeft: "auto", fontSize: 12 }}>
+          {r.mine ? "your chat" : `by ${r.by}`} · “{r.title}” · {r.updated ? ago(r.updated) : ""}
+        </span>
+      </div>
+      {r.overlaps.map((o) => (
+        <div key={o.conversation || o.files.join()} className="h-overlap">
+          ⚠ Shares {o.files.length === 1 ? "a file" : `${o.files.length} files`} with{" "}
+          {o.conversation ? <a href={`#/chat/${o.conversation}`}>“{o.title}”</a> : o.title}: <span className="h-mono">{o.files.join(", ")}</span>
+        </div>
+      ))}
+    </article>
+  );
 }

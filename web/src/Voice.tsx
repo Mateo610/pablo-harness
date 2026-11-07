@@ -58,7 +58,8 @@ export function Voice({ me }: { me: Me | null }) {
   const watched = useRef(new Set<string>());
   const announced = useRef(new Set<string>());
   const news = useRef<string[]>([]);
-  const [plan] = usePoll(() => api.plan(project?.name ?? "").catch(() => null), 8000, [project?.name]);
+  // A voice call talks about your newest live plan in the project (it has no chat of its own).
+  const [plan] = usePoll(() => api.plan(project?.name ?? "", "", true).catch(() => null), 8000, [project?.name]);
   useEffect(() => {
     for (const l of lines) if (l.runId) watched.current.add(l.runId);
     for (const t of plan?.phases.flatMap((p) => p.tasks) ?? []) if (t.run) watched.current.add(t.run);
@@ -359,7 +360,7 @@ export function Voice({ me }: { me: Me | null }) {
       </section>
 
       <aside className="h-rail-r" style={{ flex: "0 0 400px" }} aria-label="Transcript">
-        {project && <PlanCard project={project.name} me={me} />}
+        {project && <PlanCard project={project.name} latest me={me} />}
         <span className="h-cap">Transcript</span>
         {lines.length === 0 && <span className="h-faint" style={{ fontSize: 12.5 }}>Talk like you would to any assistant. Ask for a change, or say "let's start a project that…": Pablo plans it with you, builds it one step at a time when you say go, and tells you out loud when a step is ready. Say "apply it" to keep it.</span>}
         {lines.map((l, i) => (

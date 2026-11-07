@@ -8,6 +8,7 @@ Every message in `evals/chat/messages.yaml` goes into a fresh conversation about
 from __future__ import annotations
 
 import json
+import shutil
 import tempfile
 import time
 import uuid
@@ -81,8 +82,9 @@ def run_chat_eval(
         chat = Recording(orch, workspace=ws, plans=plans)
         for case in cases:
             chat.started = []
-            plan_file = repo / ".pablo" / "plan.yaml"
-            plan_file.unlink(missing_ok=True)
+            # Each case is a new conversation, so its plan is its own; clear the old ones anyway.
+            (repo / ".pablo" / "plan.yaml").unlink(missing_ok=True)
+            shutil.rmtree(repo / ".pablo" / "plans", ignore_errors=True)
             conv = chat.start(lane=lane)
             started = time.perf_counter()
             turn = chat.say(conv.id, case.text, spoken=spoken)

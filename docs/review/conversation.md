@@ -9,6 +9,14 @@ starts a change; `PLAN:`/`STEP:` lines draft a plan; `BUILD: go` builds it a ste
 turn spoken: whisper.cpp in, Qwen3-TTS out, sentence by sentence, with spoken news when a run
 finishes.
 
+Since C14 (2026-11-07): two modes, **Auto** (the default, as above) and **Plan**, which only you
+turn on and which never starts a run or a build. Plan · Minor asks a question or two, then writes
+steps. Plan · Major interviews one question at a time, writes a spec (`SPEC:` … `END SPEC`, drawn
+as a card), then a plan in phases (`PHASE: title | done when`). Each chat has its own plan
+(`.pablo/plans/<conversation>.yaml`), shown in a panel beside the chat. Approve switches the chat
+to Auto, which builds it. A stuck step can be fixed, retried or skipped from its card. Work lists
+every chat's plan and warns when two live plans share files.
+
 ## What we know
 
 - **[measured]** Voice prompts keep the same system prompt every turn so llama.cpp reuses its
@@ -83,6 +91,15 @@ finishes.
   recall test measures them yet.
 - **[gap]** Long chats drop old turns with no summary. A note that replaces another (`supersedes`)
   isn't modelled: edit the old note instead. The cockpit has no edit button yet (API and CLI do).
+- **[gap]** Plan mode's prompts (`src/pablo/prompts/plan_minor.md`, `plan_major.md`) have only met
+  scripted replies (`tests/test_plan_mode.py`). Nobody has seen whether Qwen asks one question at
+  a time, stops asking, writes a well-formed `SPEC:` block, or writes `PHASE:` lines. The chat
+  eval doesn't cover Plan mode.
+- **[suspected]** The Work board finds "planned" files by matching paths named in a step's text
+  (`board.named_paths`). A step that says "the reader module" names no file, so two plans can
+  collide without a warning until one of them has touched the file.
+- **[observed]** Under 1500 px the conversation list hides while the plan panel is open (the
+  thread would be ~470 px otherwise, 2026-11-07 screenshots).
 
 ## Ideas
 
@@ -95,6 +112,7 @@ finishes.
 | `chat.stable_prefix: true` | first-token latency on turn 2+ drops on Pablo; the chat set holds |
 | A recall test: 20 questions with the earlier message they should find | hit rate and wrong hits, before tuning the two-word floor or the half-life |
 | A rolling summary of the turns a long chat drops | a planning chat still knows its first decisions on turn 40 (observed) |
+| A Plan-mode set for `pablo eval-chat`: does Minor ask ≤ 2 questions, does Major ask one at a time and end in a spec, then phases | questions per reply, turns to a spec, well-formed `PHASE:` lines (measured) |
 
 ## Open questions
 

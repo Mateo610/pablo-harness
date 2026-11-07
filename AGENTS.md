@@ -11,7 +11,8 @@ and leaves the merge decision to the human. Claude is an escalation lane, never 
 - `src/pablo/` harness core (Python 3.11+, FastAPI, Typer)
   - `config.py` lanes from `config/lanes.yaml` · `router.py` lane choice · `gateway.py` LiteLLM (test double: `tests/fakes.py`)
   - `verify.py` diff → scratch copy → checks in a `sandbox.py` Sandbox (rootless Podman + gVisor on Pablo, local in tests); a failing check is re-run on the unedited copy so a verdict blames the diff only for what it made worse; Python repos also get an `imports` check (every module imported on its own) · `judge.py` certainty · `orchestrator.py` the run
-  - `traces.py` JSONL traces + training export · `plan.py` GSD-style `.pablo/plan.yaml`
+  - `traces.py` JSONL traces + training export · `plan.py` GSD-style plans: `.pablo/plan.yaml` (the project's) and `.pablo/plans/<conversation>.yaml` (one per chat)
+  - `plans.py` plan mode: draft, build a step at a time, retry/skip a step · `prompts/` Plan mode's Minor and Major prompts · `board.py` the Work board (every chat's plan, shared-file warnings) · `details.py` a run as text (Copy details, Fix it) · `files.py` files kept on the remember rail
   - `api.py` HTTP + SSE for the cockpit · `cli.py` the `pablo` command
   - `client.py` HTTP client · `tui.py` terminal cockpit (Textual)
   - `overnight.py` overnight queue, scheduler (runs inside `pablo serve`), morning brief
@@ -20,7 +21,7 @@ and leaves the merge decision to the human. Claude is an escalation lane, never 
   - `tasks.py` task type + quick/build/deep · `context.py` budgeted prompt (files picked by the symbols a task names, per-lane `context_tokens`) + skill cards (`skills/*.md`)
   - `edits.py` find-and-replace edit blocks → git-made diff (the coder's default edit format)
   - `evals.py` `pablo eval`: the 30-task suite in `evals/suite`, scored by hidden tests the model never sees
-- `web/` cockpit (React + Vite + cmdk); desktop `App.tsx` + `RunView.tsx`, phone `Phone.tsx` (PWA), styled only with tokens in `web/src/tokens.css`
+- `web/` cockpit (React + Vite + cmdk); `Shell.tsx` pages (Home, Chat, Advisor, Voice, Agents, Work), `Work.tsx` the plans board over the v1 Workbench (`App.tsx` + `RunView.tsx`), phone `Phone.tsx` (PWA), styled only with tokens in `web/src/tokens.css`
 - `config/` lanes and the LiteLLM gateway · `scripts/` Pablo bootstrap and model archiving
 - `docs/cursor-prompts/` one prompt per milestone, each with acceptance checks
 

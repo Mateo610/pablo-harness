@@ -29,8 +29,9 @@ Status: `todo` · `doing` · `done`. Update this table when a gate passes.
 | C11 | Plan mode | Talk a plan into `.pablo/plan.yaml`, then "go" runs its steps in order, each verified, stopping at your approvals | done (`src/pablo/plans.py`, PLAN/STEP/BUILD/APPLY/DISCARD lines, Plan card in Chat) |
 | C12 | Build by voice | Voice works in a project, plans and builds like Chat, says when a step is ready, and applies or discards on your word | done (`/api/voice/news`, Plan card on Voice, APPLY/DISCARD) |
 | C13 | Extended thinking switch | Chat switch for Base and Hybrid: the coder's thinking variant writes the reply, its change and its plan's steps; `pablo eval --think` | built; Pablo side in `docs/cursor-prompts/C13-extended-thinking.md` |
-| C14 | Advisor builds | The Advisor tab plans, starts runs and builds plans in any project, not only unfiltered ones. An Advisor run uses the unfiltered recipe inside a standard project: the advisor writes it and judges it, no router, no retry on Base or Best, no Claude, never training data; sandbox checks and your approval stay. Run cards say "Advisor · self-judged". Gate: Advisor's RUN/PLAN on the chat set within 2 of Base's, and no refusal or rework from another model in 10 Advisor builds | built (Advisor conversations use `Workspace.advisor_orch`; runs carry `self_judged`). On Pablo: `pablo eval-chat --lane advisor` and `pablo eval --unfiltered` for the gate |
-| C15 | Work as the review desk | Work becomes the one place you decide on changes: runs grouped by project, then conversation or plan; one run open at a time with where it came from, a timeline, and what Apply does; every button answers right there; stale runs leave the queue. Home stays "what's happening", Chat stays "ask for it". Gate: 74 waiting runs fit on one screen; every Apply/Reject/Escalate shows its result on the card; each run links back to its conversation or plan step | built (`web/src/Work.tsx`; `/api/inbox` adds `stale`, `stale_reason`, `project`, `conversation_title`; `POST /api/inbox/discard-stale`). Checked in a browser on scripted runs, not yet on Pablo |
+| C14 | Chat modes, Plan mode, skills, /loop | Auto and Plan (Minor, Major), a plan panel beside the chat, one plan per chat, needs-you cards that fix things, plans across chats in Work, slash-command skills, `/loop` | C14a–d built; C14e–g open (`docs/cursor-prompts/C14-chat-modes.md`) |
+| C15 | Advisor builds | The Advisor tab plans, starts runs and builds plans in any project, not only unfiltered ones. An Advisor run uses the unfiltered recipe inside a standard project: the advisor writes it and judges it, no router, no retry on Base or Best, no Claude, never training data; sandbox checks and your approval stay. Run cards say "Advisor · self-judged". Gate: Advisor's RUN/PLAN on the chat set within 2 of Base's, and no refusal or rework from another model in 10 Advisor builds | built (Advisor conversations use `Workspace.advisor_orch`; runs carry `self_judged`). On Pablo: `pablo eval-chat --lane advisor` and `pablo eval --unfiltered` for the gate |
+| C16 | Work as the review desk | Work becomes the one place you decide on changes: runs grouped by project, then conversation or plan; one run open at a time with where it came from, a timeline, and what Apply does; every button answers right there; stale runs leave the queue. Home stays "what's happening", Chat stays "ask for it". Gate: 74 waiting runs fit on one screen; every Apply/Reject/Escalate shows its result on the card; each run links back to its conversation or plan step | built (Work → Changes in `web/src/Work.tsx`; `/api/inbox` adds `stale`, `stale_reason`, `project`, `conversation_title`; `POST /api/inbox/discard-stale`). Checked in a browser on scripted runs, not yet on Pablo |
 | M9 | Specialist lanes | Media lane dispatches image and 3D jobs; results come back as evidence cards | todo |
 | M9b | Voice lane | Talk to the orchestrator, advisor, or deep in the browser: local speech-to-text and text-to-speech, replies spoken as they stream, turns land in a conversation, first word under 2.5 s on the orchestrator | doing (orchestrator first word median 4.6 s, worst 4.8 s, over 2.5 s: speech-to-text ~2.0 s and the first sentence's audio ~2 s. Advisor median 7.1 s, worst 11.2 s. Wake after deep 22.9 s transcript to first audio. Stock voices Vivian and Serena. HTTPS cert still needs one `sudo`. `docs/cursor-prompts/M9b-voice.md`) |
 | M9c | Voice latency | Orchestrator first audio under 2.5 s median on a multi-sentence answer; code words still transcribe right; VRAM under 23.5 GB | todo (harness side built: first clause spoken first, router warmed after an unload; Pablo side `docs/cursor-prompts/M9c-voice-latency.md`) |
@@ -50,10 +51,10 @@ Status: `todo` · `doing` · `done`. Update this table when a gate passes.
 | C8 | Cockpit v2 in the browser | Home, Chat, Advisor, Agents live on the API; Voice shows the orb until M9b; v1 tools stay as Work | doing (pages live; voice lane, phone layout for the new pages, GPU mode switch to come) |
 | C9 | GPU scheduler | One lease for the GPU: voice > chat > runs > retries > night; same-model calls share; background waits for quiet; Interactive / Balanced / Deep Work modes | done (`src/pablo/gpu.py`, `/api/gpu`, switch on Home, queue on Agents); residents: the TTS server pauses for deep and wakes on a voice turn; `pablo eval` holds Deep Work while it runs; one lease table shared by every Pablo process |
 
-## Next up (C14, C15)
+## Next up (C15, C16)
 
-### C14 Advisor builds (built)
-Before C14 the Advisor in a standard project only talks (`Chat.tsx`: "builds only in a no-guardrails
+### C15 Advisor builds (built)
+Before C15 the Advisor in a standard project only talks (`Chat.tsx`: "builds only in a no-guardrails
 project"). Talking alone doesn't add much; the point of the model is a second builder that won't
 refuse. Plan:
 - Advisor conversations may emit RUN and PLAN in any project. `convos.Chat._run` takes the
@@ -67,7 +68,7 @@ refuse. Plan:
 - Measure: `pablo eval-chat --lane advisor` (talk/run/plan choice) and `pablo eval --unfiltered`
   already exist. Run both before and after.
 
-### C15 Work as the review desk (built)
+### C16 Work as the review desk (built)
 Found while building it [observed in a browser, scripted runs]: the old queue items were links to
 `#run-<id>`. The cockpit routes on the hash, so clicking one left Work for Home. Apply and Reject
 did reach the API (200), but the only sign was a small grey state line under a long card.

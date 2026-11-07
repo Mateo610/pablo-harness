@@ -109,7 +109,7 @@ export function App() {
   }, []);
 
   const inbox = useMemo(() => runs.filter((r) => r.state === "needs_you" || r.state === "ready"), [runs]);
-  const phase = plan?.phases.find((p) => !p.tasks.every((t) => t.status === "done")) ?? null;
+  const phase = plan?.phases.find((p) => !p.tasks.every((t) => t.status === "done" || t.status === "skipped")) ?? null;
   const nextTask =
     phase?.tasks.find((t) => t.status === "needs_you") ??
     phase?.tasks.find((t) => t.status === "active") ??
@@ -253,7 +253,7 @@ export function App() {
                   Phase {phase.id} · {phase.title}
                 </h2>
                 <span className="mono muted tabular small">
-                  {phase.tasks.filter((t) => t.status === "done").length}/{phase.tasks.length}
+                  {phase.tasks.filter((t) => t.status === "done" || t.status === "skipped").length}/{phase.tasks.length}
                 </span>
               </div>
               <div className="progress">
