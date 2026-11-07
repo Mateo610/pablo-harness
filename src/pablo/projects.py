@@ -15,6 +15,10 @@ A project's mode is fixed when it's made:
                and Claude are never used, so nothing in the project depends on a model that
                might refuse part of it. Checks still run in the sandbox (they can't refuse),
                your approval is still the only way into the repo, and nothing trains on it.
+
+The Advisor works the same way in any project: an Advisor conversation (Chat or Voice) gets
+`Workspace.advisor_orch`, the project's repo with the unfiltered settings. So the Advisor
+builds on its own in a standard project too, and its runs never touch Base, Best or Claude.
 """
 
 from __future__ import annotations
@@ -166,21 +170,39 @@ class Workspace:
         with self._lock:
             return self._orchs.setdefault(name, made)
 
+    def advisor_orch(self, name: str = "") -> Orchestrator:
+        """The project's repo driven by the no-guardrails model alone: writes and judges."""
+        name = name or self.default
+        project = self.project(name)
+        if project.mode == "unfiltered":
+            return self.orch(name)
+        key = f"{name}#advisor"
+        with self._lock:
+            if key in self._orchs:
+                return self._orchs[key]
+        made = self._make(project, advisor=True)
+        with self._lock:
+            return self._orchs.setdefault(key, made)
+
     def for_run(self, run_id: str) -> Orchestrator:
-        """The orchestrator for the project a run changes (runs before projects: the default)."""
+        """The orchestrator for the project a run changes (runs before projects: the default).
+
+        A self-judged run (the Advisor's) is decided by the Advisor's orchestrator, so retry
+        and escalation stay with that one model."""
         run = self.base.get(run_id)  # every project shares the home, so any one can read it
         try:
-            return self.orch(run.project)
+            return self.advisor_orch(run.project) if run.self_judged else self.orch(run.project)
         except KeyError:
             return self.base
 
-    def _make(self, project: Project) -> Orchestrator:
+    def _make(self, project: Project, advisor: bool = False) -> Orchestrator:
         from pablo.orchestrator import Orchestrator
         from pablo.sandbox import LocalSandbox
         from pablo.verify import load_checks
 
         b = self.base
-        settings = b.settings if project.mode == "standard" else unfiltered_settings(b.settings)
+        alone = advisor or project.mode == "unfiltered"
+        settings = unfiltered_settings(b.settings) if alone else b.settings
         repo = Path(project.path)
         inner = getattr(b.backend, "inner", b.backend)  # the new one gets its own GPU wrapper
         orch = Orchestrator(
@@ -194,6 +216,7 @@ class Workspace:
             gpu=b.gpu,
         )
         orch.retry_inline = b.retry_inline
+        orch.self_judged = alone
         orch.checks_from_repo = True  # new projects gain their checks as code arrives
         return orch
 

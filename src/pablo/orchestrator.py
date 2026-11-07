@@ -163,6 +163,8 @@ class Run:
     fix_outcome: str = ""
     project: str = ""  # the project (repo folder name) the run changes
     think: bool = False  # extended thinking: the lane's thinking variant writes it
+    # Written and judged by one no-guardrails model (the Advisor, or an unfiltered project).
+    self_judged: bool = False
     # How a Needs-you run retries: "" the lane's config, "now" (Hybrid: deep tries it right
     # away, at your urgency), "off" (you picked one model: it answers alone).
     retry: str = ""
@@ -257,6 +259,9 @@ class Orchestrator:
         self.baselines = Baselines()  # checks on the unedited repo, run once per repo state
         # Run `retry_on` retries in the caller's thread (evals, tests) instead of in the background.
         self.retry_inline = False
+        # One no-guardrails model writes and judges (Workspace sets it for the Advisor and
+        # unfiltered projects); every run this orchestrator starts says so.
+        self.self_judged = False
         self.router = Router(settings, self.backend)
         self.lessons = Lessons(settings.home)
         # Which repo lessons belong to. Evals set the seed's name; one dir per task otherwise.
@@ -460,6 +465,7 @@ class Orchestrator:
             project=self.repo.name,
             retry=retry,
             think=think,
+            self_judged=self.self_judged,
         )
         self._save(run)
         self._emit("route", run, reason=reason, confidence=decision.confidence)

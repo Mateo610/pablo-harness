@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from pablo.projects import Workspace
 
 MAX_STEPS = 8
+ADVISOR = "advisor"  # a plan drafted in an Advisor conversation runs on the Advisor alone
 
 
 class PlanBusy(RuntimeError):
@@ -180,12 +181,13 @@ class Plans:
         return "\n".join(lines)
 
     def _run_step(self, project: str, step_id: str, task: str) -> None:
-        orch: Orchestrator = self.ws.orch(project)
         plan = self.get(project)
         lane = plan.lane if plan else "auto"
-        unfiltered = self.ws.project(project).mode == "unfiltered"
+        # The Advisor's plan, or an unfiltered project: every step on the one model, alone.
+        alone = lane == ADVISOR or self.ws.project(project).mode == "unfiltered"
+        orch: Orchestrator = self.ws.advisor_orch(project) if alone else self.ws.orch(project)
         target, retry = (None, "now") if lane == "auto" else (lane, "off")
-        if unfiltered:
+        if alone:
             target, retry = "coder", "off"
         try:
             run = orch.start(task, lane=target, task_id=step_id, by=plan.by if plan else "",

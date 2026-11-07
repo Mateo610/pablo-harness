@@ -29,7 +29,7 @@ Status: `todo` · `doing` · `done`. Update this table when a gate passes.
 | C11 | Plan mode | Talk a plan into `.pablo/plan.yaml`, then "go" runs its steps in order, each verified, stopping at your approvals | done (`src/pablo/plans.py`, PLAN/STEP/BUILD/APPLY/DISCARD lines, Plan card in Chat) |
 | C12 | Build by voice | Voice works in a project, plans and builds like Chat, says when a step is ready, and applies or discards on your word | done (`/api/voice/news`, Plan card on Voice, APPLY/DISCARD) |
 | C13 | Extended thinking switch | Chat switch for Base and Hybrid: the coder's thinking variant writes the reply, its change and its plan's steps; `pablo eval --think` | built; Pablo side in `docs/cursor-prompts/C13-extended-thinking.md` |
-| C14 | Advisor builds | **Next.** The Advisor tab plans, starts runs and builds plans in any project, not only unfiltered ones. An Advisor run uses the unfiltered recipe inside a standard project: the advisor writes it and judges it, no router, no retry on Base or Best, no Claude, never training data; sandbox checks and your approval stay. Run cards say "Advisor · self-judged". Gate: Advisor's RUN/PLAN on the chat set within 2 of Base's, and no refusal or rework from another model in 10 Advisor builds | todo |
+| C14 | Advisor builds | The Advisor tab plans, starts runs and builds plans in any project, not only unfiltered ones. An Advisor run uses the unfiltered recipe inside a standard project: the advisor writes it and judges it, no router, no retry on Base or Best, no Claude, never training data; sandbox checks and your approval stay. Run cards say "Advisor · self-judged". Gate: Advisor's RUN/PLAN on the chat set within 2 of Base's, and no refusal or rework from another model in 10 Advisor builds | built (Advisor conversations use `Workspace.advisor_orch`; runs carry `self_judged`). On Pablo: `pablo eval-chat --lane advisor` and `pablo eval --unfiltered` for the gate |
 | C15 | Work as the review desk | **Next.** Work becomes the one place you decide on changes: runs grouped by project, then conversation or plan; one run open at a time with where it came from, a timeline, and what Apply does; every button answers right there; stale runs leave the queue. Home stays "what's happening", Chat stays "ask for it". Gate: 74 waiting runs fit on one screen; every Apply/Reject/Escalate shows its result on the card; each run links back to its conversation or plan step | todo |
 | M9 | Specialist lanes | Media lane dispatches image and 3D jobs; results come back as evidence cards | todo |
 | M9b | Voice lane | Talk to the orchestrator, advisor, or deep in the browser: local speech-to-text and text-to-speech, replies spoken as they stream, turns land in a conversation, first word under 2.5 s on the orchestrator | doing (orchestrator first word median 4.6 s, worst 4.8 s, over 2.5 s: speech-to-text ~2.0 s and the first sentence's audio ~2 s. Advisor median 7.1 s, worst 11.2 s. Wake after deep 22.9 s transcript to first audio. Stock voices Vivian and Serena. HTTPS cert still needs one `sudo`. `docs/cursor-prompts/M9b-voice.md`) |
@@ -51,8 +51,8 @@ Status: `todo` · `doing` · `done`. Update this table when a gate passes.
 
 ## Next up (C14, C15)
 
-### C14 Advisor builds
-Today the Advisor in a standard project only talks (`Chat.tsx`: "builds only in a no-guardrails
+### C14 Advisor builds (built)
+Before C14 the Advisor in a standard project only talks (`Chat.tsx`: "builds only in a no-guardrails
 project"). Talking alone doesn't add much; the point of the model is a second builder that won't
 refuse. Plan:
 - Advisor conversations may emit RUN and PLAN in any project. `convos.Chat._run` takes the
