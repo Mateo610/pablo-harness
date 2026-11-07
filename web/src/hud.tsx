@@ -1,5 +1,5 @@
 // Shared bits for cockpit v2: routing, polling, the event bus, run cards, small formatters.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { api, ApiError, subscribe, type GpuLease, type GpuMode, type GpuState, type HarnessEvent, type Me, type Plan, type Project, type Run } from "./api";
 import { DiffView, laneColor, stateLabel, laneName } from "./components";
 
@@ -149,17 +149,69 @@ export function initials(name: string): string {
 }
 
 /** A run inside a conversation: what it did, what the checks said, and your move. */
+// Send to chat (C14c): a Chat page on screen registers its composer; a run card anywhere
+// (the thread, the plan panel) can put text in it. With no composer, the button isn't shown.
+const composers = new Set<(text: string) => void>();
+const composerWatchers = new Set<() => void>();
+const watchComposers = (fn: () => void) => (composerWatchers.add(fn), () => void composerWatchers.delete(fn));
+const composerCount = () => composers.size;
+export function useComposer(put: (text: string) => void) {
+  const ref = useRef(put);
+  ref.current = put;
+  useEffect(() => {
+    const fn = (t: string) => ref.current(t);
+    composers.add(fn);
+    composerWatchers.forEach((w) => w());
+    return () => {
+      composers.delete(fn);
+      composerWatchers.forEach((w) => w());
+    };
+  }, []);
+}
+function sendToChat(text: string): boolean {
+  const last = [...composers].pop();
+  if (!last) return false;
+  last(text);
+  return true;
+}
+
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false; // the card shows the text selected instead, for Ctrl+C
+  }
+}
+
+const STEP_OF = /This is step ([\w.]+) of a plan/;
+
 export function RunCard({ id, me, initial }: { id: string; me: Me | null; initial?: Run | null }) {
+  const [rid, setRid] = useState(id);
   const [run, setRun] = useState<Run | null>(initial ?? null);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [note, setNote] = useState("");
+  const [shown, setShown] = useState("");
+  const shownRef = useRef<HTMLTextAreaElement>(null);
+  const canSend = useSyncExternalStore(watchComposers, composerCount) > 0;
+  // A new id (the plan moved to another run) is a different card: start clean.
   useEffect(() => {
-    if (!initial) api.run(id).then(setRun).catch(() => undefined);
+    setRid(id);
+    if (!initial || initial.id !== id) setRun(null);
   }, [id, initial]);
+  useEffect(() => {
+    let alive = true;
+    if (!initial || initial.id !== rid) api.run(rid).then((r) => alive && r.id === rid && setRun(r)).catch(() => undefined);
+    return () => void (alive = false);
+  }, [rid, initial]);
+  useEffect(() => {
+    if (shown) shownRef.current?.select();
+  }, [shown]);
   useEvents((e) => {
-    if (e.run_id === id && ["judged", "decided", "needs_you", "finished", "error"].includes(e.kind)) {
-      api.run(id).then(setRun).catch(() => undefined);
+    if (e.run_id === rid && ["judged", "decided", "needs_you", "finished", "error"].includes(e.kind)) {
+      api.run(rid).then(setRun).catch(() => undefined);
     }
   });
   if (!run) return <div className="h-frame h-pad h-dim">Loading run {id}…</div>;
@@ -171,6 +223,55 @@ export function RunCard({ id, me, initial }: { id: string; me: Me | null; initia
     setError("");
     fn()
       .then(setRun)
+      .catch((e: ApiError) => setError(e.message))
+      .finally(() => setBusy(false));
+  };
+  const stuck = run.state === "needs_you" || run.state === "failed";
+  const mineToFix = Boolean(me && (me.can_approve || run.by === me.profile));
+  const planStep = STEP_OF.exec(run.task)?.[1];
+  const withDetails = (use: (text: string) => void | Promise<void>) => {
+    setError("");
+    setNote("");
+    api
+      .runDetails(run.id)
+      .then((d) => use(d.text))
+      .catch((e: ApiError) => setError(e.message));
+  };
+  const copy = () =>
+    withDetails(async (text) => {
+      if (await copyText(text)) {
+        setShown("");
+        setNote("Copied the details.");
+      } else setShown(text);
+    });
+  const toChat = () =>
+    withDetails((text) => {
+      if (sendToChat(`${text}\n`)) setNote("In the message box: add what you want done, then send.");
+    });
+  const again = (fix: boolean) => {
+    setBusy(true);
+    setError("");
+    setNote("");
+    api
+      .retryRun(run.id, fix)
+      .then((r) => {
+        if (r.run) {
+          setRid(r.run.id);
+          setRun(r.run);
+        } else {
+          api.run(run.id).then(setRun).catch(() => undefined);
+          setNote(fix ? "The step is building again, told what went wrong." : "The step is building again.");
+        }
+      })
+      .catch((e: ApiError) => setError(e.message))
+      .finally(() => setBusy(false));
+  };
+  const skip = () => {
+    setBusy(true);
+    setError("");
+    api
+      .skipRun(run.id)
+      .then(() => (api.run(run.id).then(setRun).catch(() => undefined), setNote(`Skipped step ${planStep}: the plan moved on.`)))
       .catch((e: ApiError) => setError(e.message))
       .finally(() => setBusy(false));
   };
@@ -253,6 +354,37 @@ export function RunCard({ id, me, initial }: { id: string; me: Me | null; initia
           REVIEW HUNKS
         </a>
       </div>
+      {(stuck || run.state === "ready") && mineToFix && (
+        <div className="h-fixrow" role="group" aria-label="Deal with it">
+          {stuck && (
+            <button className="h-btn amber" disabled={busy} onClick={() => again(true)} title="Try again, told what went wrong">
+              FIX IT
+            </button>
+          )}
+          {stuck && (
+            <button className="h-toggle" disabled={busy} onClick={() => again(false)} title="Try again from scratch">
+              retry
+            </button>
+          )}
+          {stuck && planStep && (
+            <button className="h-toggle" disabled={busy} onClick={skip} title="Move on without this step">
+              skip step
+            </button>
+          )}
+          <button className="h-toggle" onClick={copy} title="Copy what happened, as text">
+            copy details
+          </button>
+          {canSend && (
+            <button className="h-toggle" onClick={toChat} title="Put what happened in the message box">
+              send to chat
+            </button>
+          )}
+        </div>
+      )}
+      {note && <span className="h-dim" style={{ fontSize: 12.5 }}>{note}</span>}
+      {shown && (
+        <textarea ref={shownRef} className="h-input h-mono" readOnly rows={8} value={shown} aria-label="Run details: press Ctrl+C to copy" style={{ fontSize: 12 }} />
+      )}
       {open_ && !me?.can_approve && (
         <span className="h-faint" style={{ fontSize: 12 }}>Only the owner can apply changes to the repo.</span>
       )}
@@ -339,8 +471,10 @@ export function GpuQueue({ gpu }: { gpu: GpuState | null }) {
   );
 }
 
-const STEP_MARK: Record<string, string> = { done: "✓", active: "…", needs_you: "◆", blocked: "!", queued: "·" };
-const STEP_WORD: Record<string, string> = { done: "done", active: "building", needs_you: "waiting for you", blocked: "stopped", queued: "next" };
+const STEP_MARK: Record<string, string> = { done: "✓", active: "…", needs_you: "◆", blocked: "!", queued: "·", skipped: "–" };
+const STEP_WORD: Record<string, string> = { done: "done", active: "building", needs_you: "waiting for you", blocked: "stopped", queued: "next", skipped: "skipped" };
+/** A skipped step is over too: you moved on without it. */
+const finished = (t: { status: string }) => t.status === "done" || t.status === "skipped";
 
 /**
  * A plan, the step waiting for you, and Build. Polls while it builds.
@@ -400,7 +534,7 @@ export function PlanCard({
       <span className="h-mono" style={{ width: 16, color: t.status === "needs_you" ? "var(--accent)" : t.status === "done" ? "var(--status-pass)" : t.status === "blocked" ? "var(--status-fail)" : "var(--ink-muted)" }} aria-hidden="true">
         {STEP_MARK[t.status] ?? "·"}
       </span>
-      <span style={{ flex: 1, minWidth: 0, color: t.status === "done" ? "var(--ink-muted)" : undefined }}>
+      <span style={{ flex: 1, minWidth: 0, color: finished(t) ? "var(--ink-muted)" : undefined, textDecoration: t.status === "skipped" ? "line-through" : undefined }}>
         {t.id}. {t.title}
       </span>
       <span className="h-mono h-faint" style={{ fontSize: 11 }}>{STEP_WORD[t.status] ?? t.status}</span>
@@ -412,7 +546,7 @@ export function PlanCard({
       <div style={{ display: "flex", gap: 10, alignItems: "baseline" }}>
         <span className="h-cap" style={{ color: "var(--sys)", flex: 1 }}>{live.size ? `Plan · ${live.size}` : "Plan"}</span>
         <span className="h-mono h-dim" style={{ fontSize: 11 }}>
-          {live.state} · {steps.filter((t) => t.status === "done").length}/{steps.length}
+          {live.state} · {steps.filter(finished).length}/{steps.length}
         </span>
       </div>
       <span style={{ fontSize: 15, fontWeight: 600, lineHeight: 1.35 }}>{live.goal || "Untitled"}</span>
@@ -423,7 +557,7 @@ export function PlanCard({
               <span className="h-mono" style={{ fontSize: 11.5, color: "var(--sys)" }}>PHASE {ph.id}</span>
               <span style={{ fontSize: 13.5, fontWeight: 600 }}>{ph.title}</span>
               <span className="h-mono h-faint" style={{ fontSize: 11, marginLeft: "auto" }}>
-                {ph.tasks.filter((t) => t.status === "done").length}/{ph.tasks.length}
+                {ph.tasks.filter(finished).length}/{ph.tasks.length}
               </span>
             </span>
             <span className="h-faint" style={{ fontSize: 12 }}>Done when: {ph.gate}</span>
@@ -439,7 +573,7 @@ export function PlanCard({
           <pre className="h-mono" style={{ whiteSpace: "pre-wrap", fontSize: 12, lineHeight: 1.5, color: "var(--ink-body)", margin: "8px 0 0" }}>{live.spec}</pre>
         </details>
       )}
-      {waiting?.run && <RunCard id={waiting.run} me={me} />}
+      {waiting?.run && <RunCard key={waiting.run} id={waiting.run} me={me} />}
       {error && <span style={{ color: "var(--status-fail)", fontSize: 13 }}>{error}</span>}
       {canBuild && (
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>

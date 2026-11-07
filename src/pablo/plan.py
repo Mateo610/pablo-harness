@@ -20,7 +20,8 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, Field
 
-Status = Literal["queued", "active", "needs_you", "done", "blocked"]
+Status = Literal["queued", "active", "needs_you", "done", "blocked", "skipped"]
+FINISHED = ("done", "skipped")  # a skipped step is over: you chose to move on without it
 PlanState = Literal["draft", "running", "paused", "done"]
 PlanSize = Literal["", "minor", "major"]
 PLAN_PATH = Path(".pablo") / "plan.yaml"
@@ -55,10 +56,10 @@ class Phase(BaseModel):
 
     @property
     def done(self) -> bool:
-        return bool(self.tasks) and all(t.status == "done" for t in self.tasks)
+        return bool(self.tasks) and all(t.status in FINISHED for t in self.tasks)
 
     def progress(self) -> tuple[int, int]:
-        return sum(t.status == "done" for t in self.tasks), len(self.tasks)
+        return sum(t.status in FINISHED for t in self.tasks), len(self.tasks)
 
 
 class Plan(BaseModel):

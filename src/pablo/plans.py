@@ -21,7 +21,7 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from pablo.plan import PLAN_PATH, PLANS_DIR, Phase, Plan, PlanSize, Task, plan_file
+from pablo.plan import FINISHED, PLAN_PATH, PLANS_DIR, Phase, Plan, PlanSize, Task, plan_file
 
 if TYPE_CHECKING:
     from pablo.orchestrator import Orchestrator, Run
@@ -94,7 +94,8 @@ def roadmap_md(plan: Plan) -> str:
         done, total = phase.progress()
         lines += [f"## Phase {phase.id}: {phase.title}", f"Done when: {phase.gate}",
                   f"Progress: {done}/{total}", ""]  # fmt: skip
-        lines += [f"- [{'x' if t.status == 'done' else ' '}] {t.id} {t.detail or t.title}"
+        lines += [f"- [{'x' if t.status in FINISHED else ' '}] {t.id} {t.detail or t.title}"
+                  + (" (skipped)" if t.status == "skipped" else "")
                   for t in phase.tasks]  # fmt: skip
         lines.append("")
     return "\n".join(lines)
@@ -102,8 +103,8 @@ def roadmap_md(plan: Plan) -> str:
 
 def state_md(plan: Plan) -> str:
     steps = Plans.steps(plan)
-    done = sum(t.status == "done" for t in steps)
-    nxt = next((t for t in steps if t.status != "done"), None)
+    done = sum(t.status in FINISHED for t in steps)
+    nxt = next((t for t in steps if t.status not in FINISHED), None)
     lines = [f"# State: {plan.goal or 'untitled'}", "", f"- State: {plan.state}",
              f"- Progress: {done}/{len(steps)} steps",
              f"- Next: {f'{nxt.id} {nxt.title} ({nxt.status})' if nxt else 'nothing, all done'}",
@@ -185,7 +186,8 @@ class Plans:
         plan = self.get(project, conversation)
         if plan is None or not self.steps(plan):
             return ""
-        marks = {"done": "x", "active": ">", "needs_you": "?", "blocked": "!", "queued": " "}
+        marks = {"done": "x", "active": ">", "needs_you": "?", "blocked": "!", "queued": " ",
+                 "skipped": "-"}  # fmt: skip
         lines = [f"Goal: {plan.goal}  ({plan.state})"]
         for t in self.steps(plan):
             lines.append(f"[{marks.get(t.status, ' ')}] {t.id} {t.title}")
@@ -335,6 +337,12 @@ class Plans:
             lines.append(f"The user's request (keep its names and behavior): {plan.request}")
         if done:
             lines.append("Already done and in the repo: " + "; ".join(t.title for t in done))
+        skipped = [t.title for t in self.steps(plan) if t.status == "skipped"]
+        if skipped:
+            lines.append("Skipped by the user (not in the repo): " + "; ".join(skipped))
+        if step.notes:
+            lines.append("The last try at this step went wrong. Fix this, and keep to the step:\n"
+                         + step.notes)  # fmt: skip
         later = [t.title for t in self.steps(plan) if t.status == "queued" and t.id != step.id]
         if later:
             lines.append("Later steps (don't do these now): " + "; ".join(later))
@@ -380,27 +388,106 @@ class Plans:
                 plan.state = "paused"
             self._save(project, key, plan)
 
-    def after(self, run: Run) -> None:
-        """A run was approved or rejected: move its plan along. Runs outside a plan: nothing."""
+    def step_for(self, run: Run) -> tuple[str, Plan, Task] | None:
+        """The plan step a run belongs to (with its Hybrid retries), and that plan's key."""
         project = run.project or self.ws.default
         try:
             plans = self.all(project)
         except KeyError:
-            return
+            return None
         if not plans:
-            return
+            return None
         orch = self.ws.orch(project)
         mine = {run.id, run.retried_from or ""}
         if run.group:  # a Hybrid retry shares its group with the run the step started
             mine |= {r.id for r in orch.recent(200) if r.group == run.group}
-        found = next(
-            ((key, t) for key, plan in plans for t in self.steps(plan)
-             if t.run in mine and t.status == "needs_you"),
+        mine.discard("")
+        return next(
+            ((key, plan, t) for key, plan in plans for t in self.steps(plan) if t.run in mine),
             None,
-        )  # fmt: skip
-        if found is None:
+        )
+
+    def _family(self, project: str, run_id: str) -> list[Run]:
+        """A run and its Hybrid partner(s), still waiting for a decision."""
+        orch = self.ws.orch(project)
+        try:
+            first = orch.get(run_id)
+        except KeyError:
+            return []
+        family = [first] + [
+            r
+            for r in orch.recent(200)
+            if first.group and r.group == first.group and r.id != first.id
+        ]
+        return [r for r in family if r.state in ("ready", "needs_you", "running")]
+
+    def retry_step(self, project: str, key: str, step_id: str, *, by: str = "",
+                   feedback: str = "") -> Plan:  # fmt: skip
+        """Throw the step's change away and build the step again. `feedback` (Fix it): what went
+        wrong, which the next try sees."""
+        name = project or self.ws.default
+        with self._lock:
+            plan = self.get(name, key)
+            if plan is None:
+                raise KeyError("there's no plan here")
+            step = plan.task(step_id)
+            if step.status not in ("needs_you", "blocked"):
+                raise PlanBusy(
+                    f"step {step.id} is {step.status.replace('_', ' ')}: nothing to retry"
+                )
+            busy = next((t for t in self.steps(plan) if t.status == "active"), None)
+            if busy is not None:
+                raise PlanBusy(f"step {busy.id} is building: wait for it first")
+            old = step.run
+            step.status, step.run, step.notes = "queued", None, feedback.strip()[:6000]
+            plan.state = "running"
+            plan.by = by or plan.by
+            self._save(name, key, plan)
+        for r in self._family(name, old) if old else []:
+            if r.state != "running":
+                self.ws.for_run(r.id).reject(r.id)  # its step is queued again: not a "no"
+        self._next(name, key)
+        result = self.get(name, key)
+        assert result is not None
+        return result
+
+    def skip_step(self, project: str, key: str, step_id: str, *, by: str = "") -> Plan:
+        """Move on without this step: its change (if any) is thrown away, the next one starts."""
+        name = project or self.ws.default
+        with self._lock:
+            plan = self.get(name, key)
+            if plan is None:
+                raise KeyError("there's no plan here")
+            step = plan.task(step_id)
+            if step.status in ("done", "skipped", "active"):
+                word = "building" if step.status == "active" else step.status
+                raise PlanBusy(f"step {step.id} is {word}: it can't be skipped now")
+            old = step.run
+            step.status = "skipped"
+            if plan.state != "draft":
+                plan.state = "running"
+            plan.by = by or plan.by
+            self._save(name, key, plan)
+        for r in self._family(name, old) if old else []:
+            if r.state != "running":
+                self.ws.for_run(r.id).reject(r.id)
+        if plan.state == "running":
+            self._next(name, key)
+        result = self.get(name, key)
+        assert result is not None
+        return result
+
+    def after(self, run: Run) -> None:
+        """A run was approved or rejected: move its plan along. Runs outside a plan: nothing."""
+        found = self.step_for(run)
+        if found is None or found[2].status != "needs_you":
             return
-        key, step = found
+        key, _, step = found
+        project = run.project or self.ws.default
+        orch = self.ws.orch(project)
+        mine = {run.id, run.retried_from or ""}
+        if run.group:
+            mine |= {r.id for r in orch.recent(200) if r.group == run.group}
         if run.state in ("approved", "approved_partial"):
             self._mark(project, key, step.id, "done", run.id)
             self._next(project, key)

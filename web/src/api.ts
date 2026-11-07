@@ -81,7 +81,7 @@ export interface Run {
   created_at: string;
 }
 
-export type TaskStatus = "queued" | "active" | "needs_you" | "done" | "blocked";
+export type TaskStatus = "queued" | "active" | "needs_you" | "done" | "blocked" | "skipped";
 
 export interface PlanTask {
   id: string;
@@ -370,6 +370,13 @@ export const api = {
   planDiscard: (project: string, conversation: string) =>
     call<{ discarded: boolean }>(`/api/plan${planQuery(project, conversation)}`, { method: "DELETE" }),
   inbox: () => call<Run[]>("/api/inbox"),
+  /** The run as text to copy or send to chat, and the plan step it belongs to (if any). */
+  runDetails: (id: string) =>
+    call<{ text: string; plan: { conversation: string; step: string; status: string; goal: string } | null }>(`/api/runs/${id}/details`),
+  /** Try again; `fix`: the next try is told what went wrong. A plan step retries as that step. */
+  retryRun: (id: string, fix = false) =>
+    call<{ run: Run | null; plan: Plan | null }>(`/api/runs/${id}/retry`, { method: "POST", body: JSON.stringify({ fix }) }),
+  skipRun: (id: string) => call<{ plan: Plan }>(`/api/runs/${id}/skip`, { method: "POST" }),
   run: (id: string) => call<Run>(`/api/runs/${id}`),
   start: (task: string, lane?: string, taskId?: string) =>
     call<Run>("/api/runs", {

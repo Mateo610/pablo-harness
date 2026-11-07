@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, type ChatMessage, type Conversation, type KeptFile, type Lane, type Me, type Memory, type PlanSize, type SearchHits } from "./api";
 import { laneColor, laneName } from "./components";
-import { ago, go, pickProject, PlanCard, ProjectPicker, RunCard, useEvents, usePoll, useProject } from "./hud";
+import { ago, go, pickProject, PlanCard, ProjectPicker, RunCard, useComposer, useEvents, usePoll, useProject } from "./hud";
 import { Markdown } from "./Markdown";
 
 type Mode = "chat" | "advisor";
@@ -219,6 +219,12 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
       box.current?.focus();
     }
   };
+
+  // A run card's "send to chat" lands here, under anything already typed.
+  useComposer((text) => {
+    setDraft(draft.trim() ? `${draft.trimEnd()}\n\n${text}` : text);
+    box.current?.focus();
+  });
 
   const keep = async (list: FileList | null) => {
     setFileNote("");

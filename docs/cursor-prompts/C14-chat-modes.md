@@ -101,8 +101,12 @@ Today the card's buttons explain the problem but give no way to act on it. Each 
    step, what was being done, the error, the file and lines involved, and the last ~20 log lines.
 2. **Send to chat**: puts that same block into the composer with the run attached, so the user only
    types what they want done.
-3. **Fix it**: starts an Auto run with the problem as its task.
-4. **Retry** and **Skip step**, so a plan is never stuck on one step.
+3. **Fix it**: tries again, with the details block as feedback. *(Built 2026-11-07: on a plan
+   step it retries **that step** with the feedback, so the plan carries on when the fix lands.
+   Anywhere else it starts the run again next to the old one. Both discard the old change.)*
+4. **Retry** (again, without the feedback) and **Skip step** (the step becomes `skipped`, its
+   change is discarded, and the next step starts), so a plan is never stuck on one step.
+   Who can use these: the owner, or whoever started the run.
 
 **Done when:** every needs-you card has the five buttons, and Send to chat → "fix it" resolves a
 failed step without copying anything by hand.

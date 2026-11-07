@@ -27,7 +27,7 @@ export interface PhoneProps {
 export function Phone(props: PhoneProps) {
   const [tab, setTab] = useState<Tab>("inbox");
   const waiting = props.inbox.filter((r) => r.state === "needs_you").length;
-  const done = props.phase?.tasks.filter((t) => t.status === "done").length ?? 0;
+  const done = props.phase?.tasks.filter((t) => t.status === "done" || t.status === "skipped").length ?? 0;
 
   return (
     <div className="phone">
