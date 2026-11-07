@@ -73,7 +73,7 @@ def test_a_thinking_plan_thinks_on_every_step(settings: Settings, repo: Path) ->
     conv = chat.start()
     turn = chat.say(conv.id, "plan a greeter", think=True)
     assert turn.plan and turn.plan["think"]
-    built = plans.go(by="owner")
+    built = plans.go(by="owner", conversation=conv.id)
     step = Plans.steps(built)[0]
     assert orch.get(step.run or "").model == "pablo/coder-think"
 

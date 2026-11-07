@@ -88,11 +88,11 @@ def acceptance_check(
         return check.passed, check.output_tail
 
 
-def _decide(ws: Any, plans: Any, project: str, result: BuildResult) -> bool:
+def _decide(ws: Any, plans: Any, project: str, result: BuildResult, conversation: str = "") -> bool:
     """Decide the step that waits. True if it was approved."""
     from pablo.plans import Plans
 
-    plan = plans.get(project)
+    plan = plans.get(project, conversation)
     step = next((t for t in Plans.steps(plan) if t.status == "needs_you" and t.run), None)
     if step is None:
         return False
@@ -165,30 +165,30 @@ def run_build(
                     result.asked_twice = True
                     turn = chat.say(conv.id, "Please write that as a plan, with PLAN and STEP "
                                              "lines, and don't build yet.")  # fmt: skip
-                plan = plans.get(project.name)
+                plan = plans.get(project.name, conv.id)
                 result.planned = plan is not None
                 if plan is not None:
                     result.steps = len(Plans.steps(plan))
                     chat.say(conv.id, "Looks good, go.")
-                    if (plans.get(project.name) or plan).state == "draft":
+                    if (plans.get(project.name, conv.id) or plan).state == "draft":
                         result.pressed_build = True  # the model didn't write BUILD: go
-                        plans.go(project.name, by="owner")
+                        plans.go(project.name, by="owner", conversation=conv.id)
                     stops = 0
                     for _ in range(MAX_DECISIONS):
-                        plan = plans.get(project.name)
+                        plan = plans.get(project.name, conv.id)
                         if plan is None or plan.state == "done":
                             break
                         if plan.state == "paused":
                             stops += 1
                             if stops > 1:
                                 break
-                            plans.go(project.name, by="owner")
+                            plans.go(project.name, by="owner", conversation=conv.id)
                             continue
-                        if not _decide(ws, plans, project.name, result):
-                            plan = plans.get(project.name)
+                        if not _decide(ws, plans, project.name, result, conv.id):
+                            plan = plans.get(project.name, conv.id)
                             if plan is not None and plan.state == "running":
                                 break  # nothing waiting and not paused: stuck
-                    plan = plans.get(project.name)
+                    plan = plans.get(project.name, conv.id)
                     result.finished = plan is not None and plan.state == "done"
                     if plan is not None:
                         result.steps = len(Plans.steps(plan))  # as built, if "go" changed it

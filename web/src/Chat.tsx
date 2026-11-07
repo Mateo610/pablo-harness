@@ -68,6 +68,24 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
   const advisor = mode === "advisor";
   const [convs, reloadConvs] = usePoll(api.conversations, 20000);
   const [kept, reloadKept] = usePoll(() => api.memories("kept"), 0);
+  // An unsent message belongs to its chat: it survives switching chats, tabs, or a reload.
+  const draftKey = `pablo.draft.${mode}.${id || "new"}`;
+  const setDraft = (text: string) => {
+    setDraftState(text);
+    try {
+      if (text) localStorage.setItem(draftKey, text);
+      else localStorage.removeItem(draftKey);
+    } catch {
+      /* not kept in a private window */
+    }
+  };
+  useEffect(() => {
+    try {
+      setDraftState(localStorage.getItem(draftKey) ?? "");
+    } catch {
+      setDraftState("");
+    }
+  }, [draftKey]);
   const [proposed, reloadProposed] = usePoll(() => api.memories("proposed"), 0);
   const [conv, setConv] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -100,7 +118,8 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
   const picker = useRef<HTMLInputElement>(null);
   const [menu, setMenu] = useState(false);
   const [confirm, setConfirm] = useState<string | null>(null);
-  const [draft, setDraft] = useState("");
+  const [draft, setDraftState] = useState("");
+  const [hasPlan, setHasPlan] = useState(false);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHits | null>(null);
@@ -115,7 +134,6 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
   const startIn = pickProject(projects, chosen);
   // An open conversation keeps its own project; a new one starts in the chosen project.
   const unfiltered = conv ? convUnfiltered : startIn?.mode === "unfiltered";
-  const projectName = conv ? conv.project : startIn?.name ?? "";
   const canAct = !advisor && lane !== "claude";
   const planning = canAct && act === "plan";
   const canThink = !advisor && !unfiltered && (lane === "coder" || lane === "auto") && Boolean(lanes.find((l) => l.name === "coder")?.thinking);
@@ -142,6 +160,7 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
     setError("");
     setConfirm(null);
     setDeleting(false);
+    setHasPlan(false);
     if (id) load(id);
     else {
       setConv(null);
@@ -159,7 +178,8 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
     if (pending !== null && e.kind === "status" && typeof e.data.text === "string") setStatus(e.data.text);
   });
 
-  const send = async (text: string, confirmed = false) => {
+  /** `as`: send in this plan size whatever the switch says (the spec card's Use this). */
+  const send = async (text: string, confirmed = false, as?: PlanSize) => {
     if (!text.trim() || pending !== null) return;
     if (lane === "claude" && !confirmed) {
       setConfirm(text);
@@ -171,6 +191,7 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
     setStreamed("");
     setStatus("");
     setDraft("");
+    setHasPlan(false);
     try {
       let cid = conv?.id;
       if (!cid) {
@@ -178,7 +199,7 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
         cid = made.id;
         go(advisor ? "advisor" : "chat", cid);
       }
-      const turn = await api.sayStream(cid, text, { lane, do: null, confirm: confirmed, think: canThink && thinkOn, plan: planning ? planSize : null }, (piece) =>
+      const turn = await api.sayStream(cid, text, { lane, do: null, confirm: confirmed, think: canThink && thinkOn, plan: as ?? (planning ? planSize : null) }, (piece) =>
         setStreamed((s) => s + piece),
       );
       setConv(turn.conversation);
@@ -224,13 +245,18 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
     });
 
   const here = (proposed ?? []).filter((m) => m.source_conversation === conv?.id);
+  // Only a spec that is still the newest reply can be used: once a plan (or anything) follows it,
+  // its buttons go.
+  const lastReply = [...messages].reverse().find((m) => m.role === "assistant");
+  const lastSpecId = lastReply?.content.includes("```spec\n") ? lastReply.id : undefined;
+  const showPlan = !advisor && (planning || hasPlan);
   // Until /api/lanes answers, the menu has no options yet: show the choice by its name.
   const current = options.find((o) => o.key === lane) ?? options[0] ?? { key: lane, name: laneName(lane), desc: "", meta: "" };
   const accent = advisor ? "var(--lane-advisor)" : laneColor(lane);
   const frame = advisor ? "violet" : "";
 
   return (
-    <div className="h-chat">
+    <div className={`h-chat ${showPlan ? "planning" : ""}`}>
       <aside className="h-list" aria-label={advisor ? "Advisor sessions" : "Conversations"}>
         <button className={`h-btn ${advisor ? "violet" : ""}`} style={{ justifyContent: "center" }} onClick={() => go(mode)}>
           + {advisor ? "NEW SESSION" : "NEW"}
@@ -304,17 +330,32 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
         </header>
 
         <div className="h-msgs">
-          {messages.length === 0 && pending === null && (
+          {messages.length === 0 && pending === null && planning && (
+            <div className="h-frame h-pad" style={{ marginTop: 40, gap: 14 }}>
+              <span className="h-cap" style={{ color: "var(--sys)" }}>Plan</span>
+              <span style={{ fontSize: 20, fontWeight: 600 }}>What are you planning?</span>
+              <div className="h-tiles" role="group" aria-label="Plan size">
+                {(["minor", "major"] as PlanSize[]).map((p) => (
+                  <button key={p} className="h-tile" aria-pressed={planSize === p} onClick={() => (setPlanSize(p), box.current?.focus())}>
+                    <span className="h-mono" style={{ fontSize: 12, letterSpacing: ".12em" }}>{p.toUpperCase()}</span>
+                    <span style={{ fontSize: 13.5, lineHeight: 1.5 }}>
+                      {p === "minor"
+                        ? "A change or a small feature. A question or two at most, then a step list."
+                        : "Something bigger. An interview, one question at a time, then a spec to approve, then a plan in phases."}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <span className="h-dim" style={{ fontSize: 13 }}>Say it in the box below. Nothing runs in Plan: when the plan is right, Approve builds it in Auto, a step at a time.</span>
+            </div>
+          )}
+          {messages.length === 0 && pending === null && !planning && (
             <div className={`h-frame ${frame} h-pad`} style={{ marginTop: 40 }}>
               <span className="h-cap" style={{ color: accent }}>{advisor ? "Ask for the take the team won't give you" : "Start here"}</span>
               <span style={{ fontSize: 14, color: "var(--ink-body)", lineHeight: 1.6 }}>
                 {advisor
                   ? "The advisor talks only. It has no stake in your choices and no guardrails. Bring it a plan, a run, or a decision."
-                  : planning
-                    ? planSize === "major"
-                      ? "Plan · Major. Say what you're planning. Pablo asks one question at a time until it understands, then writes the plan. Nothing runs: switch to Auto to build it."
-                      : "Plan · Minor. Say what you're planning. Pablo asks a question or two at most, then writes the plan. Nothing runs: switch to Auto to build it."
-                    : "Ask about the code, say what to change, or describe something bigger (\"let's build a tool that…\") and Pablo plans it with you, then builds it a step at a time when you say go. Every change shows its diff and checks here; only the owner can apply it. Turn on Plan to think it through first. Type \"remember: …\" to keep a note."}
+                  : "Ask about the code, say what to change, or describe something bigger (\"let's build a tool that…\") and Pablo plans it with you, then builds it a step at a time when you say go. Every change shows its diff and checks here; only the owner can apply it. Turn on Plan to think it through first. Type \"remember: …\" to keep a note."}
               </span>
             </div>
           )}
@@ -330,7 +371,20 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
                   <span className="h-mono h-faint" style={{ fontSize: 11 }}>
                     {laneName(m.lane)} · {ago(m.created_at)}
                   </span>
-                  <Markdown text={m.run_id ? m.content.replace(/\n*\[run [^\]]+\]\s*$/, "") : m.content} />
+                  {splitSpec(m.run_id ? m.content.replace(/\n*\[run [^\]]+\]\s*$/, "") : m.content).map((part, i) =>
+                    part.spec ? (
+                      <SpecCard
+                        key={i}
+                        spec={part.text}
+                        latest={m.id === lastSpecId}
+                        onUse={() => (setAct("plan"), setPlanSize("major"), void send("Use this spec. Write the plan.", false, "major"))}
+                        onEdit={() => (setDraft(`Here's the spec with my changes:\n\n${part.text}`), box.current?.focus())}
+                        onRefine={() => (setDraft("Keep refining: "), box.current?.focus())}
+                      />
+                    ) : (
+                      <Markdown key={i} text={part.text} />
+                    ),
+                  )}
                   {m.run_id && <RunCard id={m.run_id} me={me} />}
                 </div>
               </div>
@@ -369,7 +423,11 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
             </div>
           )}
           {error && <div className="h-error">{error}</div>}
-          {!advisor && projectName && <PlanCard project={projectName} me={me} />}
+          {!advisor && conv && (
+            <div className="h-plan-inline">
+              <PlanCard project={conv.project} conversation={conv.id} me={me} onApprove={() => setAct("auto")} />
+            </div>
+          )}
           <div ref={bottom} />
         </div>
 
@@ -476,6 +534,23 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
         </div>
       </section>
 
+      {showPlan && (
+        <aside className="h-plan-col" aria-label="The plan">
+          {conv && <PlanCard project={conv.project} conversation={conv.id} me={me} onApprove={() => setAct("auto")} onPlan={(p) => setHasPlan(Boolean(p))} />}
+          {!hasPlan && (
+            <div className="h-frame h-pad" style={{ gap: 8 }}>
+              <span className="h-cap" style={{ color: "var(--sys)" }}>{`Plan · ${planSize}`}</span>
+              <span style={{ fontSize: 13.5, lineHeight: 1.55, color: "var(--ink-body)" }}>
+                {planSize === "major"
+                  ? "The plan builds up here: first the spec you approve, then phases you can watch step by step."
+                  : "The plan builds up here as a short list of steps."}
+              </span>
+              {(files ?? []).length > 0 && <span className="h-faint" style={{ fontSize: 12 }}>It reads your {(files ?? []).length} kept file{(files ?? []).length === 1 ? "" : "s"}.</span>}
+            </div>
+          )}
+        </aside>
+      )}
+
       <aside className="h-rail-r" aria-label="What Pablo remembers">
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <span className="h-cap">Remembered</span>
@@ -545,7 +620,37 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
 }
 
 /** While a reply streams, hide the control lines (RUN:, PLAN:, …) the harness acts on afterwards. */
-export const CONTROL = /^\s*(RUN|REMEMBER|PLAN|STEP|BUILD|APPLY|DISCARD):/;
+export const CONTROL = /^\s*(RUN|REMEMBER|PLAN|PHASE|STEP|BUILD|APPLY|DISCARD|SPEC):|^\s*END SPEC\s*$/;
+
+/** A reply split around its ```spec blocks (a Major plan's spec, drawn as a card). */
+function splitSpec(text: string): { spec: boolean; text: string }[] {
+  const out: { spec: boolean; text: string }[] = [];
+  const re = /```spec\n([\s\S]*?)\n```/g;
+  let at = 0;
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    if (m.index > at) out.push({ spec: false, text: text.slice(at, m.index).trim() });
+    out.push({ spec: true, text: m[1] });
+    at = m.index + m[0].length;
+  }
+  if (at < text.length) out.push({ spec: false, text: text.slice(at).trim() });
+  return out.filter((p) => p.text);
+}
+
+function SpecCard({ spec, latest, onUse, onEdit, onRefine }: { spec: string; latest: boolean; onUse: () => void; onEdit: () => void; onRefine: () => void }) {
+  return (
+    <div className="h-frame h-pad" style={{ gap: 10, margin: "4px 0" }}>
+      <span className="h-cap" style={{ color: "var(--sys)" }}>Spec</span>
+      <Markdown text={spec} />
+      {latest && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button className="h-btn solid" onClick={onUse}>USE THIS</button>
+          <button className="h-btn" onClick={onEdit}>EDIT</button>
+          <button className="h-btn" onClick={onRefine}>KEEP REFINING</button>
+        </div>
+      )}
+    </div>
+  );
+}
 function visibleWhileStreaming(text: string): string {
   return text
     .split("\n")

@@ -108,6 +108,11 @@ export interface Plan {
   lane?: string;
   by?: string;
   conversation?: string;
+  /** Plan mode's size when it was drafted there; "" from Auto */
+  size?: "" | PlanSize;
+  /** a Major plan's spec (markdown) */
+  spec?: string;
+  updated?: string;
 }
 
 export interface HarnessEvent {
@@ -347,11 +352,23 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
+function planQuery(project: string, conversation = "", latest = false): string {
+  const q = new URLSearchParams();
+  if (project) q.set("project", project);
+  if (conversation) q.set("conversation", conversation);
+  if (latest) q.set("latest", "true");
+  const text = q.toString();
+  return text ? `?${text}` : "";
+}
+
 export const api = {
   lanes: () => call<Lane[]>("/api/lanes"),
-  plan: (project = "") => call<Plan>(`/api/plan${project ? `?project=${encodeURIComponent(project)}` : ""}`),
-  planGo: (project = "") =>
-    call<Plan>(`/api/plan/go${project ? `?project=${encodeURIComponent(project)}` : ""}`, { method: "POST" }),
+  /** The project's plan; a chat's plan (`conversation`); or your newest live one (`latest`, voice). */
+  plan: (project = "", conversation = "", latest = false) => call<Plan>(`/api/plan${planQuery(project, conversation, latest)}`),
+  planGo: (project = "", conversation = "") => call<Plan>(`/api/plan/go${planQuery(project, conversation)}`, { method: "POST" }),
+  /** Start over: throw a chat's draft (or paused, or finished) plan away. */
+  planDiscard: (project: string, conversation: string) =>
+    call<{ discarded: boolean }>(`/api/plan${planQuery(project, conversation)}`, { method: "DELETE" }),
   inbox: () => call<Run[]>("/api/inbox"),
   run: (id: string) => call<Run>(`/api/runs/${id}`),
   start: (task: string, lane?: string, taskId?: string) =>

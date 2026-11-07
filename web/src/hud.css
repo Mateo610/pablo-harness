@@ -150,5 +150,15 @@
 @media (prefers-reduced-motion: reduce) {
   .h-orb .h-spoke > i, .h-aura, .h-scan::after, .h-thinking::before, .h-caret, .h-meter > div { animation: none !important; transition: none !important; }
 }
+/* C14b: the plan builds up in a column beside the chat; on narrow screens it sits inline. */
+.h-plan-col { flex: 0 0 360px; border-left: 1px solid var(--line); padding: 18px 16px; display: flex; flex-direction: column; gap: 14px; max-height: 100vh; overflow-y: auto; position: sticky; top: 0; }
+.h-plan-inline { display: none; }
+.h-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+.h-tile { display: flex; flex-direction: column; gap: 6px; text-align: left; padding: 12px 14px; border: 1px solid var(--sys-line); background: transparent; color: var(--ink-body); }
+.h-tile:hover { border-color: var(--sys); }
+.h-tile[aria-pressed="true"] { border-color: var(--sys); background: var(--sys-wash); color: var(--ink); }
+.h-tile[aria-pressed="true"] .h-mono { color: var(--sys); }
+@media (max-width: 1500px) { .h-chat.planning .h-list { display: none; } }
 @media (max-width: 1100px) { .h-rail-r { display: none; } }
+@media (max-width: 860px) { .h-plan-col { display: none; } .h-plan-inline { display: block; } }
 @media (max-width: 860px) { .h-list { display: none; } }

@@ -342,54 +342,126 @@ export function GpuQueue({ gpu }: { gpu: GpuState | null }) {
 const STEP_MARK: Record<string, string> = { done: "✓", active: "…", needs_you: "◆", blocked: "!", queued: "·" };
 const STEP_WORD: Record<string, string> = { done: "done", active: "building", needs_you: "waiting for you", blocked: "stopped", queued: "next" };
 
-/** Plan mode: the project's plan, the step waiting for you, and Build. Polls while it builds. */
-export function PlanCard({ project, me, onChange }: { project: string; me: Me | null; onChange?: () => void }) {
-  const [plan, reload] = usePoll<Plan | null>(() => api.plan(project).catch(() => null), 4000, [project]);
+/**
+ * A plan, the step waiting for you, and Build. Polls while it builds.
+ * - `conversation`: that chat's plan (C14: one per chat). Without it, the project's plan.
+ * - `latest`: your newest live plan in the project (the Voice page: a call has no chat).
+ * - `onApprove`: Plan mode's Approve: the chat switches to Auto, which builds it.
+ */
+export function PlanCard({
+  project,
+  me,
+  conversation = "",
+  latest = false,
+  onApprove,
+  onPlan,
+  onChange,
+}: {
+  project: string;
+  me: Me | null;
+  conversation?: string;
+  latest?: boolean;
+  onApprove?: () => void;
+  onPlan?: (plan: Plan | null) => void;
+  onChange?: () => void;
+}) {
+  const [plan, reload] = usePoll<Plan | null>(
+    () => api.plan(project, conversation, latest).catch(() => null),
+    4000,
+    [project, conversation, latest],
+  );
   const [error, setError] = useState("");
+  const [sure, setSure] = useState(false);
   useEvents((e) => {
     if (["decided", "judged", "needs_you"].includes(e.kind)) reload();
   });
-  if (!plan || !plan.state) return null;
-  const steps = plan.phases.flatMap((p) => p.tasks);
+  const live = plan && plan.state ? plan : null;
+  const onPlanRef = useRef(onPlan);
+  onPlanRef.current = onPlan;
+  useEffect(() => onPlanRef.current?.(live), [live]);
+  if (!live) return null;
+  const steps = live.phases.flatMap((p) => p.tasks);
   const waiting = steps.find((t) => t.status === "needs_you" && t.run);
-  const canBuild = plan.state === "draft" || plan.state === "paused";
+  const canBuild = live.state === "draft" || live.state === "paused";
+  const key = latest ? live.conversation ?? "" : conversation;
   const build = () =>
     api
-      .planGo(project)
-      .then(() => (setError(""), reload(), onChange?.()))
+      .planGo(project, key)
+      .then(() => (setError(""), reload(), live.state === "draft" && onApprove?.(), onChange?.()))
       .catch((e: Error) => setError(e.message));
+  const startOver = () =>
+    api
+      .planDiscard(project, key)
+      .then(() => (setError(""), setSure(false), reload(), onChange?.()))
+      .catch((e: Error) => setError(e.message));
+  const phased = live.phases.length > 1;
+  const row = (t: Plan["phases"][number]["tasks"][number]) => (
+    <li key={t.id} style={{ display: "flex", gap: 10, alignItems: "baseline", fontSize: 13.5 }}>
+      <span className="h-mono" style={{ width: 16, color: t.status === "needs_you" ? "var(--accent)" : t.status === "done" ? "var(--status-pass)" : t.status === "blocked" ? "var(--status-fail)" : "var(--ink-muted)" }} aria-hidden="true">
+        {STEP_MARK[t.status] ?? "·"}
+      </span>
+      <span style={{ flex: 1, minWidth: 0, color: t.status === "done" ? "var(--ink-muted)" : undefined }}>
+        {t.id}. {t.title}
+      </span>
+      <span className="h-mono h-faint" style={{ fontSize: 11 }}>{STEP_WORD[t.status] ?? t.status}</span>
+    </li>
+  );
+  const list = { margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column" as const, gap: 6 };
   return (
     <section className="h-frame h-pad" aria-label="Plan" style={{ gap: 10 }}>
-      <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
-        <span className="h-cap" style={{ color: "var(--sys)" }}>Plan</span>
-        <span style={{ fontSize: 14.5, fontWeight: 600, flex: 1, minWidth: 0 }}>{plan.goal || "Untitled"}</span>
+      <div style={{ display: "flex", gap: 10, alignItems: "baseline" }}>
+        <span className="h-cap" style={{ color: "var(--sys)", flex: 1 }}>{live.size ? `Plan · ${live.size}` : "Plan"}</span>
         <span className="h-mono h-dim" style={{ fontSize: 11 }}>
-          {plan.state} · {steps.filter((t) => t.status === "done").length}/{steps.length}
+          {live.state} · {steps.filter((t) => t.status === "done").length}/{steps.length}
         </span>
       </div>
-      <ol style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 6 }}>
-        {steps.map((t) => (
-          <li key={t.id} style={{ display: "flex", gap: 10, alignItems: "baseline", fontSize: 13.5 }}>
-            <span className="h-mono" style={{ width: 16, color: t.status === "needs_you" ? "var(--accent)" : t.status === "done" ? "var(--status-pass)" : t.status === "blocked" ? "var(--status-fail)" : "var(--ink-muted)" }} aria-hidden="true">
-              {STEP_MARK[t.status] ?? "·"}
+      <span style={{ fontSize: 15, fontWeight: 600, lineHeight: 1.35 }}>{live.goal || "Untitled"}</span>
+      {phased ? (
+        live.phases.map((ph) => (
+          <div key={ph.id} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <span style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+              <span className="h-mono" style={{ fontSize: 11.5, color: "var(--sys)" }}>PHASE {ph.id}</span>
+              <span style={{ fontSize: 13.5, fontWeight: 600 }}>{ph.title}</span>
+              <span className="h-mono h-faint" style={{ fontSize: 11, marginLeft: "auto" }}>
+                {ph.tasks.filter((t) => t.status === "done").length}/{ph.tasks.length}
+              </span>
             </span>
-            <span style={{ flex: 1, minWidth: 0, color: t.status === "done" ? "var(--ink-muted)" : undefined }}>
-              {t.id}. {t.title}
-            </span>
-            <span className="h-mono h-faint" style={{ fontSize: 11 }}>{STEP_WORD[t.status] ?? t.status}</span>
-          </li>
-        ))}
-      </ol>
+            <span className="h-faint" style={{ fontSize: 12 }}>Done when: {ph.gate}</span>
+            <ol style={list}>{ph.tasks.map(row)}</ol>
+          </div>
+        ))
+      ) : (
+        <ol style={list}>{steps.map(row)}</ol>
+      )}
+      {live.spec && (
+        <details>
+          <summary className="h-mono h-dim" style={{ fontSize: 12, cursor: "pointer" }}>The spec</summary>
+          <pre className="h-mono" style={{ whiteSpace: "pre-wrap", fontSize: 12, lineHeight: 1.5, color: "var(--ink-body)", margin: "8px 0 0" }}>{live.spec}</pre>
+        </details>
+      )}
       {waiting?.run && <RunCard id={waiting.run} me={me} />}
       {error && <span style={{ color: "var(--status-fail)", fontSize: 13 }}>{error}</span>}
       {canBuild && (
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <button className="h-btn solid" onClick={build}>
-            {plan.state === "draft" ? "BUILD IT" : "KEEP GOING"}
+            {live.state === "draft" ? (onApprove ? "APPROVE · BUILD IN AUTO" : "BUILD IT") : "KEEP GOING"}
           </button>
-          <span className="h-dim" style={{ fontSize: 12 }}>
-            {plan.state === "draft" ? "Each step waits for your approval before the next starts." : "Retries the stopped step, then carries on."}
+          <span className="h-dim" style={{ fontSize: 12, flex: 1, minWidth: 160 }}>
+            {live.state === "draft" ? "Each step waits for your approval before the next starts." : "Retries the stopped step, then carries on."}
           </span>
+        </div>
+      )}
+      {key && live.state !== "running" && (
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {sure ? (
+            <>
+              <span style={{ fontSize: 12.5 }}>Throw this plan away?</span>
+              <button className="h-btn danger" onClick={startOver}>START OVER</button>
+              <button className="h-btn" onClick={() => setSure(false)}>KEEP IT</button>
+            </>
+          ) : (
+            <button className="h-toggle" onClick={() => setSure(true)}>start over</button>
+          )}
         </div>
       )}
     </section>

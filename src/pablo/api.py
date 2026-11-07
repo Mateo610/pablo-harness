@@ -7,6 +7,7 @@ write to your repo when you approve.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -217,26 +218,57 @@ def create_app(
     def lanes() -> list[dict[str, Any]]:
         return [lane.model_dump() for lane in orch.settings.lanes.values()]
 
+    def _plan_access(request: Request, conversation: str) -> None:
+        """A chat's plan is its owner's, and the box owner's: nobody else's."""
+        if conversation and not caller_of(request).is_owner:
+            _found(store.conversation, conversation, profile_of(request))
+
     @app.get("/api/plan")
-    def plan(project: str = "") -> dict[str, Any]:
+    def plan(
+        request: Request, project: str = "", conversation: str = "", latest: bool = False
+    ) -> dict[str, Any]:
+        """A chat's plan, the project's plan, or (`latest`) your newest live plan in the
+        project: the one a voice call talks about."""
+        _plan_access(request, conversation)
         try:
-            found = plans.get(project)
-        except KeyError as exc:
+            if latest:
+                newest = plans.latest(project, by=profile_of(request))
+                found = newest[1] if newest else None
+            else:
+                found = plans.get(project, conversation)
+        except (KeyError, ValueError) as exc:
             raise HTTPException(404, str(exc).strip("'\"")) from exc
         if found is None:
             raise HTTPException(404, "no plan yet: describe what you want built in Chat")
         return found.model_dump(mode="json")
 
     @app.post("/api/plan/go")
-    async def plan_go(request: Request, project: str = "") -> dict[str, Any]:
+    async def plan_go(
+        request: Request, project: str = "", conversation: str = ""
+    ) -> dict[str, Any]:
         """Build the plan: the next step runs; each one waits for the owner's approval."""
+        _plan_access(request, conversation)
         try:
-            started = await run_in_threadpool(plans.go, project, by=profile_of(request))
+            started = await run_in_threadpool(
+                lambda: plans.go(project, by=profile_of(request), conversation=conversation)
+            )
         except KeyError as exc:
             raise HTTPException(404, str(exc).strip("'\"")) from exc
         except (ValueError, PlanBusy) as exc:
             raise HTTPException(409, str(exc)) from exc
         return started.model_dump(mode="json")
+
+    @app.delete("/api/plan")
+    def plan_discard(request: Request, conversation: str, project: str = "") -> dict[str, Any]:
+        """Start over: throw a chat's plan away (not while a step is building)."""
+        _plan_access(request, conversation)
+        try:
+            gone = plans.discard(project, conversation)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc).strip("'\"")) from exc
+        except (ValueError, PlanBusy) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return {"discarded": gone}
 
     @app.post("/api/plan/tasks/{task_id}")
     def set_task_status(task_id: str, body: StatusIn, request: Request) -> dict[str, Any]:
@@ -673,7 +705,11 @@ def create_app(
 
     @app.delete("/api/conversations/{cid}")
     def delete_conversation(cid: str, request: Request) -> dict[str, Any]:
+        conv = _found(store.conversation, cid, profile_of(request))
         _found(store.delete, cid, profile_of(request))
+        # Its plan goes with it: a plan is shown in its chat, and the chat is gone.
+        with contextlib.suppress(KeyError, ValueError):
+            plans.discard(conv.project, cid, force=True)
         return {"deleted": cid}
 
     @app.post("/api/conversations/{cid}/messages", response_model=None)
