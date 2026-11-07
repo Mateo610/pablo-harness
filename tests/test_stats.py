@@ -8,10 +8,10 @@ import sys
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from tests.fakes import FakeBackend
 
 from pablo.api import create_app
 from pablo.config import Settings
-from pablo.gateway import FakeBackend
 from pablo.orchestrator import Orchestrator
 from pablo.resources import CpuMeter
 from pablo.stats import public_remote, repo_status

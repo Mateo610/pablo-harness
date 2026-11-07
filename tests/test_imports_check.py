@@ -5,8 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from pablo.demo import load_checks
-from pablo.verify import IMPORTS_CHECK, run_check
+from pablo.verify import IMPORTS_CHECK, load_checks, run_check
 
 CHECK = [sys.executable, *IMPORTS_CHECK[1:]]
 

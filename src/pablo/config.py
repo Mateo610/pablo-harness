@@ -114,7 +114,7 @@ class Overnight(BaseModel):
 
 
 class SandboxConfig(BaseModel):
-    """Where checks run. `local` is a plain subprocess (tests, CI, --fake).
+    """Where checks run. `local` is a plain subprocess (tests, CI).
 
     `container` runs each check in a throwaway container: no network, read-only image,
     tmpfs /tmp, no capabilities, CPU/memory/process limits, only the scratch copy mounted.

@@ -6,8 +6,9 @@ import json
 import sys
 from pathlib import Path
 
+from tests.fakes import FakeBackend
+
 from pablo.config import Settings
-from pablo.gateway import FakeBackend
 from pablo.orchestrator import Orchestrator
 
 PYTEST = {"tests": [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"]}

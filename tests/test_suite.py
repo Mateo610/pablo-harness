@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
+from tests.fakes import FakeBackend
 
 from pablo.config import Settings
 from pablo.evals import (
@@ -22,7 +23,7 @@ from pablo.evals import (
     materialize,
     run_suite,
 )
-from pablo.gateway import FakeBackend, Message
+from pablo.gateway import Message
 from pablo.sandbox import LocalSandbox
 from pablo.verify import IMPORTS_CHECK, run_check
 
@@ -306,7 +307,7 @@ def test_claude_is_scored_only_by_hand_and_as_an_escalation(settings: Settings) 
     assert row.hidden_passed and row.final_lane == "claude"
     assert {m for m, _ in backend.calls} == {"pablo/escalate", "pablo/judge"}  # no local coder
 
-    refused = CliRunner().invoke(app, ["eval", "--lane", "claude", "--fake"])
+    refused = CliRunner().invoke(app, ["eval", "--lane", "claude"])
     assert refused.exit_code == 2  # a usage error: the message asks for --allow-remote
 
 

@@ -60,7 +60,7 @@ overnight:                # Pablo's local time
   max_jobs: 8
 
 sandbox:                  # where checks run (model-written code runs here)
-  kind: container         # container on Pablo; tests, CI, and --fake use local
+  kind: container         # container on Pablo; tests and CI use local
   engine: podman          # rootless podman: no root daemon, no docker group
   runtime: runsc          # gVisor; "" falls back to the engine's default runtime
   image: pablo-check:py311

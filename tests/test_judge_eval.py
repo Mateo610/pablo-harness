@@ -4,7 +4,9 @@ import json
 from collections.abc import Sequence
 from pathlib import Path
 
-from pablo.gateway import FakeBackend, Message
+from tests.fakes import FakeBackend
+
+from pablo.gateway import Message
 from pablo.judge_eval import CHECKS, build_case, load_cases, run_judge_eval
 from pablo.verify import verify_diff
 

@@ -502,7 +502,7 @@ def run_suite(
 
 
 def _repo_checks(repo: Path) -> dict[str, list[str]]:
-    from pablo.demo import load_checks
+    from pablo.verify import load_checks
 
     return load_checks(repo)
 

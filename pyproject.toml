@@ -55,4 +55,5 @@ mypy_path = "src"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 markers = ["container: needs podman (or docker) and the pablo-check image; run on Pablo"]

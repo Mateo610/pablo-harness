@@ -4,10 +4,10 @@ import sys
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from tests.fakes import demo_backend
 
 from pablo.api import create_app
 from pablo.config import Settings
-from pablo.demo import demo_backend
 from pablo.orchestrator import Orchestrator
 from pablo.plan import starter_plan
 

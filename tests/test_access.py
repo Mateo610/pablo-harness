@@ -9,11 +9,11 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from tests.fakes import FakeBackend
 
 from pablo.access import Access, AccessConfig, CachedWhois, Denied, load_access, owner_token
 from pablo.api import create_app
 from pablo.config import Settings
-from pablo.gateway import FakeBackend
 from pablo.orchestrator import Orchestrator
 
 MATT, SAM, EVE = "100.64.0.10", "100.64.0.20", "100.64.0.30"

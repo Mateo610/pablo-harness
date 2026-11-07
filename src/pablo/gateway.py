@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Protocol, TypedDict, cast
 
 import httpx
@@ -170,53 +170,3 @@ class LiteLLMBackend:
             return self._client.get("/models", timeout=5).status_code == 200
         except httpx.HTTPError:
             return False
-
-
-Responder = Callable[[str, Sequence[Message]], str]
-
-
-@dataclass
-class FakeBackend:
-    """Scripted backend for tests, demos, and building the UI without a GPU.
-
-    `scripts` maps a model alias to a list of replies (consumed in order) or a
-    function of (model, messages). Unknown models echo the last user message.
-    """
-
-    scripts: dict[str, list[str] | Responder] = field(default_factory=dict)
-    calls: list[tuple[str, list[Message]]] = field(default_factory=list)
-
-    def complete(
-        self,
-        model: str,
-        messages: Sequence[Message],
-        *,
-        temperature: float = 0.2,
-        top_p: float | None = None,
-        max_tokens: int = 4096,
-        timeout_s: float | None = None,
-    ) -> Completion:
-        del temperature, top_p
-        self.calls.append((model, list(messages)))
-        script = self.scripts.get(model)
-        if callable(script):
-            text = script(model, messages)
-        elif script:
-            text = script.pop(0)
-        else:
-            text = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
-        return Completion(
-            model=model,
-            text=text,
-            prompt_tokens=sum(len(m["content"]) // 4 for m in messages),
-            completion_tokens=len(text) // 4,
-        )
-
-    def stream(
-        self, model: str, messages: Sequence[Message], *, on_delta: Delta, **kw: Any
-    ) -> Completion:
-        """The scripted reply, in small pieces, so streaming code paths run in tests."""
-        done = self.complete(model, messages, **kw)
-        for i in range(0, len(done.text), 12):
-            on_delta(done.text[i : i + 12])
-        return done

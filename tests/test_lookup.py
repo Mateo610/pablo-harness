@@ -7,8 +7,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tests.fakes import FakeBackend
+
 from pablo.config import Settings
-from pablo.gateway import FakeBackend
 from pablo.lookup import InlineLookup, ProcessLookup, local_lookup, parse_symbol_request
 from pablo.orchestrator import Orchestrator
 

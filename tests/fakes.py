@@ -1,15 +1,13 @@
-"""A scripted team so the cockpit runs on any laptop, no GPU or gateway needed."""
+"""Test doubles: a scripted backend, and a scripted team for whole-flow tests. Never shipped."""
 
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
-from pathlib import Path
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
+from typing import Any
 
-import yaml
-
-from pablo.gateway import FakeBackend, Message
-from pablo.verify import DEFAULT_CHECKS, IMPORTS_CHECK
+from pablo.gateway import Completion, Delta, Message
 
 DEMO_DIFF = """diff --git a/PABLO_DEMO.md b/PABLO_DEMO.md
 new file mode 100644
@@ -82,33 +80,51 @@ def demo_backend() -> FakeBackend:
     )
 
 
-def load_checks(repo: Path) -> dict[str, list[str]]:
-    """Project checks from .pablo/checks.yaml; Python defaults if it looks like a Python repo.
+Responder = Callable[[str, Sequence[Message]], str]
 
-    Any Python repo also gets the `imports` check unless checks.yaml sets `imports: off`.
+
+@dataclass
+class FakeBackend:
+    """Scripted backend for tests: no GPU or gateway.
+
+    `scripts` maps a model alias to a list of replies (consumed in order) or a
+    function of (model, messages). Unknown models echo the last user message.
     """
-    path = repo / ".pablo" / "checks.yaml"
-    checks: dict[str, list[str]] = {}
-    imports_off = False
-    if path.is_file():
-        data = yaml.safe_load(path.read_text("utf-8")) or {}
-        for key, value in data.items():
-            if str(key) == "imports" and value in (False, "off", None):
-                imports_off = True
-                continue
-            checks[str(key)] = value.split() if isinstance(value, str) else list(value)
-    elif (repo / "pyproject.toml").is_file():
-        checks = dict(DEFAULT_CHECKS)
-    if not imports_off and "imports" not in checks and _has_python(repo):
-        checks["imports"] = list(IMPORTS_CHECK)
-    return checks
 
+    scripts: dict[str, list[str] | Responder] = field(default_factory=dict)
+    calls: list[tuple[str, list[Message]]] = field(default_factory=list)
 
-def _has_python(repo: Path) -> bool:
-    for base in (repo, repo / "src"):
-        if not base.is_dir():
-            continue
-        for path in base.iterdir():
-            if path.suffix == ".py" or (path / "__init__.py").is_file():
-                return True
-    return False
+    def complete(
+        self,
+        model: str,
+        messages: Sequence[Message],
+        *,
+        temperature: float = 0.2,
+        top_p: float | None = None,
+        max_tokens: int = 4096,
+        timeout_s: float | None = None,
+    ) -> Completion:
+        del temperature, top_p
+        self.calls.append((model, list(messages)))
+        script = self.scripts.get(model)
+        if callable(script):
+            text = script(model, messages)
+        elif script:
+            text = script.pop(0)
+        else:
+            text = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
+        return Completion(
+            model=model,
+            text=text,
+            prompt_tokens=sum(len(m["content"]) // 4 for m in messages),
+            completion_tokens=len(text) // 4,
+        )
+
+    def stream(
+        self, model: str, messages: Sequence[Message], *, on_delta: Delta, **kw: Any
+    ) -> Completion:
+        """The scripted reply, in small pieces, so streaming code paths run in tests."""
+        done = self.complete(model, messages, **kw)
+        for i in range(0, len(done.text), 12):
+            on_delta(done.text[i : i + 12])
+        return done

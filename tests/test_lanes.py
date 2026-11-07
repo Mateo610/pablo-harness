@@ -6,8 +6,10 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from tests.fakes import FakeBackend
+
 from pablo.config import Settings
-from pablo.gateway import Completion, FakeBackend, LiteLLMBackend, Message
+from pablo.gateway import Completion, LiteLLMBackend, Message
 from pablo.orchestrator import Orchestrator
 
 
@@ -89,8 +91,9 @@ def test_each_run_records_which_files_its_prompt_carried(settings: Settings, rep
 
 def test_the_advisor_talks_but_never_hands_back_a_change(settings: Settings, repo: Path) -> None:
     """The heretic Mistral is a second opinion: not routable, never trained on, no diffs."""
+    from tests.fakes import FakeBackend
+
     from pablo.config import load_settings
-    from pablo.gateway import FakeBackend
     from pablo.orchestrator import Orchestrator
 
     advisor = load_settings().lane("advisor")

@@ -5,9 +5,9 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests.fakes import FakeBackend
 
 from pablo.config import Settings
-from pablo.gateway import FakeBackend
 from pablo.judge import parse_judgement
 from pablo.orchestrator import Orchestrator, extract_diff
 from pablo.plan import Plan, starter_plan

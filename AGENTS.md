@@ -9,7 +9,7 @@ and leaves the merge decision to the human. Claude is an escalation lane, never 
 
 ## Layout
 - `src/pablo/` harness core (Python 3.11+, FastAPI, Typer)
-  - `config.py` lanes from `config/lanes.yaml` · `router.py` lane choice · `gateway.py` LiteLLM + FakeBackend
+  - `config.py` lanes from `config/lanes.yaml` · `router.py` lane choice · `gateway.py` LiteLLM (test double: `tests/fakes.py`)
   - `verify.py` diff → scratch copy → checks in a `sandbox.py` Sandbox (rootless Podman + gVisor on Pablo, local in tests); a failing check is re-run on the unedited copy so a verdict blames the diff only for what it made worse; Python repos also get an `imports` check (every module imported on its own) · `judge.py` certainty · `orchestrator.py` the run
   - `traces.py` JSONL traces + training export · `plan.py` GSD-style `.pablo/plan.yaml`
   - `api.py` HTTP + SSE for the cockpit · `cli.py` the `pablo` command
@@ -29,7 +29,6 @@ and leaves the merge decision to the human. Claude is an escalation lane, never 
 uv sync                       # install
 uv run pytest -q              # tests (no GPU needed: FakeBackend)
 uv run ruff check src tests && uv run mypy
-uv run pablo serve --fake     # API + cockpit with scripted models
 cd web && npm install && npm run dev   # cockpit dev server on :5173
 ```
 
@@ -52,7 +51,7 @@ cd web && npm install && npm run dev   # cockpit dev server on :5173
 
 ## Style
 - Python: typed (`mypy --strict` passes), small modules, dataclasses/pydantic, no global state.
-- Every new behavior gets a test that runs without a GPU (use `FakeBackend`).
+- Every new behavior gets a test that runs without a GPU (use `FakeBackend` from `tests/fakes.py`).
 - Web: tokens only (no raw hex outside tokens.css), amber (`--accent`) means "your move" and
   nothing else, real `<button>`/`<label>`, keyboard reachable, contrast ≥ 4.5:1.
 - Keep the plan honest: when you finish a milestone, update `docs/BUILD_PLAN.md` status.

@@ -175,9 +175,9 @@ class Workspace:
             return self.base
 
     def _make(self, project: Project) -> Orchestrator:
-        from pablo.demo import load_checks
         from pablo.orchestrator import Orchestrator
         from pablo.sandbox import LocalSandbox
+        from pablo.verify import load_checks
 
         b = self.base
         settings = b.settings if project.mode == "standard" else unfiltered_settings(b.settings)

@@ -10,6 +10,7 @@ import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -72,12 +73,29 @@ def test_a_holdout_eval_prints_and_keeps_totals_only(
     monkeypatch.setattr(evals, "HOLDOUT_RESULTS", out)
     monkeypatch.setattr(evals.append_sealed, "__defaults__", (out,))
     monkeypatch.setenv("PABLO_HOME", str(tmp_path / "home"))
+    # Scripted models, checks in a plain subprocess, no GPU: the real eval command otherwise.
+    from contextlib import nullcontext
+
+    from tests.fakes import demo_backend
+
+    from pablo import cli, gpu
+    from pablo.sandbox import LocalSandbox
+
+    real_run_suite = evals.run_suite
+
+    def local_suite(*args: Any, **kw: Any) -> Any:
+        return real_run_suite(*args, **{**kw, "sandbox": LocalSandbox(), "swap": None})
+
+    monkeypatch.setattr(cli, "_backend", lambda settings: demo_backend())
+    monkeypatch.setattr(cli, "_eval_preflight", lambda *a, **k: None)
+    monkeypatch.setattr(gpu.GpuScheduler, "mode_for", lambda self, mode: nullcontext())
+    monkeypatch.setattr(evals, "run_suite", local_suite)
     runner = CliRunner()
-    shown = runner.invoke(app, ["eval", "--set", "holdout", "--fake"])
+    shown = runner.invoke(app, ["eval", "--set", "holdout"])
     assert shown.exit_code == 0, shown.output
     assert "Passed per run" in shown.output
     assert not any(t.id in shown.output for t in TASKS)  # no task ids on screen
-    refused = runner.invoke(app, ["eval", "--set", "holdout", "--only", TASKS[0].id, "--fake"])
+    refused = runner.invoke(app, ["eval", "--set", "holdout", "--only", TASKS[0].id])
     assert refused.exit_code != 0
 
     report = evals.SuiteReport(lane="coder", model="m", results=[], commit="c")

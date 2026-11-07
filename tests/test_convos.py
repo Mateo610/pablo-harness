@@ -9,11 +9,12 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from tests.fakes import FakeBackend
 
 from pablo.api import create_app
 from pablo.config import Settings
 from pablo.convos import ADVISOR_PROMPT, CHAT_PROMPT, OWNER, Chat, fts_query
-from pablo.gateway import FakeBackend, Message
+from pablo.gateway import Message
 from pablo.orchestrator import Orchestrator
 
 CHECKS = {"tests": [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"]}
