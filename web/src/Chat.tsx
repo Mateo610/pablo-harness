@@ -25,7 +25,7 @@ function modelOptions(lanes: Lane[], me: Me | null): Option[] {
     if (l) out.push({ key, name, desc, meta: l.display || l.model.replace("pablo/", ""), group });
   };
   add("coder", "coder", "Base", "Fastest. Good for most things. Answers alone: if a change breaks, it comes to you.");
-  add("advisor", "advisor", "No guardrails", "Unfiltered. Talks here; builds only in a no-guardrails project.", "UNFILTERED");
+  add("advisor", "advisor", "No guardrails", "Unfiltered, and works alone: talks, plans and builds, and reviews its own changes. Nothing else is used.", "UNFILTERED");
   add("deep", "deep", "Best", "Our strongest model. Slow: expect a pause, and minutes for big changes.");
   const coder = by.get("coder");
   const deep = by.get("deep");

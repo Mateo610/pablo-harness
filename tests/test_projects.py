@@ -183,3 +183,35 @@ def test_deleting_every_test_is_still_a_regression(tmp_path: Path) -> None:
     fresh = Check("tests", ["python", "-m", "pytest"], False, 5, 0.1, "no tests ran")
     fresh.before, fresh.before_code = "failed", 5
     assert fresh.status == "no tests yet"
+
+
+def test_the_advisor_builds_alone_in_a_standard_project(settings: Settings, repo: Path) -> None:
+    advisor = settings.lanes["advisor"].model
+
+    def code(model: str, msgs: Sequence[Message]) -> str:
+        if "RUN: <a complete task" in msgs[0]["content"]:
+            return "Blunt take: fine.\nRUN: add hello() to hello.py"
+        if "certainty" in msgs[0]["content"].lower():
+            return JUDGE
+        return NEW_FILE
+
+    fake = FakeBackend(scripts={advisor: code})
+    base = Orchestrator(settings, fake, repo=repo, checks=CHECKS)
+    base.retry_inline = True
+    ws = Workspace(base)
+    chat = Chat(base, workspace=ws)
+    conv = chat.start(lane="advisor")
+    turn = chat.say(conv.id, "add a hello function")
+    assert turn.run and turn.reply.lane == "advisor"
+    assert {m for m, _ in fake.calls} == {advisor}
+    run = ws.for_run(turn.run["id"]).get(turn.run["id"])
+    assert run.self_judged and run.model == advisor and run.project == repo.name
+    assert run.certainty == 0.9  # the advisor judged it
+    assert turn.run["self_judged"] is True
+    with pytest.raises(KeyError):
+        ws.for_run(run.id).escalate(run.id)
+    ws.for_run(run.id).approve(run.id)
+    assert (repo / "hello.py").is_file()  # same repo as Hybrid; your approval lands it
+    rows = [json.loads(line) for t in settings.traces_dir.glob("*.jsonl")
+            for line in t.read_text().splitlines()]  # fmt: skip
+    assert rows and not any(r.get("train_ok") for r in rows)  # never training data

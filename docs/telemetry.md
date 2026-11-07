@@ -9,5 +9,6 @@ Checked 2026-11-04. Nothing in the harness phones home.
 | Unsloth | `get_statistics` downloads `unslothai/<env>` READMEs from Hugging Face unless disabled | `UNSLOTH_DISABLE_STATISTICS=1` in `scripts/train_lora.py` and `pablo-learn.service` |
 | Repo grep | No Sentry / Posthog / Segment / Mixpanel / gtag | none |
 | whisper.cpp v1.9.5 (`d1be6fd`) | No telemetry, analytics, or update-check calls in the server or build. The model download script fetches Hugging Face once, at install time | none |
+| Qwen3-TTS server `783bf0e` (groxaxo/Qwen3-TTS-Openai-Fastapi) | No analytics, telemetry, PostHog, or Sentry strings under `api/` or `qwen_tts/`. The unit sets `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`, `HF_HUB_DISABLE_TELEMETRY=1`, and `GRADIO_ANALYTICS_ENABLED=false`. Checked 2026-11-07 | none |
 
 Re-check when adding a dependency that mentions telemetry in its README.

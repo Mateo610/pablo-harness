@@ -16,6 +16,10 @@ Claude, never trained on).
 
 - **[gap]** The no-guardrails model has never been measured as a coder or a judge. Unfiltered
   projects may be much weaker, and it judges its own work.
+- **[observed]** Since C14 the Advisor builds the same way in standard projects: an Advisor
+  conversation gets `Workspace.advisor_orch` (the project's repo, unfiltered settings), so its
+  runs and plan steps are `self_judged`, never retry on Base or Best, can't escalate, and never
+  train. Same gap as above: nothing measured yet (tests only).
 - **[suspected]** One plan per project. Two features at once in one project means one waits.
 - **[suspected]** Lessons, the repo map cache and practice are keyed by folder name. Two projects
   with the same folder name in different places would share them.

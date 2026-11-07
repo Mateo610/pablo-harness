@@ -12,7 +12,9 @@ Rules this module keeps:
   needs `confirm=True` every time.
 - A chat turn is not a trace and never training data. The runs a chat starts are ordinary runs:
   verified, judged, and only written to your repo by Orchestrator.approve.
-- The advisor talks only: it cannot start a run.
+- The advisor (Chat's violet tab and its voice) works alone: in any project it talks, plans and
+  builds on the no-guardrails model, which also judges its own changes. Its runs never reach Base,
+  Best or Claude and never train anything. Without a workspace (`pablo chat`) it only talks.
 """
 
 from __future__ import annotations
@@ -44,6 +46,7 @@ Role = Literal["owner", "member"]
 MemoryStatus = Literal["proposed", "kept", "rejected"]
 OWNER = "owner"
 AUTO = "auto"  # the router picks the run's lane; the coder does the talking
+ADVISOR = "advisor"  # the no-guardrails model, on its own
 
 SCHEMA = """
 create table if not exists profiles (
@@ -120,6 +123,13 @@ add a line: REMEMBER: <the fact, in a few words>. They decide whether it's kept.
 ADVISOR_PROMPT = """You are the advisor: a blunt second opinion with no stake in the team's
 choices. Say what you actually think, including what the user doesn't want to hear. You never
 write or change code and you never score anything. Keep it short unless asked to go deep."""
+
+ADVISOR_BUILDS = (
+    "You are the advisor, running on the user's own server with no guardrails: blunt, with no "
+    "stake in anyone's choices, and you say what you actually think, including what the user "
+    "doesn't want to hear. You also do the work yourself: you write the changes and review "
+    "them. No other model is involved.\n\n" + CHAT_PROMPT.split("\n\n", 1)[1]
+)
 
 SPOKEN = """
 
@@ -538,8 +548,21 @@ class Chat:
             return self.orch
         return self.workspace.orch(project)
 
+    def is_advisor(self, conv: Conversation) -> bool:
+        """An Advisor conversation that can build: it needs the workspace to get its own team."""
+        return conv.lane == ADVISOR and self.workspace is not None
+
+    def advisor_orch(self, conv: Conversation) -> Orchestrator:
+        assert self.workspace is not None
+        try:
+            return self.workspace.advisor_orch(conv.project or self.project)
+        except KeyError:  # the project's folder is gone; work in the default one
+            return self.workspace.advisor_orch(self.project)
+
     def orch_for(self, conv: Conversation) -> Orchestrator:
         try:
+            if self.is_advisor(conv):
+                return self.advisor_orch(conv)
             return self._orch_named(conv.project)
         except KeyError:  # the project's folder is gone; talk about the default one
             return self.orch
@@ -573,9 +596,13 @@ class Chat:
         `think`: extended thinking, for Base and Hybrid in chat: the reply, the runs and the
         plan it starts use the coder's thinking variant. Never spoken (it's slow)."""
         conv = self.store.conversation(cid, profile)
-        orch = self.orch_for(conv)
-        unfiltered = self.unfiltered(conv.project)
+        # The Advisor: its own tab (conversation lane), or "No guardrails" picked in Chat.
+        advisor = self.workspace is not None and (lane or conv.lane) == ADVISOR
+        orch = self.advisor_orch(conv) if advisor else self.orch_for(conv)
+        # The Advisor builds the way an unfiltered project does: one model, by name, alone.
+        unfiltered = self.unfiltered(conv.project) or advisor
         name = AUTO if unfiltered else (lane or conv.lane)
+        label = ADVISOR if advisor else name  # what the turn is filed under
         cfg = self._lane(name, orch)
         think = think and not spoken and not unfiltered and cfg.thinking is not None
         if think and cfg.thinking is not None:
@@ -591,7 +618,7 @@ class Chat:
             raise ValueError(f"'{name}' talks only; it can't start a run")
 
         history = self.store.messages(cid)
-        user = self.store.add_message(cid, "user", text, lane=name)
+        user = self.store.add_message(cid, "user", text, lane=label)
         if not history and conv.title == "New conversation":
             title = " ".join(text.split())[:60]
             self.store.rename(cid, profile, title)
@@ -600,7 +627,7 @@ class Chat:
         said = _SAID_REMEMBER.match(text)
         if said:
             mem = self.store.remember(profile, said.group(1), source=cid)
-            reply = self.store.add_message(cid, "assistant", f"Kept: {mem.text}", lane=name)
+            reply = self.store.add_message(cid, "assistant", f"Kept: {mem.text}", lane=label)
             return Turn(conv, user, reply, kept=[mem])
 
         # Spoken turns rank notes without the message, so the list (and the prompt) stays put.
@@ -610,11 +637,11 @@ class Chat:
         if do:
             run = self._run(text, name, notes, profile, orch, unfiltered, think)
             body = self._run_line(run)
-            reply = self.store.add_message(cid, "assistant", body, lane=name, run_id=run.id)
+            reply = self.store.add_message(cid, "assistant", body, lane=label, run_id=run.id)
             return Turn(conv, user, reply, run=run.to_dict(), shared_memory=bool(notes))
 
         messages = self._prompt(
-            profile, conv, cfg, name, history, text, notes, remote, spoken, orch
+            profile, conv, cfg, name, history, text, notes, remote, spoken, orch, advisor
         )
         sampling: dict[str, Any] = {
             "temperature": cfg.temperature,
@@ -630,7 +657,7 @@ class Chat:
                 else orch.backend.complete(cfg.model, messages, **sampling)
             )
         answer = done.text
-        self.store.record_usage(profile, name, done.prompt_tokens, done.completion_tokens)
+        self.store.record_usage(profile, label, done.prompt_tokens, done.completion_tokens)
         task = next((m.group(1) for m in _RUN.finditer(answer)), "") if can_run else ""
         facts = [m.group(1) for m in _REMEMBER.finditer(answer)]
         visible = _CONTROL.sub("", _REMEMBER.sub("", _RUN.sub("", answer))).strip()
@@ -652,7 +679,7 @@ class Chat:
         if can_run and do is not False:
             if consent_only and _STEP.search(answer):
                 answer = _STEP.sub("", _PLAN.sub("", answer))  # "go" isn't a new plan: keep it
-            plan_obj = self._planning(conv, name, profile, answer, extra, think, request=text)
+            plan_obj = self._planning(conv, label, profile, answer, extra, think, request=text)
             if plan_obj is not None:
                 task = ""  # a plan takes the place of a single run
             if consent_only and not _BUILD.search(answer):
@@ -669,7 +696,7 @@ class Chat:
             extra.append(self._run_line(run_obj))
         visible = "\n\n".join(x for x in [visible, *extra] if x).strip()
         reply = self.store.add_message(
-            cid, "assistant", visible or "(no reply)", lane=name,
+            cid, "assistant", visible or "(no reply)", lane=label,
             run_id=run_obj.id if run_obj else None,
         )  # fmt: skip
         return Turn(conv, user, reply, run=run_obj.to_dict() if run_obj else None,
@@ -852,9 +879,11 @@ class Chat:
         remote: bool,
         spoken: bool = False,
         orch: Orchestrator | None = None,
+        advisor: bool = False,
     ) -> list[Message]:
         orch = orch or self.orch
-        system = ADVISOR_PROMPT if not (name == AUTO or cfg.writes_code) else CHAT_PROMPT
+        builds = name == AUTO or cfg.writes_code
+        system = (ADVISOR_BUILDS if advisor else CHAT_PROMPT) if builds else ADVISOR_PROMPT
         parts = [system + (SPOKEN if spoken else "")]
         if not remote:
             who = self.store.profile(profile).name

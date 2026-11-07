@@ -67,6 +67,8 @@ export interface Run {
   /** This run retries that one on another local lane (coder → deep). */
   retried_from?: string | null;
   think?: boolean;
+  /** Written and judged by the no-guardrails model alone (the Advisor, or an unfiltered project). */
+  self_judged?: boolean;
   /** The retry started for this run, or the overnight job that will run it. */
   retry_run?: string | null;
   retry_job?: string | null;
