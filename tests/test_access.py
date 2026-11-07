@@ -167,3 +167,82 @@ def test_the_token_link_signs_in_a_browser_on_pablo(settings: Settings, repo: Pa
     bearer = TestClient(create_app(orch, access), client=("127.0.0.1", 5000))
     headers = {"Authorization": f"Bearer {access.token()}"}
     assert bearer.get("/api/runs", headers=headers).status_code == 200
+
+
+def test_an_invite_code_works_once_and_expires(tmp_path: Path) -> None:
+    from pablo.access import Invites
+
+    invites = Invites(tmp_path)
+    code = invites.create(days=1, note="for eve", now=1000.0)
+    assert code not in (tmp_path / "invites.json").read_text()  # only the hash is kept
+    assert stat.S_IMODE((tmp_path / "invites.json").stat().st_mode) == 0o600
+    assert not invites.redeem("wrong", "eve@github", now=1001.0)
+    assert invites.redeem(code, "eve@github", now=1001.0)
+    assert not invites.redeem(code, "mallory@github", now=1002.0)  # spent
+    late = invites.create(days=1, now=1000.0)
+    assert not invites.redeem(late, "eve@github", now=1000.0 + 86401)
+    assert [e["used_by"] for e in invites.listing()] == ["eve@github", ""]
+
+
+def test_joining_with_a_code_puts_you_on_the_access_list(tmp_path: Path) -> None:
+    from pablo.access import Invites
+
+    (tmp_path / "access.yaml").write_text("owner: matt@github\nloopback: auto\n")
+    g = Access(tmp_path, load_access(tmp_path), whois=PEERS.get, self_login=lambda: "")
+    with pytest.raises(Denied):
+        g.join(EVE, None, {}, "not-a-code")
+    code = Invites(tmp_path).create()
+    eve = g.join(EVE, None, {}, code)
+    assert (eve.role, eve.profile, eve.name) == ("member", "eve@github", "Eve")
+    assert g.resolve(EVE, None, {}).role == "member"  # no code needed from now on
+    saved = load_access(tmp_path)
+    assert saved.owner == "matt@github" and saved.members == ["eve@github"]
+    assert g.join(EVE, None, {}, code).role == "member"  # a spent code doesn't lock you out
+    assert g.join(MATT, None, {}, "").is_owner  # the owner never needs one
+    with pytest.raises(Denied) as local:
+        g.join("127.0.0.1", "127.0.0.1", {}, code)  # codes are for tailnet peers only
+    assert local.value.status == 401
+
+
+def test_the_invite_link_page(settings: Settings, repo: Path) -> None:
+    from pablo.access import Invites
+
+    orch, _ = app_for(settings, repo)
+    access = Access(settings.home, AccessConfig(owner="matt@github"), whois=PEERS.get,
+                    self_login=lambda: "")  # fmt: skip
+    app = create_app(orch, access)
+    eve = TestClient(app, client=(EVE, 5000))
+    assert eve.get("/api/runs").status_code == 403
+    bad = eve.get("/join?code=nope")
+    assert bad.status_code == 403 and "already used or has expired" in bad.text
+    code = Invites(settings.home).create()
+    page = eve.get(f"/join?code={code}")
+    assert page.status_code == 200 and "You're in, Eve." in page.text
+    assert eve.get("/api/me").json()["role"] == "member"
+    assert "eve@github" in (settings.home / "access.yaml").read_text()
+
+
+def test_pablo_invite_prints_a_message_with_both_links(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from typer.testing import CliRunner
+
+    from pablo.cli import app
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("PABLO_HOME", str(home))
+    (home / "tls").mkdir(parents=True)
+    (home / "tls" / "name").write_text("pablo.tail1234.ts.net\n")
+    (home / "tls" / "pablo.crt").write_text("cert")
+    runner = CliRunner()
+    first = runner.invoke(app, ["invite"])
+    assert first.exit_code == 1 and "share link" in first.output
+    share = "https://login.tailscale.com/admin/invite/abc"
+    made = runner.invoke(app, ["invite", "--share-link", share, "--note", "eve"])
+    assert made.exit_code == 0, made.output
+    assert share in made.output and "https://pablo.tail1234.ts.net:8710/join?code=" in made.output
+    assert "join.sh" in made.output and "join.ps1" in made.output
+    again = runner.invoke(app, ["invite"])  # the share link is remembered
+    assert again.exit_code == 0 and share in again.output
+    listed = runner.invoke(app, ["invite", "--list"])
+    assert listed.output.count("open") == 2 and "eve" in listed.output

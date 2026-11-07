@@ -12,6 +12,7 @@ from rich.console import Console
 from rich.table import Table
 
 from pablo import __version__
+from pablo.access import load_access
 from pablo.config import Settings, load_settings
 from pablo.gateway import ChatBackend, LiteLLMBackend
 from pablo.orchestrator import Orchestrator, Run
@@ -1101,6 +1102,83 @@ def token_cmd(port: int = 8710) -> None:
     console.print(tok)
     console.print(f"[dim]browser on Pablo: http://127.0.0.1:{port}/?token={tok}[/]")
     console.print("[dim]The TUI and scripts on this machine read it from ~/.pablo/owner.token.[/]")
+
+
+JOIN_SCRIPTS = "https://raw.githubusercontent.com/Mateo610/pablo-harness/main/scripts"
+
+
+def _pablo_address(home: Path, port: int) -> tuple[str, bool]:
+    """Where teammates open Pablo: the HTTPS tailnet name after `pablo cert`, else the IP."""
+    name_file = home / "tls" / "name"
+    if name_file.is_file() and (home / "tls" / "pablo.crt").is_file():
+        return f"https://{name_file.read_text().strip()}:{port}", True
+    try:
+        ip = subprocess.run(["tailscale", "ip", "-4"], capture_output=True, text=True,
+                            timeout=3, check=True).stdout.split()[0]  # fmt: skip
+    except (OSError, subprocess.SubprocessError, IndexError):
+        ip = "<pablo tailscale ip>"
+    return f"http://{ip}:{port}", False
+
+
+@app.command("invite")
+def invite_cmd(
+    share_link: Annotated[
+        str,
+        typer.Option(
+            help="Tailscale share link for this machine (admin console → Machines → pablo → "
+            "Share → Copy invite link, reusable). Remembered for next time."
+        ),
+    ] = "",
+    days: Annotated[float, typer.Option(help="How long the invite works")] = 7,
+    note: Annotated[str, typer.Option(help="Who it's for, so `--list` reads well")] = "",
+    port: int = 8710,
+    list_: Annotated[bool, typer.Option("--list", help="Show invites and who used them")] = False,
+) -> None:
+    """Invite a teammate: prints a message to send them. They run one command, then use Pablo."""
+    from datetime import datetime as dt
+
+    from pablo.access import Invites
+
+    home = load_settings().home
+    invites = Invites(home)
+    if list_:
+        for e in invites.listing():
+            made = dt.fromtimestamp(e["created"]).strftime("%Y-%m-%d")
+            state = f"used by {e['used_by']}" if e.get("used_by") else (
+                "expired" if e["expires"] < dt.now().timestamp() else "open")  # fmt: skip
+            console.print(f"{made}  {state:<32} {e.get('note', '')}")
+        return
+    saved = home / "share-link"
+    if share_link:
+        home.mkdir(parents=True, exist_ok=True)
+        saved.write_text(share_link.strip() + "\n", encoding="utf-8")
+    elif saved.is_file():
+        share_link = saved.read_text(encoding="utf-8").strip()
+    if not share_link:
+        console.print(
+            "First, make a share link for this machine (once):\n"
+            "  Tailscale admin console → Machines → pablo → ⋯ → Share → Copy invite link,\n"
+            "  with [bold]Reusable link[/] on. Then run:\n"
+            "  [bold]pablo invite --share-link <that link>[/]"
+        )
+        raise typer.Exit(1)
+    code = invites.create(days=days, note=note)
+    base, secure = _pablo_address(home, port)
+    join = f"{base}/join?code={code}"
+    if not secure:
+        console.print("[yellow]No HTTPS yet: run `pablo cert` so voice works in their browser.[/]")
+    console.print(f"[dim]Invite good once, for {days:g} days. Send them this:[/]\n")
+    print(
+        "You're invited to Pablo, our private AI coding box.\n\n"
+        "Mac or Linux, in Terminal:\n"
+        f"  curl -fsSL {JOIN_SCRIPTS}/join.sh | sh -s -- '{share_link}' '{join}'\n\n"
+        "Windows, in PowerShell:\n"
+        f"  & ([scriptblock]::Create((irm {JOIN_SCRIPTS}/join.ps1))) '{share_link}' '{join}'\n\n"
+        "It installs Tailscale if you need it, has you accept the share, then opens Pablo.\n"
+        f"Or by hand: install Tailscale, open {share_link}, then {join}"
+    )
+    if not load_access(home).members:
+        console.print("\n[dim]Once someone joins, this machine's browser needs `pablo token`.[/]")
 
 
 @app.command("whoami")
