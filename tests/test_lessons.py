@@ -9,8 +9,10 @@ from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 
+from tests.fakes import FakeBackend
+
 from pablo.config import Settings
-from pablo.gateway import FakeBackend, Message
+from pablo.gateway import Message
 from pablo.lessons import Example, Failure, Lessons, Outcome
 from pablo.orchestrator import Orchestrator
 

@@ -12,10 +12,10 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from tests.fakes import FakeBackend
 
 from pablo.api import create_app
 from pablo.config import Overnight, Settings
-from pablo.gateway import FakeBackend
 from pablo.gpu import GpuScheduler, Priority, ScheduledBackend, job
 from pablo.orchestrator import Orchestrator
 

@@ -7,8 +7,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from tests.fakes import FakeBackend
+
 from pablo.config import SandboxConfig, Settings
-from pablo.gateway import FakeBackend
 from pablo.orchestrator import Orchestrator
 from pablo.sandbox import (
     ContainerSandbox,

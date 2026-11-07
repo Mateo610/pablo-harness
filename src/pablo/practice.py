@@ -250,8 +250,8 @@ class Practice:
         allow_suite: bool = False,
     ) -> list[PracticeResult]:
         """Up to `n` checkable tasks from `repo`. `key` names the repo in the lessons."""
-        from pablo.demo import load_checks
         from pablo.evals import HOLDOUT, SUITE
+        from pablo.verify import load_checks
 
         repo = repo.resolve()
         if not allow_suite and (SUITE.resolve() in repo.parents or repo == SUITE.resolve()):

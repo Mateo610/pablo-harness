@@ -7,9 +7,11 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from tests.fakes import FakeBackend
+
 from pablo.config import Settings
 from pablo.evals import SuiteReport, TaskResult
-from pablo.gateway import FakeBackend, Message
+from pablo.gateway import Message
 from pablo.orchestrator import Orchestrator
 from pablo.spec import SPEC_PROMPT, classify, parse_pytest, pytest_command, spec_source
 

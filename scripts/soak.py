@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 
 from pablo.config import load_settings
-from pablo.demo import load_checks
+from pablo.verify import load_checks
 from pablo.gateway import LiteLLMBackend, Message
 from pablo.orchestrator import Orchestrator
 from pablo.swap import SwapView, parse_running, read_running, swap_times
@@ -34,7 +34,7 @@ RUNS = 20
 ROUTER_PROBES = frozenset({5, 10, 15, 20})
 
 _GREET = '''\
-"""Scratch module for Pablo fake-mode runs."""
+"""Scratch module for Pablo soak runs."""
 
 
 def greet(name: str) -> str:

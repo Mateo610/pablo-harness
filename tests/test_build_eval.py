@@ -10,11 +10,12 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
+from tests.fakes import FakeBackend
 
 from pablo.build_eval import acceptance_check, build_markdown, build_summary, load_build, run_build
 from pablo.config import Settings
 from pablo.convos import CHAT_PROMPT
-from pablo.gateway import FakeBackend, Message
+from pablo.gateway import Message
 from pablo.sandbox import LocalSandbox
 
 TASKS = load_build()

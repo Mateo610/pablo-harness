@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from tests.fakes import FakeBackend
+
 from pablo.chat_eval import chat_markdown, chat_summary, load_chat_set, run_chat_eval
 from pablo.config import Settings
-from pablo.gateway import FakeBackend, Message
+from pablo.gateway import Message
 
 
 def test_the_set_is_balanced() -> None:

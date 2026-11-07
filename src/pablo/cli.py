@@ -13,13 +13,13 @@ from rich.table import Table
 
 from pablo import __version__
 from pablo.config import Settings, load_settings
-from pablo.demo import demo_backend, load_checks
 from pablo.gateway import ChatBackend, LiteLLMBackend
 from pablo.orchestrator import Orchestrator, Run
 from pablo.plan import Plan, starter_plan
-from pablo.sandbox import LocalSandbox, make_sandbox
+from pablo.sandbox import make_sandbox
 from pablo.swap import SwapView
 from pablo.traces import TraceStore
+from pablo.verify import load_checks
 
 app = typer.Typer(
     help="Pablo: a private cockpit for a team of local AI models.", no_args_is_help=True
@@ -27,32 +27,20 @@ app = typer.Typer(
 console = Console()
 
 RepoOpt = Annotated[Path, typer.Option("--repo", "-C", help="Project folder")]
-FakeOpt = Annotated[bool, typer.Option("--fake", help="Scripted models, no GPU or gateway")]
 
 
-def _backend(settings: Settings, fake: bool) -> ChatBackend:
-    if fake:
-        return demo_backend()
+def _backend(settings: Settings) -> ChatBackend:
     return LiteLLMBackend(settings.gateway.base_url, settings.gateway.api_key)
 
 
-def _settings(fake: bool) -> Settings:
+def _orch(repo: Path) -> Orchestrator:
     settings = load_settings()
-    if fake:  # scripted models never touch the GPU: leave the voice server alone
-        settings.gpu.residents = []
-    return settings
-
-
-def _orch(repo: Path, fake: bool) -> Orchestrator:
-    settings = _settings(fake)
     return Orchestrator(
         settings,
-        _backend(settings, fake),
+        _backend(settings),
         repo=repo,
         checks=load_checks(repo),
-        swap=None if fake else SwapView(),
-        # Scripted models write only our own demo diffs, so --fake checks run locally.
-        sandbox=LocalSandbox() if fake else None,
+        swap=SwapView(),
     )
 
 
@@ -133,7 +121,6 @@ def run(
     task: Annotated[str, typer.Argument(help="What you want done, or a plan task id like 1.2")],
     repo: RepoOpt = Path("."),
     lane: Annotated[str | None, typer.Option(help="Force a lane")] = None,
-    fake: FakeOpt = False,
 ) -> None:
     """Route a task, do it, verify it, judge it."""
     root = repo.resolve()
@@ -146,7 +133,7 @@ def run(
         current.save(root)
     except (FileNotFoundError, KeyError):
         pass
-    result = _orch(root, fake).start(task, lane=lane, task_id=task_id)
+    result = _orch(root).start(task, lane=lane, task_id=task_id)
     _show(result)
 
 
@@ -154,7 +141,6 @@ def run(
 def approve(
     run_id: str,
     repo: RepoOpt = Path("."),
-    fake: FakeOpt = False,
     hunks: Annotated[
         str | None, typer.Option(help="Keep only these hunks, e.g. 0:0,1:2 (see `pablo hunks`)")
     ] = None,
@@ -165,7 +151,7 @@ def approve(
 
     keep = [h.strip() for h in hunks.split(",")] if hunks else None
     try:
-        result = _orch(repo.resolve(), fake).approve(run_id, keep, force=force)
+        result = _orch(repo.resolve()).approve(run_id, keep, force=force)
     except PartialChecksFailed as exc:
         console.print(f"[red]{exc}[/]  (use --force to apply anyway)")
         raise typer.Exit(1) from exc
@@ -180,13 +166,13 @@ def approve(
 
 
 @app.command("hunks")
-def show_hunks(run_id: str, repo: RepoOpt = Path("."), fake: FakeOpt = False) -> None:
+def show_hunks(run_id: str, repo: RepoOpt = Path(".")) -> None:
     """List a run's hunks with their ids, for `pablo approve --hunks`."""
     from rich.syntax import Syntax
 
     from pablo.hunks import parse
 
-    run_ = _orch(repo.resolve(), fake).get(run_id)
+    run_ = _orch(repo.resolve()).get(run_id)
     for f in parse(run_.diff):
         for h in f.hunks:
             console.print(f"[bold cyan]{h.id}[/]  {f.path}  +{h.added} −{h.removed}")
@@ -198,20 +184,19 @@ def compare(
     task: str,
     lanes: Annotated[str, typer.Option(help="Comma-separated lanes")] = "coder,deep",
     repo: RepoOpt = Path("."),
-    fake: FakeOpt = False,
 ) -> None:
     """Run one task on several lanes side by side. Approving one rejects the rest."""
-    for result in _orch(repo.resolve(), fake).compare(task, [x.strip() for x in lanes.split(",")]):
+    for result in _orch(repo.resolve()).compare(task, [x.strip() for x in lanes.split(",")]):
         _show(result)
         console.print()
 
 
 @app.command()
-def replay(run_id: str, repo: RepoOpt = Path("."), fake: FakeOpt = False) -> None:
+def replay(run_id: str, repo: RepoOpt = Path(".")) -> None:
     """Show everything that happened in a run, in order."""
     from datetime import datetime as dt
 
-    events = _orch(repo.resolve(), fake).events(run_id)
+    events = _orch(repo.resolve()).events(run_id)
     if not events:
         console.print("No events recorded for this run.")
         return
@@ -225,16 +210,16 @@ def replay(run_id: str, repo: RepoOpt = Path("."), fake: FakeOpt = False) -> Non
 
 
 @app.command()
-def reject(run_id: str, repo: RepoOpt = Path("."), fake: FakeOpt = False) -> None:
+def reject(run_id: str, repo: RepoOpt = Path(".")) -> None:
     """Discard a run. Nothing in your repo changes."""
-    _orch(repo.resolve(), fake).reject(run_id)
+    _orch(repo.resolve()).reject(run_id)
     console.print(f"rejected {run_id}")
 
 
 @app.command()
-def escalate(run_id: str, repo: RepoOpt = Path("."), fake: FakeOpt = False) -> None:
+def escalate(run_id: str, repo: RepoOpt = Path(".")) -> None:
     """Send a run's task to the escalation lane (Claude). Never used as training data."""
-    _show(_orch(repo.resolve(), fake).escalate(run_id))
+    _show(_orch(repo.resolve()).escalate(run_id))
 
 
 @app.command()
@@ -242,7 +227,6 @@ def serve(
     repo: RepoOpt = Path("."),
     host: Annotated[str, typer.Option(help="127.0.0.1, or your Tailscale IP")] = "127.0.0.1",
     port: int = 8710,
-    fake: FakeOpt = False,
     tls_cert: Annotated[
         Path | None, typer.Option(help="TLS certificate (default: ~/.pablo/tls/pablo.crt)")
     ] = None,
@@ -264,7 +248,7 @@ def serve(
             "[red]Refusing to bind every interface. Use 127.0.0.1 or your Tailscale IP.[/]"
         )
         raise typer.Exit(2)
-    api = create_app(_orch(repo.resolve(), fake))
+    api = create_app(_orch(repo.resolve()))
     dist = Path(__file__).resolve().parents[2] / "web" / "dist"
     if dist.is_dir():
         api.mount("/", StaticFiles(directory=dist, html=True), name="cockpit")
@@ -277,7 +261,7 @@ def serve(
     secure = cert.is_file() and key.is_file()
     name = (tls / "name").read_text().strip() if secure and (tls / "name").is_file() else host
     scheme = "https" if secure else "http"
-    console.print(f"Pablo on {scheme}://{name}:{port}" + ("  (fake models)" if fake else ""))
+    console.print(f"Pablo on {scheme}://{name}:{port}")
     if not secure:
         console.print("[dim]HTTP: the browser won't allow the mic. `pablo cert` fixes that.[/]")
     console.print(f"Overnight queue runs {cfg.start}–{cfg.end}; brief after {cfg.brief_at}.")
@@ -376,11 +360,11 @@ def queue_cancel(job_id: str) -> None:
 
 
 @queue_app.command("run")
-def queue_run(repo: RepoOpt = Path("."), fake: FakeOpt = False) -> None:
+def queue_run(repo: RepoOpt = Path(".")) -> None:
     """Run every queued job now instead of waiting for tonight."""
     from pablo.overnight import JobQueue, OvernightRunner
 
-    orch = _orch(repo.resolve(), fake)
+    orch = _orch(repo.resolve())
     runner = OvernightRunner(orch, JobQueue(orch.settings.home), orch.settings.overnight)
     for job in runner.run_pending(force=True):
         console.print(
@@ -391,7 +375,6 @@ def queue_run(repo: RepoOpt = Path("."), fake: FakeOpt = False) -> None:
 @app.command()
 def brief(
     repo: RepoOpt = Path("."),
-    fake: FakeOpt = False,
     make: Annotated[bool, typer.Option("--make", help="Write today's brief now")] = False,
 ) -> None:
     """Show the morning brief (or write today's with --make)."""
@@ -399,7 +382,7 @@ def brief(
 
     from pablo.overnight import BriefStore, JobQueue, build_brief, now_local
 
-    orch = _orch(repo.resolve(), fake)
+    orch = _orch(repo.resolve())
     store = BriefStore(orch.settings.home)
     if make:
         made = build_brief(
@@ -481,7 +464,6 @@ def learn(
     repeat: Annotated[
         int, typer.Option(help="Suite runs for the coder and for the candidate, each")
     ] = 3,
-    fake: FakeOpt = False,
 ) -> None:
     """Export → train LoRA → eval coder and candidate the same night → gated promotion item."""
     from datetime import UTC, datetime
@@ -545,7 +527,7 @@ def learn(
     result = None
     wall_s = 0.0
     commit = ""
-    if not skip_eval and not skip_train and not fake:
+    if not skip_eval and not skip_train:
         from pablo.evals import aggregate_markdown, append_result, run_suite
 
         sides: dict[str, list[Any]] = {"coder": [], "coder-candidate": []}
@@ -553,9 +535,7 @@ def learn(
             # Interleaved, so both sides see the same box on the same night.
             for lane_name, reports in sides.items():
                 console.print(f"run {i + 1} of {repeat}: {lane_name}")
-                report = run_suite(
-                    settings, _backend(settings, fake=False), lane=lane_name, swap=SwapView()
-                )
+                report = run_suite(settings, _backend(settings), lane=lane_name, swap=SwapView())
                 append_result(report)
                 reports.append(report)
         result = gate(sides["coder"], sides["coder-candidate"])
@@ -647,7 +627,6 @@ def eval_suite(
             "--spec/--no-spec", help="Force task-derived checks on or off (default: config)"
         ),
     ] = None,
-    fake: FakeOpt = False,
     write: Annotated[
         bool, typer.Option(help="Append to evals/results.jsonl and docs/benchmarks.md")
     ] = False,
@@ -676,17 +655,15 @@ def eval_suite(
     ] = False,
 ) -> None:
     """Score a lane on the coder suite against hidden tests (evals/suite or evals/holdout)."""
-    from contextlib import nullcontext
-
     from pablo.gpu import GpuScheduler
 
-    settings = _settings(fake)
-    backend = _backend(settings, fake)
+    settings = load_settings()
+    backend = _backend(settings)
     # A real eval owns the GPU: hold Deep Work in the real home so `pablo serve` doesn't wake
     # the voice server (or start night work) mid-suite. The owner's mode comes back after.
     gpu = GpuScheduler(home=settings.home, residents_cfg=settings.gpu.residents,
                        unload_url=settings.gpu.unload_url)  # fmt: skip
-    hold = nullcontext() if fake else gpu.mode_for("deep")
+    hold = gpu.mode_for("deep")
 
     lane_cfg = load_settings().lane(lane)
     if (lane_cfg.kind == "remote" or lane_cfg.requires_approval) and not allow_remote:
@@ -713,19 +690,18 @@ def eval_suite(
         console.print(f"  {r.id:<32} {r.refs:<6} {r.state:<9} {mark}  {cert}  {r.wall_s:.0f}s{fix}")
 
     with hold:
-        if not fake:
-            if unfiltered:
-                from pablo.projects import unfiltered_settings
+        if unfiltered:
+            from pablo.projects import unfiltered_settings
 
-                _eval_preflight(unfiltered_settings(settings), backend, gpu, "coder", False)
-            else:
-                _eval_preflight(settings, backend, gpu, lane, cascade)
+            _eval_preflight(unfiltered_settings(settings), backend, gpu, "coder", False)
+        else:
+            _eval_preflight(settings, backend, gpu, lane, cascade)
         reports, stopped = _eval_runs(settings, backend, lane, only, repeat, cascade, spec, learn,
-                             lessons, fake, write, show, sealed, think, unfiltered)  # fmt: skip
+                             lessons, write, show, sealed, think, unfiltered)  # fmt: skip
     if reports and sealed:
-        _sealed_report(reports, write, fake)
+        _sealed_report(reports, write)
     elif reports:
-        _eval_report(reports, len(reports), write, fake)
+        _eval_report(reports, len(reports), write)
     if stopped:
         raise typer.Exit(3)
 
@@ -764,7 +740,6 @@ def _eval_runs(
     spec: bool | None,
     learn: str,
     lessons: Path | None,
-    fake: bool,
     write: bool,
     show: Any,
     sealed: bool = False,
@@ -773,7 +748,6 @@ def _eval_runs(
 ) -> tuple[list[Any], bool]:
     from pablo.evals import HOLDOUT, SUITE, InfraError, append_result, append_sealed, run_suite
     from pablo.judge_replay import append_cases
-    from pablo.sandbox import LocalSandbox
 
     reports: list[Any] = []
     for i in range(max(1, repeat)):
@@ -785,8 +759,7 @@ def _eval_runs(
                 backend,
                 lane=lane,
                 only={x.strip() for x in only.split(",") if x.strip()} or None,
-                sandbox=LocalSandbox() if fake else None,
-                swap=None if fake else SwapView(),
+                swap=SwapView(),
                 on_task=show,
                 cascade=cascade,
                 spec=spec,
@@ -803,7 +776,7 @@ def _eval_runs(
             return reports, True
         reports.append(report)
         if sealed:
-            if write and not fake:
+            if write:
                 append_sealed(report)  # totals only, and no judge replay from the holdout
             continue
         s = report.summary()
@@ -812,19 +785,19 @@ def _eval_runs(
             f"(precision {s['ready_precision']}) · false ready {s['false_ready']} · "
             f"fix tried {s['fix_tried']} {s['fix_outcomes']} · wall {s['wall_s']}s"
         )
-        if write and not fake:
+        if write:
             append_result(report)
             added = append_cases(report.replay)
             console.print(f"judge replay: {added} new diffs in evals/judge/replay.jsonl")
     return reports, False
 
 
-def _sealed_report(reports: list[Any], write: bool, fake: bool) -> None:
+def _sealed_report(reports: list[Any], write: bool) -> None:
     from pablo.evals import sealed_markdown
 
     text = sealed_markdown(reports)
     console.print(text.split("\n\n", 1)[1])
-    if write and not fake:
+    if write:
         docs = Path("docs/benchmarks.md")
         if docs.is_file():
             with docs.open("a", encoding="utf-8") as fh:
@@ -832,7 +805,7 @@ def _sealed_report(reports: list[Any], write: bool, fake: bool) -> None:
         console.print("appended totals to evals/holdout-results.jsonl and docs/benchmarks.md")
 
 
-def _eval_report(reports: list[Any], repeat: int, write: bool, fake: bool) -> None:
+def _eval_report(reports: list[Any], repeat: int, write: bool) -> None:
     from pablo.evals import aggregate, aggregate_markdown
 
     if repeat > 1:
@@ -841,7 +814,7 @@ def _eval_report(reports: list[Any], repeat: int, write: bool, fake: bool) -> No
             f"[bold]{a['runs']} runs:[/] passed {a['pass_counts']} · mean "
             f"{a['mean_pass_rate']:.0%} ± {a['stdev_pass_rate']:.0%} · flaky {a['flaky']}"
         )
-    if write and not fake:
+    if write:
         docs = Path("docs/benchmarks.md")
         if docs.is_file():
             with docs.open("a", encoding="utf-8") as fh:
@@ -856,24 +829,20 @@ def _eval_report(reports: list[Any], repeat: int, write: bool, fake: bool) -> No
 def eval_build(
     lane: Annotated[str, typer.Option(help="auto (Hybrid), coder, deep, ...")] = "auto",
     only: Annotated[str, typer.Option(help="Comma-separated project ids")] = "",
-    fake: FakeOpt = False,
     write: Annotated[
         bool, typer.Option(help="Append to evals/build-results.jsonl and docs/benchmarks.md")
     ] = False,
 ) -> None:
     """Plan mode end to end: plan a small tool, build it step by step, run its acceptance test."""
-    from contextlib import nullcontext
-
     from pablo.build_eval import append_build, build_markdown, build_summary, run_build
     from pablo.evals import current_commit
     from pablo.gpu import GpuScheduler
-    from pablo.sandbox import LocalSandbox
 
-    settings = _settings(fake)
-    backend = _backend(settings, fake)
+    settings = load_settings()
+    backend = _backend(settings)
     gpu = GpuScheduler(home=settings.home, residents_cfg=settings.gpu.residents,
                        unload_url=settings.gpu.unload_url)  # fmt: skip
-    hold = nullcontext() if fake else gpu.mode_for("deep")
+    hold = gpu.mode_for("deep")
 
     def show(r: Any) -> None:
         mark = "[green]pass[/]" if r.accepted else "[red]FAIL[/]"
@@ -882,18 +851,17 @@ def eval_build(
         console.print(f"  {r.id:<20} {mark}  {how}  {r.wall_s:.0f}s{err}")
 
     with hold:
-        if not fake:
-            _eval_preflight(settings, backend, gpu, "coder" if lane == "auto" else lane,
-                            lane == "auto")  # fmt: skip
+        _eval_preflight(settings, backend, gpu, "coder" if lane == "auto" else lane,
+                        lane == "auto")  # fmt: skip
         results = run_build(
             settings, backend, lane=lane,
             only={x.strip() for x in only.split(",") if x.strip()} or None,
-            sandbox=LocalSandbox() if fake else None, on_result=show,
+            on_result=show,
         )  # fmt: skip
     summary = build_summary(results, lane=lane, commit=current_commit(Path(".")))
     text = build_markdown(summary)
     console.print(text.split("\n\n")[1])
-    if write and not fake:
+    if write:
         append_build(summary)
         docs = Path("docs/benchmarks.md")
         if docs.is_file():
@@ -906,7 +874,6 @@ def eval_build(
 def eval_chat(
     lane: Annotated[str, typer.Option(help="auto (Hybrid), coder, deep, advisor")] = "auto",
     spoken: Annotated[bool, typer.Option(help="Ask as a voice call would")] = False,
-    fake: FakeOpt = False,
     write: Annotated[
         bool, typer.Option(help="Append to evals/chat-results.jsonl and docs/benchmarks.md")
     ] = False,
@@ -915,18 +882,18 @@ def eval_chat(
     from pablo.chat_eval import append_chat, chat_markdown, chat_summary, run_chat_eval
     from pablo.evals import current_commit
 
-    settings = _settings(fake)
+    settings = load_settings()
 
     def show(c: Any) -> None:
         mark = "[green]ok[/]  " if c.chose == c.label else "[red]MISS[/]"
         console.print(f"  {mark} wanted {c.label:<4} chose {c.chose:<4} {c.text[:60]}")
 
-    cases = run_chat_eval(settings, _backend(settings, fake), lane=lane, spoken=spoken,
+    cases = run_chat_eval(settings, _backend(settings), lane=lane, spoken=spoken,
                           on_case=show)  # fmt: skip
     summary = chat_summary(cases, lane=lane, spoken=spoken, commit=current_commit(Path(".")))
     text = chat_markdown(summary)
     console.print(text.split("\n\n", 1)[1])
-    if write and not fake:
+    if write:
         append_chat(summary)
         docs = Path("docs/benchmarks.md")
         if docs.is_file():
@@ -937,7 +904,6 @@ def eval_chat(
 
 @app.command("eval-judge")
 def eval_judge(
-    fake: FakeOpt = False,
     model: Annotated[
         str | None, typer.Option(help="Gateway alias (default: the judge lane)")
     ] = None,
@@ -966,7 +932,7 @@ def eval_judge(
             console.print("[yellow]No replay yet: run `pablo eval --write` first.[/]")
             raise typer.Exit(1)
         replay = run_replay(
-            _backend(settings, fake), alias, threshold=settings.thresholds.judge_needs_you,
+            _backend(settings), alias, threshold=settings.thresholds.judge_needs_you,
             max_tokens=max_tokens,
         )  # fmt: skip
         table = replay.to_markdown()
@@ -978,7 +944,7 @@ def eval_judge(
             console.print(f"appended to {bench}")
         return
     report = run_judge_eval(
-        _backend(settings, fake),
+        _backend(settings),
         alias,
         threshold=settings.thresholds.judge_needs_you,
         case_set=case_set,
@@ -1013,12 +979,11 @@ def chat_cmd(
     lane: Annotated[str | None, typer.Option(help="auto, coder, deep, advisor, claude")] = None,
     do: Annotated[bool | None, typer.Option("--do/--talk", help="Run it, or only talk")] = None,
     repo: RepoOpt = Path("."),
-    fake: FakeOpt = False,
 ) -> None:
     """Talk to Pablo in a conversation that remembers. `pablo chat --conv ID ...` continues one."""
     from pablo.convos import AUTO, Chat
 
-    chat = Chat(_orch(repo.resolve(), fake))
+    chat = Chat(_orch(repo.resolve()))
     cid = conv or chat.start(lane=lane or AUTO).id
     confirm = False
     if (lane or chat.store.conversation(cid, "owner").lane) == "claude":
@@ -1057,7 +1022,6 @@ def practice_cmd(
     out: Annotated[
         Path | None, typer.Option(help="Write lessons here instead of ~/.pablo/lessons")
     ] = None,
-    fake: FakeOpt = False,
 ) -> None:
     """Make checkable tasks from a repo, attempt them, keep the fixes that pass its tests.
 
@@ -1074,7 +1038,7 @@ def practice_cmd(
         console.print(f"  {r.kind:<11} {r.target:<48} {mark}")
 
     if not suite_seeds:
-        orch = _orch(repo.resolve(), fake)
+        orch = _orch(repo.resolve())
         lessons = Lessons(out) if out else None
         coach = Practice(orch, lessons=lessons, teacher=teacher or None, on_result=show)
         results = coach.session(repo.resolve(), n)
@@ -1091,7 +1055,7 @@ def practice_cmd(
         results = []
         with _tempfile.TemporaryDirectory(prefix="pablo-seed-practice-") as tmp:
             seeds = {name: materialize(task, Path(tmp)) for name, task in firsts.items()}
-            orch = _orch(next(iter(seeds.values())), fake)
+            orch = _orch(next(iter(seeds.values())))
             coach = Practice(orch, lessons=Lessons(out), teacher=teacher or None, on_result=show)
             for name, path in seeds.items():
                 console.print(f"[bold]{name}[/]")

@@ -658,8 +658,7 @@ class Orchestrator:
 
     def current_checks(self) -> dict[str, list[str]] | None:
         if self.checks_from_repo:
-            from pablo.demo import load_checks
-            from pablo.verify import IMPORTS_CHECK
+            from pablo.verify import IMPORTS_CHECK, load_checks
 
             checks = load_checks(self.repo)
             # Before the first Python file exists there's nothing to import, but the diff may

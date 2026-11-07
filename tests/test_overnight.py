@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from tests.fakes import demo_backend
 
 from pablo.api import create_app
 from pablo.config import Overnight, Settings
-from pablo.demo import demo_backend
 from pablo.orchestrator import Orchestrator
 from pablo.overnight import (
     BriefStore,

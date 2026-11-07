@@ -16,6 +16,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+import yaml
+
 from pablo.sandbox import LocalSandbox, Sandbox, touches_deps
 
 DEFAULT_CHECKS: dict[str, list[str]] = {
@@ -416,3 +418,35 @@ def _compare_with_baseline(
             baselines.put(key, value)
             check.before = "passed" if then.passed else "failed"
             check.before_failures, check.before_code = value[1], value[2]
+
+
+def load_checks(repo: Path) -> dict[str, list[str]]:
+    """Project checks from .pablo/checks.yaml; Python defaults if it looks like a Python repo.
+
+    Any Python repo also gets the `imports` check unless checks.yaml sets `imports: off`.
+    """
+    path = repo / ".pablo" / "checks.yaml"
+    checks: dict[str, list[str]] = {}
+    imports_off = False
+    if path.is_file():
+        data = yaml.safe_load(path.read_text("utf-8")) or {}
+        for key, value in data.items():
+            if str(key) == "imports" and value in (False, "off", None):
+                imports_off = True
+                continue
+            checks[str(key)] = value.split() if isinstance(value, str) else list(value)
+    elif (repo / "pyproject.toml").is_file():
+        checks = dict(DEFAULT_CHECKS)
+    if not imports_off and "imports" not in checks and _has_python(repo):
+        checks["imports"] = list(IMPORTS_CHECK)
+    return checks
+
+
+def _has_python(repo: Path) -> bool:
+    for base in (repo, repo / "src"):
+        if not base.is_dir():
+            continue
+        for path in base.iterdir():
+            if path.suffix == ".py" or (path / "__init__.py").is_file():
+                return True
+    return False

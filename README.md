@@ -44,27 +44,6 @@ You need to be on our tailnet. Matt adds your Tailscale login to Pablo's access 
 You get your own conversations and memory, and you see the team's runs. Only the owner applies
 changes. More in [docs/teammates.md](docs/teammates.md).
 
-## Try it locally (no GPU)
-
-Scripted fake models, so you can see the flow on any machine:
-
-```bash
-git clone https://github.com/Mateo610/pablo-harness && cd pablo-harness
-uv sync
-(cd web && npm install && npm run build)
-
-mkdir -p ~/projects/hello && git -C ~/projects/hello init
-uv run pablo init -C ~/projects/hello
-uv run pablo serve --fake -C ~/projects/hello    # open http://127.0.0.1:8710
-```
-
-Or stay in the terminal:
-
-```bash
-uv run pablo run "add a demo note" --fake -C ~/projects/hello
-uv run pablo approve <run-id>
-```
-
 ## Everyday commands
 
 | | |

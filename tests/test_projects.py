@@ -10,11 +10,12 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from tests.fakes import FakeBackend
 
 from pablo.api import create_app
 from pablo.config import Settings
 from pablo.convos import CHAT_PROMPT, Chat
-from pablo.gateway import FakeBackend, Message
+from pablo.gateway import Message
 from pablo.orchestrator import Orchestrator
 from pablo.projects import Workspace, slug, unfiltered_settings
 
@@ -141,7 +142,7 @@ def test_tonights_queue_and_the_brief_cover_every_project(settings: Settings, re
 
 def test_a_new_project_checks_its_first_steps(settings: Settings, repo: Path) -> None:
     """An empty project gains checks as code arrives: no tests yet is fine, broken code isn't."""
-    from pablo.gateway import FakeBackend as Fake
+    from tests.fakes import FakeBackend as Fake
 
     def coder(text: str) -> FakeBackend:
         return Fake(scripts={"pablo/coder": lambda m, x: f"Done.\n\n{text}",

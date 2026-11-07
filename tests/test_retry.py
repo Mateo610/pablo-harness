@@ -8,10 +8,10 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests.fakes import FakeBackend
 
 from pablo.config import Settings
 from pablo.edits import EditBlock, EditError, apply_block
-from pablo.gateway import FakeBackend
 from pablo.orchestrator import Orchestrator, unseen_files
 from pablo.overnight import JobQueue
 

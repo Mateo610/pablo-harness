@@ -10,11 +10,12 @@ from pathlib import Path
 
 import httpx
 from fastapi.testclient import TestClient
+from tests.fakes import FakeBackend
 
 from pablo.api import create_app
 from pablo.config import Settings
 from pablo.convos import CHAT_PROMPT
-from pablo.gateway import FakeBackend, LiteLLMBackend, Message
+from pablo.gateway import LiteLLMBackend, Message
 from pablo.orchestrator import Orchestrator
 
 CHECKS = {"tests": [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"]}

@@ -11,9 +11,10 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
+from tests.fakes import FakeBackend
 
 from pablo.config import Settings
-from pablo.gateway import FakeBackend, Message
+from pablo.gateway import Message
 from pablo.lessons import Lessons
 from pablo.orchestrator import Orchestrator
 from pablo.practice import CHEAT, Practice, break_function, find_targets

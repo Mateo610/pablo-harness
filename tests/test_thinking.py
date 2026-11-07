@@ -8,11 +8,12 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from tests.fakes import FakeBackend
 
 from pablo.api import create_app
 from pablo.config import Settings
 from pablo.convos import CHAT_PROMPT, Chat
-from pablo.gateway import FakeBackend, Message
+from pablo.gateway import Message
 from pablo.orchestrator import Orchestrator
 from pablo.plans import Plans
 from pablo.projects import Workspace

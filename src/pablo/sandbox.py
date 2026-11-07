@@ -77,7 +77,7 @@ class Sandbox(Protocol):
 
 
 class LocalSandbox:
-    """Checks as plain subprocesses with your user's permissions. Tests, CI, and --fake."""
+    """Checks as plain subprocesses with your user's permissions. Tests and CI."""
 
     label = "local"
 
