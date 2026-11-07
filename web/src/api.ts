@@ -81,7 +81,7 @@ export interface Run {
   created_at: string;
 }
 
-export type TaskStatus = "queued" | "active" | "needs_you" | "done" | "blocked";
+export type TaskStatus = "queued" | "active" | "needs_you" | "done" | "blocked" | "skipped";
 
 export interface PlanTask {
   id: string;
@@ -99,6 +99,29 @@ export interface Phase {
   tasks: PlanTask[];
 }
 
+/** One chat's plan on the Work board (C14d). */
+export interface BoardRow {
+  project: string;
+  project_title: string;
+  conversation: string;
+  title: string;
+  by: string;
+  /** your own chat: it opens from the board */
+  mine: boolean;
+  goal: string;
+  size: "" | PlanSize;
+  state: "draft" | "running" | "paused" | "done";
+  updated: string;
+  steps: { id: string; status: TaskStatus }[];
+  done: number;
+  total: number;
+  current: { id: string; title: string; status: TaskStatus; run: string | null } | null;
+  touched: string[];
+  planned: string[];
+  /** live plans in the same project that share files; "" conversation: someone else's */
+  overlaps: { conversation: string; title: string; files: string[] }[];
+}
+
 export interface Plan {
   project: string;
   goal: string;
@@ -108,6 +131,11 @@ export interface Plan {
   lane?: string;
   by?: string;
   conversation?: string;
+  /** Plan mode's size when it was drafted there; "" from Auto */
+  size?: "" | PlanSize;
+  /** a Major plan's spec (markdown) */
+  spec?: string;
+  updated?: string;
 }
 
 export interface HarnessEvent {
@@ -201,6 +229,17 @@ export interface ChatMessage {
   content: string;
   lane: string;
   run_id: string | null;
+  created_at: string;
+}
+
+/** Plan mode's size: Minor asks a question or two; Major interviews you first. */
+export type PlanSize = "minor" | "major";
+
+/** A file kept on the remember rail (Chat), per profile. */
+export interface KeptFile {
+  id: string;
+  name: string;
+  size: number;
   created_at: string;
 }
 
@@ -336,12 +375,33 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
+function planQuery(project: string, conversation = "", latest = false): string {
+  const q = new URLSearchParams();
+  if (project) q.set("project", project);
+  if (conversation) q.set("conversation", conversation);
+  if (latest) q.set("latest", "true");
+  const text = q.toString();
+  return text ? `?${text}` : "";
+}
+
 export const api = {
   lanes: () => call<Lane[]>("/api/lanes"),
-  plan: (project = "") => call<Plan>(`/api/plan${project ? `?project=${encodeURIComponent(project)}` : ""}`),
-  planGo: (project = "") =>
-    call<Plan>(`/api/plan/go${project ? `?project=${encodeURIComponent(project)}` : ""}`, { method: "POST" }),
+  /** The project's plan; a chat's plan (`conversation`); or your newest live one (`latest`, voice). */
+  plan: (project = "", conversation = "", latest = false) => call<Plan>(`/api/plan${planQuery(project, conversation, latest)}`),
+  planGo: (project = "", conversation = "") => call<Plan>(`/api/plan/go${planQuery(project, conversation)}`, { method: "POST" }),
+  /** Every chat's plan in every project (the Work board): yours, or all of them for the owner. */
+  planBoard: () => call<BoardRow[]>("/api/plans"),
+  /** Start over: throw a chat's draft (or paused, or finished) plan away. */
+  planDiscard: (project: string, conversation: string) =>
+    call<{ discarded: boolean }>(`/api/plan${planQuery(project, conversation)}`, { method: "DELETE" }),
   inbox: () => call<Run[]>("/api/inbox"),
+  /** The run as text to copy or send to chat, and the plan step it belongs to (if any). */
+  runDetails: (id: string) =>
+    call<{ text: string; plan: { conversation: string; step: string; status: string; goal: string } | null }>(`/api/runs/${id}/details`),
+  /** Try again; `fix`: the next try is told what went wrong. A plan step retries as that step. */
+  retryRun: (id: string, fix = false) =>
+    call<{ run: Run | null; plan: Plan | null }>(`/api/runs/${id}/retry`, { method: "POST", body: JSON.stringify({ fix }) }),
+  skipRun: (id: string) => call<{ plan: Plan }>(`/api/runs/${id}/skip`, { method: "POST" }),
   run: (id: string) => call<Run>(`/api/runs/${id}`),
   start: (task: string, lane?: string, taskId?: string) =>
     call<Run>("/api/runs", {
@@ -386,22 +446,22 @@ export const api = {
   renameConversation: (id: string, title: string) =>
     call<Conversation>(`/api/conversations/${id}`, { method: "PATCH", body: JSON.stringify({ title }) }),
   deleteConversation: (id: string) => call<{ deleted: string }>(`/api/conversations/${id}`, { method: "DELETE" }),
-  say: (id: string, text: string, opts: { lane?: string; do?: boolean | null; confirm?: boolean } = {}) =>
+  say: (id: string, text: string, opts: { lane?: string; do?: boolean | null; confirm?: boolean; plan?: PlanSize | null } = {}) =>
     call<Turn>(`/api/conversations/${id}/messages`, {
       method: "POST",
-      body: JSON.stringify({ text, lane: opts.lane ?? null, do: opts.do ?? null, confirm: opts.confirm ?? false }),
+      body: JSON.stringify({ text, lane: opts.lane ?? null, do: opts.do ?? null, confirm: opts.confirm ?? false, plan: opts.plan ?? null }),
     }),
   /** Same as `say`, but the reply arrives piece by piece through `onDelta`. */
   sayStream: async (
     id: string,
     text: string,
-    opts: { lane?: string; do?: boolean | null; confirm?: boolean; think?: boolean },
+    opts: { lane?: string; do?: boolean | null; confirm?: boolean; think?: boolean; plan?: PlanSize | null },
     onDelta: (piece: string) => void,
   ): Promise<Turn> => {
     const res = await fetch(`/api/conversations/${id}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, lane: opts.lane ?? null, do: opts.do ?? null, confirm: opts.confirm ?? false, think: opts.think ?? false, stream: true }),
+      body: JSON.stringify({ text, lane: opts.lane ?? null, do: opts.do ?? null, confirm: opts.confirm ?? false, think: opts.think ?? false, plan: opts.plan ?? null, stream: true }),
     });
     if (!res.ok || !res.body) {
       const body = (await res.json().catch(() => ({}))) as { detail?: string };
@@ -474,6 +534,15 @@ export const api = {
   keepMemory: (id: string) => call<Memory>(`/api/memories/${id}/keep`, { method: "POST" }),
   rejectMemory: (id: string) => call<Memory>(`/api/memories/${id}/reject`, { method: "POST" }),
   forgetMemory: (id: string) => call<{ forgot: string }>(`/api/memories/${id}`, { method: "DELETE" }),
+  files: () => call<KeptFile[]>("/api/files"),
+  /** The bytes go as the body and the name in the query: the server needs no multipart parser. */
+  keepFile: (file: File) =>
+    call<KeptFile>(`/api/files?name=${encodeURIComponent(file.name)}`, {
+      method: "POST",
+      body: file,
+      headers: { "Content-Type": "application/octet-stream" },
+    }),
+  forgetFile: (id: string) => call<{ forgot: string }>(`/api/files/${id}`, { method: "DELETE" }),
   search: (q: string) => call<SearchHits>(`/api/search?q=${encodeURIComponent(q)}`),
   voice: async (audio: Blob) => {
     const res = await fetch("/api/voice", { method: "POST", body: audio });

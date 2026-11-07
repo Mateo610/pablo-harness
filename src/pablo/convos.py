@@ -28,11 +28,12 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pablo.config import Lane
 from pablo.context import Budget, build_coder_context, clip, tokens
+from pablo.files import FileStore
 from pablo.gateway import Delta, stream_complete
 from pablo.gpu import Priority
 from pablo.gpu import job as gpu_job
 from pablo.plan import Plan
-from pablo.plans import PlanBusy, Plans, plan_text
+from pablo.plans import PlanBusy, Plans, parse_phases, plan_text
 from pablo.repomap import load_or_build
 
 if TYPE_CHECKING:
@@ -129,13 +130,38 @@ gets only an answer: if you offer to do something, wait for a yes before any RUN
 PLAN, STEP and REMEMBER lines still work and are never read aloud, so a larger piece of work
 still gets its whole plan, written in full, after your spoken sentences."""
 
+PROMPTS = Path(__file__).resolve().parent / "prompts"
+
+
+def plan_mode_prompt(size: str) -> str:
+    """Plan mode's note for the chat prompt (C14), from `prompts/plan_<size>.md`."""
+    return "\n\n" + (PROMPTS / f"plan_{size}.md").read_text(encoding="utf-8").strip()
+
+
+PlanSize = Literal["minor", "major"]
+
 _RUN = re.compile(r"^\s*RUN:\s*(.+?)\s*$", re.M)
 _PLAN = re.compile(r"^\s*PLAN:\s*(.+?)\s*$", re.M)
 _STEP = re.compile(r"^\s*STEP:\s*(.+?)\s*$", re.M)
 _BUILD = re.compile(r"^\s*BUILD:.*$", re.M)
 _APPLY = re.compile(r"^\s*APPLY:.*$", re.M)
 _DISCARD = re.compile(r"^\s*DISCARD:.*$", re.M)
-_CONTROL = re.compile(r"^\s*(PLAN|STEP|BUILD|APPLY|DISCARD):.*$\n?", re.M)
+_CONTROL = re.compile(r"^\s*(PLAN|PHASE|STEP|BUILD|APPLY|DISCARD):.*$\n?", re.M)
+# A Major plan's spec: written between SPEC: and END SPEC, kept in the reply as a ```spec block
+# the cockpit draws as a card, and read back when the plan is drafted.
+_SPEC = re.compile(r"^\s*SPEC:\s*(.*?)\s*\n(.*?)^\s*END SPEC\s*$\n?", re.M | re.S)
+_SPEC_SHOWN = re.compile(r"```spec\n(.*?)\n```", re.S)
+
+
+def show_spec(answer: str) -> str:
+    def block(m: re.Match[str]) -> str:
+        title = m.group(1).strip()
+        body = m.group(2).strip()
+        return "```spec\n" + (f"# {title}\n\n" if title else "") + body + "\n```\n"
+
+    return _SPEC.sub(block, answer)
+
+
 # The model acts on these only when the user's own words say so: a model that writes APPLY on
 # its own can't merge anything.
 _SAYS_GO = re.compile(
@@ -319,6 +345,12 @@ class Store:
         if not rows:
             raise KeyError(f"no conversation {cid}")
         return Conversation(**dict(rows[0]))
+
+    def find_conversation(self, cid: str) -> Conversation | None:
+        """Any profile's conversation, for the box owner's views (the Work board). Never use it
+        to show a conversation's messages: that's `conversation(cid, profile)`."""
+        rows = self._q("select * from conversations where id = ?", (cid,))
+        return Conversation(**dict(rows[0])) if rows else None
 
     def conversations(self, profile: str, limit: int = 50) -> list[Conversation]:
         rows = self._q(
@@ -520,6 +552,7 @@ class Chat:
         self.plans = plans
         self.background = background
         self.store = store or Store(orch.settings.home / "pablo.db")
+        self.files = FileStore(orch.settings.home)
         self.store.ensure_profile(OWNER, "Owner", "owner")
         self.project = orch.repo.name
 
@@ -567,9 +600,12 @@ class Chat:
         on_delta: Delta | None = None,
         spoken: bool = False,
         think: bool = False,
+        plan: PlanSize | None = None,
     ) -> Turn:
         """`do`: True starts a run with your words as the task, False only talks, None lets
         the model decide (a RUN line). `confirm` is required for a remote lane, every time.
+        `plan`: Plan mode (chat only). The turn works toward a plan and never starts a run or
+        a build; `do` is ignored. Only the user turns it on.
         `think`: extended thinking, for Base and Hybrid in chat: the reply, the runs and the
         plan it starts use the coder's thinking variant. Never spoken (it's slow)."""
         conv = self.store.conversation(cid, profile)
@@ -578,6 +614,10 @@ class Chat:
         name = AUTO if unfiltered else (lane or conv.lane)
         cfg = self._lane(name, orch)
         think = think and not spoken and not unfiltered and cfg.thinking is not None
+        if spoken:
+            plan = None
+        if plan is not None:
+            do = None  # Plan mode talks and plans; it never runs your words as a task
         if think and cfg.thinking is not None:
             t = cfg.thinking
             cfg = cfg.model_copy(update={"model": t.model, "max_tokens": t.max_tokens,
@@ -614,7 +654,7 @@ class Chat:
             return Turn(conv, user, reply, run=run.to_dict(), shared_memory=bool(notes))
 
         messages = self._prompt(
-            profile, conv, cfg, name, history, text, notes, remote, spoken, orch
+            profile, conv, cfg, name, history, text, notes, remote, spoken, orch, plan
         )
         sampling: dict[str, Any] = {
             "temperature": cfg.temperature,
@@ -629,7 +669,7 @@ class Chat:
                 if on_delta
                 else orch.backend.complete(cfg.model, messages, **sampling)
             )
-        answer = done.text
+        answer = show_spec(done.text)
         self.store.record_usage(profile, name, done.prompt_tokens, done.completion_tokens)
         task = next((m.group(1) for m in _RUN.finditer(answer)), "") if can_run else ""
         facts = [m.group(1) for m in _REMEMBER.finditer(answer)]
@@ -640,7 +680,11 @@ class Chat:
         extra: list[str] = []
         plan_obj: Plan | None = None
         decided: Run | None = None
-        if can_run and do is None and is_question(text) and (task or _STEP.search(answer)):
+        if plan is not None:
+            # Plan mode: a plan may be drafted or redrafted, never a single run or a build.
+            task = ""
+            answer = _BUILD.sub("", answer)
+        elif can_run and do is None and is_question(text) and (task or _STEP.search(answer)):
             # A question gets an answer. The model offered work anyway: keep the offer, start
             # nothing, and let a "yes, do it" start it on the next turn.
             task = ""
@@ -648,21 +692,27 @@ class Chat:
             extra.append(
                 '(Nothing started: that was a question. Say "do it" if you want the change.)'
             )
-        consent_only = self._consent_only(conv, text)
+        consent_only = self._consent_only(conv, text, spoken)
         if can_run and do is not False:
             if consent_only and _STEP.search(answer):
                 answer = _STEP.sub("", _PLAN.sub("", answer))  # "go" isn't a new plan: keep it
-            plan_obj = self._planning(conv, name, profile, answer, extra, think, request=text)
+            plan_obj = self._planning(
+                conv, name, profile, answer, extra, think, request=text, size=plan or ""
+            )
             if plan_obj is not None:
                 task = ""  # a plan takes the place of a single run
-            if consent_only and not _BUILD.search(answer):
+            if consent_only and plan is None and not _BUILD.search(answer):
                 answer += "\nBUILD: go"  # the user said go; the model only restated it
             if _APPLY.search(answer) and _SAYS_APPLY.search(text):
-                decided = self._decide_waiting(conv, profile, approve=True, out=extra)
+                decided = self._decide_waiting(
+                    conv, profile, approve=True, out=extra, spoken=spoken
+                )
             elif _DISCARD.search(answer) and _SAYS_DISCARD.search(text):
-                decided = self._decide_waiting(conv, profile, approve=False, out=extra)
-            if self.plans and _BUILD.search(answer) and _SAYS_GO.search(text):
-                plan_obj = self._build(conv, profile, extra) or plan_obj
+                decided = self._decide_waiting(
+                    conv, profile, approve=False, out=extra, spoken=spoken
+                )
+            if self.plans and plan is None and _BUILD.search(answer) and _SAYS_GO.search(text):
+                plan_obj = self._build(conv, profile, extra, spoken) or plan_obj
         run_obj = None
         if task and do is not False:
             run_obj = self._run(task, name, notes, profile, orch, unfiltered, think)
@@ -679,16 +729,49 @@ class Chat:
 
     # plan mode and spoken approvals ------------------------------------------------------
 
-    def _consent_only(self, conv: Conversation, text: str) -> bool:
+    KEPT_FILES_CHARS = 8000
+
+    def kept_files(self, profile: str) -> str:
+        """The text of the files on the remember rail, newest first, within a budget. Files that
+        aren't text are named but not read."""
+        out: list[str] = []
+        room = self.KEPT_FILES_CHARS
+        for f in reversed(self.files.list(profile)):
+            try:
+                text = self.files.path(profile, f.id).read_bytes().decode("utf-8")
+            except (OSError, UnicodeDecodeError, KeyError):
+                out.append(f"### {f.name}\n(not text: not read)")
+                continue
+            if room <= 200:
+                out.append(f"### {f.name}\n(left out: no room)")
+                continue
+            piece = text[:room]
+            room -= len(piece)
+            cut = "\n…(cut)" if len(piece) < len(text) else ""
+            out.append(f"### {f.name}\n{piece}{cut}")
+        return "\n\n".join(out)
+
+    def _plan_for(self, conv: Conversation, spoken: bool = False) -> tuple[str, Plan | None]:
+        """The plan a turn is about: the conversation's own. A voice call has no chat of its own
+        to plan in, so with none of its own it talks about the project's newest live plan."""
+        if self.plans is None:
+            return conv.id, None
+        try:
+            own = self.plans.get(conv.project, conv.id)
+            if own is not None or not spoken:
+                return conv.id, own
+            found = self.plans.latest(conv.project, by=conv.profile_id)
+        except KeyError:
+            return conv.id, None
+        return found if found is not None else (conv.id, None)
+
+    def _consent_only(self, conv: Conversation, text: str, spoken: bool = False) -> bool:
         """A short "go" to a draft plan: build it, and don't let a restated plan replace it."""
         if self.plans is None or len(text.split()) > 8 or not _SAYS_GO.search(text):
             return False
         if _CHANGE_WORDS.search(text):
             return False  # "go, but make step 2 smaller" is a change to the plan
-        try:
-            plan = self.plans.get(conv.project)
-        except KeyError:
-            return False
+        _, plan = self._plan_for(conv, spoken)
         return plan is not None and plan.state in ("draft", "paused")
 
     def _planning(
@@ -700,24 +783,40 @@ class Chat:
         out: list[str],
         think: bool = False,
         request: str = "",
+        size: PlanSize | Literal[""] = "",
     ) -> Plan | None:
+        phases = parse_phases(answer)
         steps = [m.group(1) for m in _STEP.finditer(answer)]
         if not steps or self.plans is None:
             return None
         goal = next((m.group(1) for m in _PLAN.finditer(answer)), "")
+        spec = self._approved_spec(conv) if size == "major" else ""
         try:
             plan = self.plans.draft(conv.project, goal, steps, lane=lane, by=profile,
-                                    conversation=conv.id, think=think, request=request)  # fmt: skip
+                                    conversation=conv.id, think=think, request=request,
+                                    size=size, spec=spec, phases=phases)  # fmt: skip
         except (PlanBusy, ValueError) as exc:
             out.append(f"(The plan wasn't changed: {exc}.)")
             return None
         out.append(plan_text(plan))
         return plan
 
-    def _build(self, conv: Conversation, profile: str, out: list[str]) -> Plan | None:
+    def _approved_spec(self, conv: Conversation) -> str:
+        """The newest spec in the conversation: what a Major plan is built from."""
+        for m in reversed(self.store.messages(conv.id)):
+            if m.role == "assistant":
+                found = _SPEC_SHOWN.search(m.content)
+                if found:
+                    return found.group(1).strip()
+        return ""
+
+    def _build(
+        self, conv: Conversation, profile: str, out: list[str], spoken: bool = False
+    ) -> Plan | None:
         assert self.plans is not None
+        key, _ = self._plan_for(conv, spoken)
         try:
-            plan = self.plans.go(conv.project, by=profile)
+            plan = self.plans.go(conv.project, by=profile, conversation=key)
         except (KeyError, ValueError, PlanBusy) as exc:
             out.append(f"(Not building yet: {str(exc).strip(chr(39))}.)")
             return None
@@ -728,20 +827,23 @@ class Chat:
             )
         return plan
 
-    def _state_note(self, conv: Conversation, cfg: Lane, name: str, remote: bool) -> str:
+    def _state_note(
+        self, conv: Conversation, cfg: Lane, name: str, remote: bool, spoken: bool = False
+    ) -> str:
         """The project's plan and what waits for the user, ahead of their message. It rides on
         the message (not the system prompt) so the cached prefix stays the same."""
         if remote or not (name == AUTO or cfg.writes_code):
             return ""
         parts = []
         if self.plans is not None:
+            key, _ = self._plan_for(conv, spoken)
             try:
-                summary = self.plans.summary(conv.project)
+                summary = self.plans.summary(conv.project, key)
             except KeyError:
                 summary = ""
             if summary:
-                parts.append("The project's plan:\n" + summary)
-        waiting = self._waiting(conv)
+                parts.append("The plan:\n" + summary)
+        waiting = self._waiting(conv, spoken)
         if waiting:
             parts.append("Waiting for the user's decision: " + "; ".join(
                 f"run {r.id} ({r.state.replace('_', ' ')}"
@@ -751,15 +853,12 @@ class Chat:
             return ""
         return "[Pablo, not the user: " + "\n".join(parts) + "]\n\n"
 
-    def _waiting(self, conv: Conversation) -> list[Run]:
+    def _waiting(self, conv: Conversation, spoken: bool = False) -> list[Run]:
         """Changes waiting for a decision that this conversation (or its plan) started."""
         orch = self.orch_for(conv)
         ids = [m.run_id for m in reversed(self.store.messages(conv.id)) if m.run_id]
         if self.plans is not None:
-            try:
-                plan = self.plans.get(conv.project)
-            except KeyError:
-                plan = None
+            _, plan = self._plan_for(conv, spoken)
             if plan is not None:
                 ids = [t.run for t in Plans.steps(plan) if t.run and t.status == "needs_you"] + ids
         seen: list[Run] = []
@@ -778,12 +877,18 @@ class Chat:
         return sorted(seen, key=lambda r: r.state != "ready")  # a ready one first
 
     def _decide_waiting(
-        self, conv: Conversation, profile: str, *, approve: bool, out: list[str]
+        self,
+        conv: Conversation,
+        profile: str,
+        *,
+        approve: bool,
+        out: list[str],
+        spoken: bool = False,
     ) -> Run | None:
         if profile != OWNER:
             out.append("(Only the owner can apply or discard changes.)")
             return None
-        waiting = self._waiting(conv)
+        waiting = self._waiting(conv, spoken)
         if not waiting:
             out.append("(Nothing is waiting for you here.)")
             return None
@@ -852,10 +957,19 @@ class Chat:
         remote: bool,
         spoken: bool = False,
         orch: Orchestrator | None = None,
+        plan: PlanSize | None = None,
     ) -> list[Message]:
         orch = orch or self.orch
-        system = ADVISOR_PROMPT if not (name == AUTO or cfg.writes_code) else CHAT_PROMPT
+        builds = name == AUTO or cfg.writes_code
+        system = ADVISOR_PROMPT if not builds else CHAT_PROMPT
+        if plan is not None and builds:
+            system += plan_mode_prompt(plan)
         parts = [system + (SPOKEN if spoken else "")]
+        if plan is not None and builds and not remote:
+            files_text = self.kept_files(profile)
+            if files_text:
+                parts.append("Files the user keeps for planning (read them; don't ask what they"
+                             " already answer):\n" + files_text)  # fmt: skip
         if not remote:
             who = self.store.profile(profile).name
             if notes:
@@ -894,6 +1008,7 @@ class Chat:
             # A pasted log can't overflow the window; the stored message stays whole.
             {
                 "role": "user",
-                "content": self._state_note(conv, cfg, name, remote) + clip(text, self.MESSAGE_MAX),
+                "content": self._state_note(conv, cfg, name, remote, spoken)
+                + clip(text, self.MESSAGE_MAX),
             },
         ]

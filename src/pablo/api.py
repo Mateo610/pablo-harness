@@ -7,6 +7,7 @@ write to your repo when you approve.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -20,8 +21,12 @@ from pydantic import BaseModel
 
 from pablo import __version__
 from pablo.access import TOKEN_COOKIE, Access, Caller, Denied
-from pablo.convos import AUTO, OWNER, Chat, Memory, MemoryStatus
-from pablo.orchestrator import Orchestrator, PartialChecksFailed
+from pablo.board import plan_board
+from pablo.convos import AUTO, OWNER, Chat, Memory, MemoryStatus, PlanSize
+from pablo.details import first_paragraph, run_details
+from pablo.files import MAX_BYTES as FILE_MAX_BYTES
+from pablo.files import FileStore
+from pablo.orchestrator import Orchestrator, PartialChecksFailed, Run
 from pablo.overnight import (
     BriefStore,
     JobQueue,
@@ -104,6 +109,11 @@ class SayIn(BaseModel):
     confirm: bool = False  # required for a lane that leaves Pablo (Claude), every send
     stream: bool = False  # reply as NDJSON: {"type": "delta"} pieces, then "done" or "error"
     think: bool = False  # extended thinking (Base and Hybrid only; slower, more careful)
+    plan: PlanSize | None = None  # Plan mode: talk toward a plan, never start a run or build
+
+
+class RetryIn(BaseModel):
+    fix: bool = False  # Fix it: the next try is told what went wrong
 
 
 class ModeIn(BaseModel):
@@ -161,6 +171,7 @@ def create_app(
     queue = JobQueue(orch.settings.home)
     runner = OvernightRunner(orch, queue, orch.settings.overnight, workspace=ws)
     briefs = BriefStore(orch.settings.home)
+    files = FileStore(orch.settings.home)
     app.state.scheduler = Scheduler(runner, briefs, orch.repo)
     app.add_middleware(
         CORSMiddleware,
@@ -213,26 +224,64 @@ def create_app(
     def lanes() -> list[dict[str, Any]]:
         return [lane.model_dump() for lane in orch.settings.lanes.values()]
 
+    def _plan_access(request: Request, conversation: str) -> None:
+        """A chat's plan is its owner's, and the box owner's: nobody else's."""
+        if conversation and not caller_of(request).is_owner:
+            _found(store.conversation, conversation, profile_of(request))
+
     @app.get("/api/plan")
-    def plan(project: str = "") -> dict[str, Any]:
+    def plan(
+        request: Request, project: str = "", conversation: str = "", latest: bool = False
+    ) -> dict[str, Any]:
+        """A chat's plan, the project's plan, or (`latest`) your newest live plan in the
+        project: the one a voice call talks about."""
+        _plan_access(request, conversation)
         try:
-            found = plans.get(project)
-        except KeyError as exc:
+            if latest:
+                newest = plans.latest(project, by=profile_of(request))
+                found = newest[1] if newest else None
+            else:
+                found = plans.get(project, conversation)
+        except (KeyError, ValueError) as exc:
             raise HTTPException(404, str(exc).strip("'\"")) from exc
         if found is None:
             raise HTTPException(404, "no plan yet: describe what you want built in Chat")
         return found.model_dump(mode="json")
 
     @app.post("/api/plan/go")
-    async def plan_go(request: Request, project: str = "") -> dict[str, Any]:
+    async def plan_go(
+        request: Request, project: str = "", conversation: str = ""
+    ) -> dict[str, Any]:
         """Build the plan: the next step runs; each one waits for the owner's approval."""
+        _plan_access(request, conversation)
         try:
-            started = await run_in_threadpool(plans.go, project, by=profile_of(request))
+            started = await run_in_threadpool(
+                lambda: plans.go(project, by=profile_of(request), conversation=conversation)
+            )
         except KeyError as exc:
             raise HTTPException(404, str(exc).strip("'\"")) from exc
         except (ValueError, PlanBusy) as exc:
             raise HTTPException(409, str(exc)) from exc
         return started.model_dump(mode="json")
+
+    @app.get("/api/plans")
+    def plan_board_list(request: Request) -> list[dict[str, Any]]:
+        """Every chat's plan in every project (the Work board): yours, or all for the owner,
+        with progress, the step it's on, and the files two live plans share."""
+        caller = caller_of(request)
+        return plan_board(ws, plans, store, viewer=caller.profile, owner=caller.is_owner)
+
+    @app.delete("/api/plan")
+    def plan_discard(request: Request, conversation: str, project: str = "") -> dict[str, Any]:
+        """Start over: throw a chat's plan away (not while a step is building)."""
+        _plan_access(request, conversation)
+        try:
+            gone = plans.discard(project, conversation)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc).strip("'\"")) from exc
+        except (ValueError, PlanBusy) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return {"discarded": gone}
 
     @app.post("/api/plan/tasks/{task_id}")
     def set_task_status(task_id: str, body: StatusIn, request: Request) -> dict[str, Any]:
@@ -557,6 +606,84 @@ def create_app(
                 raise HTTPException(403, "Only the owner can reject someone else's run.")
         return await run_in_threadpool(_decide, "reject", run_id)
 
+    def _yours(request: Request, run_id: str) -> Run:
+        """The run, if the caller may act on it: the owner, or whoever started it."""
+        try:
+            run = ws.for_run(run_id).get(run_id)
+        except KeyError as exc:
+            raise HTTPException(404, f"no run {run_id}") from exc
+        caller = caller_of(request)
+        if not caller.is_owner and run.by != caller.profile:
+            raise HTTPException(403, "Only the owner can act on someone else's run.")
+        return run
+
+    def _step_json(found: Any) -> dict[str, Any] | None:
+        if found is None:
+            return None
+        key, plan, step = found
+        return {"conversation": key, "step": step.id, "status": step.status, "goal": plan.goal}
+
+    @app.get("/api/runs/{run_id}/details")
+    def run_details_text(run_id: str, request: Request) -> dict[str, Any]:
+        """The run as text to copy or send to chat: task, plan step, why, failing checks."""
+        run = _yours(request, run_id)
+        found = plans.step_for(run)
+        text = run_details(run, plan_goal=found[1].goal if found else "",
+                           step=found[2] if found else None)  # fmt: skip
+        return {"text": text, "plan": _step_json(found)}
+
+    @app.post("/api/runs/{run_id}/retry")
+    async def retry_run(
+        run_id: str, request: Request, body: RetryIn | None = None
+    ) -> dict[str, Any]:
+        """Try it again (`fix`: told what went wrong). A plan step is retried as that step, so
+        the plan carries on when it lands; any other run starts again beside it."""
+        run = _yours(request, run_id)
+        fix = bool(body and body.fix)
+        found = plans.step_for(run)
+        who = profile_of(request)
+        if found is not None:
+            key, plan, step = found
+            feedback = run_details(run, plan_goal=plan.goal, step=step) if fix else ""
+            try:
+                retried = await run_in_threadpool(
+                    lambda: plans.retry_step(run.project, key, step.id, by=who, feedback=feedback)
+                )
+            except (KeyError, ValueError, PlanBusy) as exc:
+                raise HTTPException(409, str(exc).strip("'\"")) from exc
+            return {"run": None, "plan": retried.model_dump(mode="json")}
+        if run.state not in ("ready", "needs_you", "failed", "rejected"):
+            raise HTTPException(409, f"run {run.id} is {run.state}: nothing to retry")
+        task = first_paragraph(run.task)
+        if fix:
+            task += "\n\nThe last try went wrong. Fix this:\n" + run_details(run)
+        target = ws.for_run(run_id)
+        lane = run.lane if run.retry == "off" else None  # you picked a model: it tries again
+        started = await run_in_threadpool(
+            lambda: target.start_background(
+                task, lane=lane, by=who, retry=run.retry, think=run.think
+            )
+        )
+        if run.state in ("ready", "needs_you"):
+            await run_in_threadpool(target.reject, run.id)
+        return {"run": linked(started, request), "plan": None}
+
+    @app.post("/api/runs/{run_id}/skip")
+    async def skip_run(run_id: str, request: Request) -> dict[str, Any]:
+        """Skip the plan step this run was building: the plan moves on without it."""
+        run = _yours(request, run_id)
+        found = plans.step_for(run)
+        if found is None:
+            raise HTTPException(400, "this run isn't a plan step: reject it instead")
+        key, _, step = found
+        try:
+            skipped = await run_in_threadpool(
+                lambda: plans.skip_step(run.project, key, step.id, by=profile_of(request))
+            )
+        except (KeyError, ValueError, PlanBusy) as exc:
+            raise HTTPException(409, str(exc).strip("'\"")) from exc
+        return {"plan": skipped.model_dump(mode="json")}
+
     @app.post("/api/runs/{run_id}/escalate")
     async def escalate(run_id: str, request: Request) -> dict[str, Any]:
         owner_only(request)
@@ -669,7 +796,11 @@ def create_app(
 
     @app.delete("/api/conversations/{cid}")
     def delete_conversation(cid: str, request: Request) -> dict[str, Any]:
+        conv = _found(store.conversation, cid, profile_of(request))
         _found(store.delete, cid, profile_of(request))
+        # Its plan goes with it: a plan is shown in its chat, and the chat is gone.
+        with contextlib.suppress(KeyError, ValueError):
+            plans.discard(conv.project, cid, force=True)
         return {"deleted": cid}
 
     @app.post("/api/conversations/{cid}/messages", response_model=None)
@@ -679,7 +810,8 @@ def create_app(
         if lane == "claude":
             owner_only(request)
         kw: dict[str, Any] = {"profile": who, "lane": body.lane, "do": body.do,
-                              "confirm": body.confirm, "think": body.think}  # fmt: skip
+                              "confirm": body.confirm, "think": body.think,
+                              "plan": body.plan}  # fmt: skip
         if not body.stream:
             try:
                 turn = await run_in_threadpool(chat.say, cid, body.text, **kw)
@@ -731,6 +863,26 @@ def create_app(
     def reject_memory(mid: str, request: Request) -> dict[str, Any]:
         mem: Memory = _found(store.decide, mid, profile_of(request), "rejected")
         return dict(mem.__dict__)
+
+    @app.get("/api/files")
+    def list_files(request: Request) -> list[dict[str, Any]]:
+        return [f.__dict__ for f in files.list(profile_of(request))]
+
+    @app.post("/api/files")
+    async def add_file(name: str, request: Request) -> dict[str, Any]:
+        """The raw bytes in the body, the name in the query: no multipart parser needed."""
+        if int(request.headers.get("content-length") or 0) > FILE_MAX_BYTES:
+            raise HTTPException(413, f"files are kept up to {FILE_MAX_BYTES // (1024 * 1024)} MB")
+        data = await request.body()
+        try:
+            return files.add(profile_of(request), name, data).__dict__
+        except ValueError as exc:
+            raise HTTPException(413 if len(data) > FILE_MAX_BYTES else 400, str(exc)) from exc
+
+    @app.delete("/api/files/{fid}")
+    def forget_file(fid: str, request: Request) -> dict[str, Any]:
+        _found(files.forget, profile_of(request), fid)
+        return {"forgot": fid}
 
     @app.delete("/api/memories/{mid}")
     def forget_memory(mid: str, request: Request) -> dict[str, Any]:

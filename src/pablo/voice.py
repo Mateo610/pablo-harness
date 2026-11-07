@@ -202,7 +202,7 @@ class SentenceCutter:
         return [said] if said else []
 
 
-_STEP_OF = re.compile(r"This is step (\w+) of a plan")
+_STEP_OF = re.compile(r"This is step ([\w.]+) of a plan")
 
 
 def news_line(run: Any, *, can_apply: bool = True) -> str:

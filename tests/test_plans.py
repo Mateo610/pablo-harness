@@ -73,7 +73,7 @@ def test_talk_a_plan_then_build_it_one_approved_step_at_a_time(
     coder_calls = len(fake.calls)
 
     built = chat.say(conv.id, "looks right, go")
-    plan = plans.get()
+    plan = plans.get("", conv.id)
     assert plan and plan.state == "running" and "Building step 1" in built.reply.content
     first, second = Plans.steps(plan)
     assert first.status == "needs_you" and first.run and second.status == "queued"
@@ -85,14 +85,14 @@ def test_talk_a_plan_then_build_it_one_approved_step_at_a_time(
     applied = chat.say(conv.id, "apply it")
     assert applied.decided and applied.decided["state"] == "approved"
     assert (repo / "greet.py").is_file()
-    plan = plans.get()
+    plan = plans.get("", conv.id)
     assert plan and Plans.steps(plan)[0].status == "done"
     assert Plans.steps(plan)[1].status == "needs_you"
     shout_task = next(m for _, m in fake.calls if "step 2 of a plan" in m[-1]["content"])
     assert "Already done and in the repo: create greet.py" in shout_task[-1]["content"]
 
     chat.say(conv.id, "looks great")
-    plan = plans.get()
+    plan = plans.get("", conv.id)
     assert plan and plan.state == "done" and (repo / "shout.py").is_file()
 
 
@@ -110,7 +110,7 @@ def test_the_model_cant_apply_on_its_own_and_only_the_owner_can(
     chat.store.ensure_profile("sam", "Sam", "member")
     theirs = chat.start("sam")
     chat.say(theirs.id, "plan a greeter", profile="sam")  # busy: matt's plan is building
-    plan = plans.get()
+    plan = plans.get("", conv.id)
     assert plan and plan.by == "owner"
     refused = chat.say(theirs.id, "apply it", profile="sam")
     assert "Only the owner" in refused.reply.content and not (repo / "greet.py").exists()
@@ -124,12 +124,12 @@ def test_a_rejected_step_pauses_the_plan_and_go_tries_it_again(
     chat.say(conv.id, "plan a greeter")
     chat.say(conv.id, "go")
     with pytest.raises(PlanBusy):
-        plans.draft("", "other", ["x"], lane="auto", by="owner", conversation="")
+        plans.draft("", "other", ["x"], lane="auto", by="owner", conversation=conv.id)
     chat.say(conv.id, "throw it away")
-    plan = plans.get()
+    plan = plans.get("", conv.id)
     assert plan and plan.state == "paused" and Plans.steps(plan)[0].status == "blocked"
     chat.say(conv.id, "go again")
-    plan = plans.get()
+    plan = plans.get("", conv.id)
     assert plan and plan.state == "running" and Plans.steps(plan)[0].status == "needs_you"
 
 
@@ -155,7 +155,7 @@ def test_every_step_sees_the_users_own_words(settings: Settings, repo: Path) -> 
     chat, plans, _, fake = make(settings, repo)
     conv = chat.start()
     chat.say(conv.id, "let's plan a greeter: greet(name) in greet.py returns 'hi ' + name")
-    plan = plans.get()
+    plan = plans.get("", conv.id)
     assert plan and "greet(name) in greet.py" in plan.request
     chat.say(conv.id, "go")
     step_prompt = next(m for _, m in fake.calls if "step 1 of a plan" in m[-1]["content"])
@@ -186,7 +186,7 @@ def test_go_builds_the_reviewed_plan_even_if_the_model_restates_it(
     conv = chat.start()
     chat.say(conv.id, "let's plan a greeter")
     turn = chat.say(conv.id, "looks good, go")
-    plan = plans.get()
+    plan = plans.get("", conv.id)
     assert plan and len(Plans.steps(plan)) == 2 and plan.state == "running"
     assert "Building step 1" in turn.reply.content
 

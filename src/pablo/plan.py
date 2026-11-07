@@ -1,21 +1,41 @@
-"""GSD-style project state: phases, tasks, and gates in .pablo/plan.yaml.
+"""GSD-style project state: phases, tasks, and gates.
 
-The plan lives in the repo it describes, so it travels with the code, diffs in
-git, and any model (or you) can read it. A phase closes only when its gate
-passes; the cockpit's mission board renders this file.
+A plan lives in the repo it describes, so it travels with the code, diffs in git, and any
+model (or you) can read it. A phase closes only when its gate passes.
+
+- `.pablo/plan.yaml` is the project's plan: the mission board, `pablo plan`, the overnight
+  queue, and anything that doesn't say which conversation it's for.
+- `.pablo/plans/<conversation>.yaml` is a plan made in a chat (C14): one per conversation, so
+  two chats can each plan and build in the same project. A Major plan also keeps its spec,
+  roadmap and state as markdown in `.pablo/plans/<conversation>/`.
 """
 
 from __future__ import annotations
 
+import re
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
 import yaml
 from pydantic import BaseModel, Field
 
-Status = Literal["queued", "active", "needs_you", "done", "blocked"]
+Status = Literal["queued", "active", "needs_you", "done", "blocked", "skipped"]
+FINISHED = ("done", "skipped")  # a skipped step is over: you chose to move on without it
 PlanState = Literal["draft", "running", "paused", "done"]
+PlanSize = Literal["", "minor", "major"]
 PLAN_PATH = Path(".pablo") / "plan.yaml"
+PLANS_DIR = Path(".pablo") / "plans"
+_KEY = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def plan_file(root: Path, key: str = "") -> Path:
+    """Where a plan lives: the project's plan, or the plan of conversation `key`."""
+    if not key:
+        return root / PLAN_PATH
+    if not _KEY.match(key):
+        raise ValueError(f"bad plan key: {key!r}")
+    return root / PLANS_DIR / f"{key}.yaml"
 
 
 class Task(BaseModel):
@@ -36,10 +56,10 @@ class Phase(BaseModel):
 
     @property
     def done(self) -> bool:
-        return bool(self.tasks) and all(t.status == "done" for t in self.tasks)
+        return bool(self.tasks) and all(t.status in FINISHED for t in self.tasks)
 
     def progress(self) -> tuple[int, int]:
-        return sum(t.status == "done" for t in self.tasks), len(self.tasks)
+        return sum(t.status in FINISHED for t in self.tasks), len(self.tasks)
 
 
 class Plan(BaseModel):
@@ -54,18 +74,25 @@ class Plan(BaseModel):
     conversation: str = ""  # where it was planned, so progress can be reported there
     think: bool = False  # extended thinking: each step's coder thinks first
     request: str = ""  # the user's words the plan came from: every step sees them
+    size: PlanSize = ""  # Plan mode's size when it was drafted there ("" from Auto)
+    spec: str = ""  # a Major plan's spec, as the user approved it (markdown)
+    updated: str = ""  # when it was last saved (ISO, UTC)
 
     @classmethod
-    def load(cls, root: Path) -> Plan:
-        return cls.model_validate(yaml.safe_load((root / PLAN_PATH).read_text(encoding="utf-8")))
+    def load(cls, root: Path, key: str = "") -> Plan:
+        text = plan_file(root, key).read_text(encoding="utf-8")
+        return cls.model_validate(yaml.safe_load(text))
 
-    def save(self, root: Path) -> Path:
-        path = root / PLAN_PATH
+    def save(self, root: Path, key: str = "") -> Path:
+        path = plan_file(root, key)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
+        self.updated = datetime.now(UTC).isoformat(timespec="seconds")
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(
             yaml.safe_dump(self.model_dump(mode="json"), sort_keys=False, allow_unicode=True),
             encoding="utf-8",
         )
+        tmp.replace(path)  # a reader polling the plan never sees half a file
         return path
 
     def current_phase(self) -> Phase | None:
