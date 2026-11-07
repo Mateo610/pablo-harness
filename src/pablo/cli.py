@@ -1206,7 +1206,7 @@ def memory_list(
 
 @memory_app.command("add")
 def memory_add(text: str, scope: str = "profile") -> None:
-    mem = _memory_store().remember("owner", text, scope=scope)
+    mem = _memory_store().keep("owner", text, scope=scope)
     console.print(f"kept {mem.id}: {mem.text}")
 
 
@@ -1218,6 +1218,18 @@ def memory_keep(memory_id: str) -> None:
 @memory_app.command("reject")
 def memory_reject(memory_id: str) -> None:
     console.print(f"rejected: {_memory_store().decide(memory_id, 'owner', 'rejected').text}")
+
+
+@memory_app.command("edit")
+def memory_edit(memory_id: str, text: str) -> None:
+    """Change a note's words (kept or waiting)."""
+    console.print(f"now: {_memory_store().edit(memory_id, 'owner', text).text}")
+
+
+@memory_app.command("reindex")
+def memory_reindex() -> None:
+    """Rebuild the notes search index from the notes themselves (after a crash, or to check)."""
+    console.print(f"indexed {_memory_store().reindex()} kept notes")
 
 
 @memory_app.command("forget")

@@ -35,6 +35,12 @@ tests from the request before it sees the diff.
   now read checks every run, always run imports, and start with pytest ("no tests yet" is not a
   failure).
 
+- **[observed]** Fixed (2026-11-06, `reliability-fixes`): approving a whole diff applied it with no
+  new check, even when the repo had changed since (another approval, your edits). Each verdict now
+  records the repo's `tree` hash; approve re-checks when it differs and stops a change that was
+  clean and isn't any more (`StaleChecksFailed`, 409) unless you force it. Two approvals of one
+  run at once apply it once.
+
 ## Ideas
 
 | Idea | How we'd know |
