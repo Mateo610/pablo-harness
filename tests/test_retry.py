@@ -186,3 +186,118 @@ def test_a_run_whose_checks_got_worse_is_retried(settings: Settings, repo: Path)
     run = o.start("add sub(a, b)", lane="coder")
     assert run.verdict and not run.verdict["clean"]
     assert run.retry_run and o.get(run.retry_run).lane == "deep"
+
+
+def test_approving_the_run_cancels_its_night_retry(settings: Settings, repo: Path) -> None:
+    from pablo.overnight import OvernightRunner
+
+    o = orch(settings, repo, "no idea", when="overnight")
+    run = o.start("add sub(a, b)", lane="coder")
+    assert run.retry_job
+    o.approve(run.id)  # you took the coder's answer (here: no change at all)
+    job = JobQueue(settings.home).get(run.retry_job)
+    assert job.status == "cancelled"
+    assert OvernightRunner(o, JobQueue(settings.home), settings.overnight).run_pending(
+        force=True
+    ) == []  # fmt: skip
+
+
+def test_the_night_runner_skips_a_retry_whose_group_was_approved(
+    settings: Settings, repo: Path
+) -> None:
+    """Approved somewhere the cancel didn't reach (another process, an old queue file)."""
+    from pablo.overnight import OvernightRunner
+
+    o = orch(settings, repo, "no idea", when="overnight")
+    run = o.start("add sub(a, b)", lane="coder")
+    run.state = "approved"
+    o._save(run)
+    queue = JobQueue(settings.home)
+    assert OvernightRunner(o, queue, settings.overnight).run_pending(force=True) == []
+    job = queue.get(run.retry_job or "")
+    assert job.status == "cancelled" and "already approved" in job.error
+    assert not any(r.retried_from == run.id for r in o.recent(50))  # deep never ran
+
+
+def test_a_night_retry_keeps_who_started_it(settings: Settings, repo: Path) -> None:
+    from pablo.overnight import OvernightRunner
+
+    o = orch(settings, repo, "no idea", when="overnight")
+    run = o.start("add sub(a, b)", lane="coder", by="sam@github", notes=["use tabs"])
+    [job] = OvernightRunner(o, JobQueue(settings.home), settings.overnight).run_pending(force=True)
+    retry = o.get(job.run_id or "")
+    assert retry.by == "sam@github" and retry.notes == ["use tabs"] and retry.group == run.group
+
+
+def test_many_queues_lose_no_jobs(settings: Settings) -> None:
+    import threading
+
+    def add(n: int) -> None:
+        for i in range(10):
+            JobQueue(settings.home).add(f"task {n}-{i}")  # a fresh queue each time, like retries
+
+    threads = [threading.Thread(target=add, args=(n,)) for n in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(JobQueue(settings.home).all()) == 80
+
+
+def test_a_cancelled_job_is_never_claimed(settings: Settings) -> None:
+    queue = JobQueue(settings.home)
+    job = queue.add("task")
+    queue.cancel(job.id)
+    assert queue.claim(job.id) is None
+    other = queue.add("other")
+    assert queue.claim(other.id) is not None and queue.claim(other.id) is None
+    with pytest.raises(ValueError):
+        queue.cancel(other.id)  # it's running now
+
+
+def test_approve_rechecks_a_diff_when_the_repo_changed(settings: Settings, repo: Path) -> None:
+    from pablo.orchestrator import StaleChecksFailed
+
+    o = orch(settings, repo, GOOD)
+    run = o.start("add sub(a, b)", lane="coder")
+    assert run.state == "ready" and run.verdict and run.verdict["tree"]
+    # Since the check, a test landed that this change breaks; the diff still applies.
+    (repo / "test_nosub.py").write_text(
+        "import calc\n\n\ndef test_no_sub():\n    assert not hasattr(calc, 'sub')\n"
+    )
+    with pytest.raises(StaleChecksFailed, match="changed since"):
+        o.approve(run.id)
+    assert "def sub" not in (repo / "calc.py").read_text()  # nothing landed
+    assert o.get(run.id).state == "ready" and not o.get(run.id).verdict["clean"]  # type: ignore[index]
+    o.approve(run.id, force=True)  # you can still take it
+    assert "def sub" in (repo / "calc.py").read_text()
+
+
+def test_approve_twice_applies_once(settings: Settings, repo: Path) -> None:
+    import threading
+
+    o = orch(settings, repo, GOOD)
+    run = o.start("add sub(a, b)", lane="coder")
+    errors: list[Exception] = []
+
+    def go() -> None:
+        try:
+            o.approve(run.id)
+        except ValueError as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=go) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(errors) == 1 and "approved" in str(errors[0])
+    assert (repo / "calc.py").read_text().count("def sub") == 1
+
+
+def test_a_run_file_is_replaced_whole(settings: Settings, repo: Path) -> None:
+    o = orch(settings, repo, GOOD)
+    run = o.start("add sub(a, b)", lane="coder")
+    folder = settings.home / "runs"
+    assert (folder / f"{run.id}.json").is_file()
+    assert not list(folder.glob(".*.tmp"))  # no temp file left behind

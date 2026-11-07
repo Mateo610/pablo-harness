@@ -11,11 +11,18 @@ import json
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlencode
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+    StreamingResponse,
+)
 from pydantic import BaseModel
 
 from pablo import __version__
@@ -115,6 +122,10 @@ class MemoryIn(BaseModel):
     scope: str = "profile"
 
 
+class NoteEditIn(BaseModel):
+    text: str
+
+
 def asdict_profile(p: Any) -> dict[str, Any]:
     return dict(p.__dict__)
 
@@ -205,7 +216,12 @@ def create_app(
         headers = {k.lower(): v for k, v in request.headers.items()}
         try:
             caller = await run_in_threadpool(
-                gate.resolve, client, server[0] if server else None, headers, _token(request)
+                gate.resolve,
+                client,
+                server[0] if server else None,
+                headers,
+                _token(request),
+                request.method,
             )
         except Denied as exc:
             if not guarded:
@@ -215,6 +231,15 @@ def create_app(
         request.state.caller = caller
         if caller.profile != OWNER:
             await run_in_threadpool(store.ensure_profile, caller.profile, caller.name, caller.role)
+        token = request.query_params.get("token")
+        if caller.is_owner and token and not guarded and request.method == "GET":
+            # The link `pablo token` prints: sign the browser in, then drop the token from the
+            # address bar so it doesn't sit in history or get shared with the page's URL.
+            rest = [(k, v) for k, v in request.query_params.multi_items() if k != "token"]
+            target = path + (f"?{urlencode(rest)}" if rest else "")
+            redirect = RedirectResponse(target, status_code=303)
+            redirect.set_cookie(TOKEN_COOKIE, token, httponly=True, samesite="strict")
+            return redirect
         response = await call_next(request)
         if caller.is_owner and request.query_params.get("token"):
             # `pablo token` gives a link; the cookie keeps the browser signed in on this box.
@@ -568,7 +593,9 @@ def create_app(
             raise HTTPException(404, f"no run {run_id}") from exc
 
     @app.post("/api/compare")
-    async def compare(body: CompareIn) -> list[dict[str, Any]]:
+    async def compare(body: CompareIn, request: Request) -> list[dict[str, Any]]:
+        # One task on several lanes holds the GPU for each in turn (deep for minutes).
+        owner_only(request)
         try:
             runs = await run_in_threadpool(
                 orch.compare, body.task, body.lanes, task_id=body.task_id
@@ -608,7 +635,7 @@ def create_app(
         return [j.to_dict() for j in jobs[-50:]]
 
     @app.post("/api/queue")
-    def add_job(body: JobIn) -> dict[str, Any]:
+    def add_job(body: JobIn, request: Request) -> dict[str, Any]:
         try:
             target = ws.orch(body.project)
         except KeyError as exc:
@@ -621,7 +648,9 @@ def create_app(
             if lane.requires_approval:
                 raise HTTPException(403, f"lane '{lane.name}' can't be queued; escalate instead")
         project = "" if target is orch else target.repo.name
-        return queue.add(body.task, body.lane, body.task_id, project=project).to_dict()
+        return queue.add(
+            body.task, body.lane, body.task_id, project=project, by=profile_of(request)
+        ).to_dict()
 
     @app.delete("/api/queue/{job_id}")
     def cancel_job(job_id: str, request: Request) -> dict[str, Any]:
@@ -754,7 +783,15 @@ def create_app(
 
     @app.post("/api/memories")
     def add_memory(body: MemoryIn, request: Request) -> dict[str, Any]:
-        return store.remember(profile_of(request), body.text, scope=body.scope).__dict__
+        return store.keep(profile_of(request), body.text, scope=body.scope).__dict__
+
+    @app.patch("/api/memories/{mid}")
+    def edit_memory(mid: str, body: NoteEditIn, request: Request) -> dict[str, Any]:
+        try:
+            mem: Memory = _found(store.edit, mid, profile_of(request), body.text)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return dict(mem.__dict__)
 
     @app.post("/api/memories/{mid}/keep")
     def keep_memory(mid: str, request: Request) -> dict[str, Any]:

@@ -49,7 +49,15 @@ owner: you@github          # your Tailscale login (`tailscale whois <your laptop
 members:
   - friend@github
 loopback: auto             # auto: token only when members exist · owner · token
+hosts: [pablo]             # other names you open Pablo by, if any (see below)
 ```
+
+Pablo knows you by your address, so `/api` answers only names a browser could have used to
+reach Pablo itself: any IP, `localhost`, this machine's hostname, `*.ts.net`, the name
+`pablo cert` issued, and `hosts`. That stops a web page you have open from pointing its own
+domain at Pablo's IP (DNS rebinding) and acting as you. A request that changes something
+must also come from a page Pablo served. If the MagicDNS short name (`http://pablo:8710`)
+differs from the machine's hostname, list it under `hosts`.
 
 Serve on the Tailscale IP (`pablo serve --host $(tailscale ip -4)`; it refuses `0.0.0.0`).
 Optional, recommended: in your tailnet policy, let teammates reach only the cockpit port:

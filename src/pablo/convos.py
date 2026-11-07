@@ -24,7 +24,7 @@ import sqlite3
 import threading
 import uuid
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -117,8 +117,10 @@ When the user says to apply the change that is waiting for them, add a line: APP
 When they say to throw it away, add a line: DISCARD: it
 Never write APPLY or DISCARD unless the user just said so.
 
-When the user tells you something lasting about how they work or what the project needs,
-add a line: REMEMBER: <the fact, in a few words>. They decide whether it's kept."""
+When the user tells you something lasting about how they work, add a line:
+REMEMBER: <the fact, in a few words>
+When it's only about this project, write REMEMBER (project): <the fact> instead.
+They decide whether it's kept."""
 
 ADVISOR_PROMPT = """You are the advisor: a blunt second opinion with no stake in the team's
 choices. Say what you actually think, including what the user doesn't want to hear. You never
@@ -176,8 +178,15 @@ def is_question(text: str) -> bool:
 
 
 _SAYS_DISCARD = re.compile(r"\b(discard|reject|throw|toss|drop|scrap|undo|no|nope|don'?t)\b", re.I)
-_REMEMBER = re.compile(r"^\s*REMEMBER:\s*(.+?)\s*$", re.M)
-_SAID_REMEMBER = re.compile(r"^\s*remember(?:\s+that)?\s*[:,-]?\s+(.+)$", re.I | re.S)
+_REMEMBER = re.compile(r"^\s*REMEMBER(\s*\(project\))?:\s*(.+?)\s*$", re.M)
+_HERE = r"(?P<here>\s+for\s+this\s+project|\s*\(project\))?"
+# "remember: x" (or "remember for this project: x") always keeps x. Without the colon only a
+# one-line statement does ("remember that I use uv"): "remember that bug? is it back?" is a
+# question for the model, not a note. Voice transcripts rarely carry a colon, hence both.
+_SAID_REMEMBER = re.compile(r"^\s*remember" + _HERE + r"\s*:\s*(?P<fact>\S.*)$", re.I | re.S)
+_SAID_REMEMBER_THAT = re.compile(
+    r"^\s*remember" + _HERE + r"[ \t]+that[ \t]+(?P<fact>[^\n?]+?)[.!]?\s*$", re.I
+)
 _WORD = re.compile(r"[A-Za-z0-9_]{3,}")
 _STOP = frozenset(
     [
@@ -223,13 +232,53 @@ def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
-def fts_query(text: str, limit: int = 12) -> str:
-    """Any user text as a safe FTS5 query: its distinct words, OR'ed, each quoted."""
+def said_remember(text: str) -> tuple[str, bool] | None:
+    """(the fact, project-scoped?) when the user's message asks Pablo to keep a note."""
+    m = _SAID_REMEMBER.match(text) or _SAID_REMEMBER_THAT.match(text)
+    if not m or not m.group("fact").strip():
+        return None
+    return m.group("fact").strip(), bool(m.group("here"))
+
+
+def query_words(text: str, limit: int = 12) -> list[str]:
+    """The distinct search words of a text, in order: 3+ characters, no stop words."""
     words: list[str] = []
     for w in _WORD.findall(text.lower()):
         if w not in _STOP and w not in words:
             words.append(w)
-    return " OR ".join(f'"{w}"' for w in words[:limit])
+    return words[:limit]
+
+
+def fts_query(text: str, limit: int = 12) -> str:
+    """Any user text as a safe FTS5 query: its distinct words, OR'ed, each quoted."""
+    return " OR ".join(f'"{w}"' for w in query_words(text, limit))
+
+
+RECALL_HALF_LIFE_DAYS = 30.0
+PROPOSAL_DAYS = 14  # a suggested note you never decided on is set aside after this
+_NOTE_WORD = re.compile(r"[a-z0-9_]+")
+
+
+def same_note(a: str, b: str) -> bool:
+    """Do two notes say the same thing? The same words ignoring case and punctuation, or
+    (both 3+ words long) nearly the same set of words."""
+    wa, wb = _NOTE_WORD.findall(a.lower()), _NOTE_WORD.findall(b.lower())
+    if wa == wb:
+        return True
+    sa, sb = set(wa), set(wb)
+    if len(sa) < 3 or len(sb) < 3:
+        return False
+    return len(sa & sb) / len(sa | sb) >= 0.8
+
+
+def _age_days(stamp: str, now: datetime) -> float:
+    try:
+        then = datetime.fromisoformat(stamp)
+    except ValueError:
+        return 0.0
+    if then.tzinfo is None:
+        then = then.replace(tzinfo=UTC)
+    return max(0.0, (now - then).total_seconds() / 86400)
 
 
 @dataclass
@@ -286,12 +335,36 @@ class Store:
         self._db.execute("pragma foreign_keys = on")
         self._db.execute("pragma journal_mode = wal")
         self._db.executescript(SCHEMA)
+        self._heal_index()
+
+    def _heal_index(self) -> None:
+        """A file written before notes changed in one transaction may hold kept notes the
+        index lost (or index rows with no note). Counts that disagree mean: rebuild."""
+        kept = self._q("select count(*) as n from memories where status = 'kept'")[0]["n"]
+        indexed = self._q("select count(*) as n from memories_fts")[0]["n"]
+        if kept != indexed:
+            self.reindex()
 
     def _q(self, sql: str, args: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
         with self._lock:
             rows = self._db.execute(sql, args).fetchall()
             self._db.commit()
             return rows
+
+    def _tx(self, *steps: tuple[str, tuple[Any, ...]]) -> None:
+        """Several writes as one transaction: all of them land, or none do.
+
+        A note and its search row must change together; separate commits could leave a kept
+        note that search never finds (a crash between them), or an index row with no note.
+        """
+        with self._lock:
+            try:
+                for sql, args in steps:
+                    self._db.execute(sql, args)
+            except BaseException:
+                self._db.rollback()
+                raise
+            self._db.commit()
 
     # profiles -------------------------------------------------------------------------------
 
@@ -344,13 +417,14 @@ class Store:
     def delete(self, cid: str, profile: str) -> None:
         """Gone for good: messages, their search index, and notes that came from it."""
         self.conversation(cid, profile)
-        for row in self._q(
-            "select id from memories where source_conversation = ? and profile_id = ?",
-            (cid, profile),
-        ):
-            self.forget(row["id"], profile)
-        self._q("delete from messages where conversation_id = ?", (cid,))
-        self._q("delete from conversations where id = ?", (cid,))
+        notes = "select id from memories where source_conversation = ? and profile_id = ?"
+        self._tx(
+            (f"delete from memories_fts where id in ({notes})", (cid, profile)),
+            ("delete from memories where source_conversation = ? and profile_id = ?",
+             (cid, profile)),
+            ("delete from messages where conversation_id = ?", (cid,)),
+            ("delete from conversations where id = ?", (cid,)),
+        )  # fmt: skip
 
     def messages(self, cid: str) -> list[ChatMessage]:
         rows = self._q("select * from messages where conversation_id = ? order by id", (cid,))
@@ -402,14 +476,74 @@ class Store:
         now = _now()
         mem = Memory(uuid.uuid4().hex[:10], profile, scope, text.strip()[:500], status, source,
                      now, now if status != "proposed" else None)  # fmt: skip
-        self._q(
+        steps: list[tuple[str, tuple[Any, ...]]] = [(
             "insert into memories values (?, ?, ?, ?, ?, ?, ?, ?)",
             (mem.id, profile, scope, mem.text, status, source, now, mem.decided_at),
-        )
+        )]  # fmt: skip
         if status == "kept":
-            self._q("insert into memories_fts(text, id, profile_id) values (?, ?, ?)",
-                    (mem.text, mem.id, profile))  # fmt: skip
+            steps.append(("insert into memories_fts(text, id, profile_id) values (?, ?, ?)",
+                          (mem.text, mem.id, profile)))  # fmt: skip
+        self._tx(*steps)
         return mem
+
+    def _matching(self, profile: str, text: str, scopes: list[str]) -> list[Memory]:
+        found = self.memories(profile, scopes=scopes)
+        return [m for m in found if same_note(m.text, text)]
+
+    def keep(self, profile: str, text: str, *, scope: str = "profile",
+             source: str | None = None) -> Memory:  # fmt: skip
+        """You said it: keep it. A note you already kept comes back instead of a copy; a
+        matching suggestion still waiting is kept rather than added again."""
+        for m in self._matching(profile, text, [scope]):
+            if m.status == "kept":
+                return m
+            if m.status == "proposed":
+                return self.decide(m.id, profile, "kept")
+        return self.remember(profile, text, scope=scope, source=source)
+
+    def propose(self, profile: str, text: str, *, scope: str = "profile",
+                source: str | None = None) -> Memory | None:  # fmt: skip
+        """The model suggests it. Nothing new when the same note is already kept, already
+        waiting, or one you rejected: a suggestion you said no to isn't asked again."""
+        self.expire_proposals()
+        if not text.strip():
+            return None
+        scopes = sorted({scope, "profile"})  # a project suggestion a profile note covers
+        if self._matching(profile, text, scopes):
+            return None
+        return self.remember(profile, text, scope=scope, status="proposed", source=source)
+
+    def edit(self, mid: str, profile: str, text: str) -> Memory:
+        """Change a note's words. A kept note's search row changes with it."""
+        rows = self._q("select * from memories where id = ? and profile_id = ?", (mid, profile))
+        if not rows:
+            raise KeyError(f"no memory {mid}")
+        mem = Memory(**dict(rows[0]))
+        mem.text = text.strip()[:500]
+        if not mem.text:
+            raise ValueError("a note needs some text; forget it instead")
+        steps: list[tuple[str, tuple[Any, ...]]] = [
+            ("update memories set text = ? where id = ?", (mem.text, mid)),
+            ("delete from memories_fts where id = ?", (mid,)),
+        ]
+        if mem.status == "kept":
+            steps.append(("insert into memories_fts(text, id, profile_id) values (?, ?, ?)",
+                          (mem.text, mid, profile)))  # fmt: skip
+        self._tx(*steps)
+        return mem
+
+    def expire_proposals(self, days: float = PROPOSAL_DAYS, now: datetime | None = None) -> int:
+        """Suggestions left waiting longer than `days` are set aside (rejected), so the list
+        on Home stays short and the same suggestion isn't made again. Returns how many."""
+        cutoff = ((now or datetime.now(UTC)) - timedelta(days=days)).isoformat(timespec="seconds")
+        with self._lock:
+            cur = self._db.execute(
+                "update memories set status = 'rejected', decided_at = ? "
+                "where status = 'proposed' and created_at < ?",
+                (_now(), cutoff),
+            )
+            self._db.commit()
+            return int(cur.rowcount)
 
     def memories(
         self, profile: str, *, status: MemoryStatus | None = None, scopes: list[str] | None = None
@@ -428,32 +562,61 @@ class Store:
         if not rows:
             raise KeyError(f"no memory {mid}")
         mem = Memory(**dict(rows[0]))
-        self._q("update memories set status = ?, decided_at = ? where id = ?",
-                (status, _now(), mid))  # fmt: skip
-        self._q("delete from memories_fts where id = ?", (mid,))
+        steps: list[tuple[str, tuple[Any, ...]]] = [
+            ("update memories set status = ?, decided_at = ? where id = ?", (status, _now(), mid)),
+            ("delete from memories_fts where id = ?", (mid,)),
+        ]
         if status == "kept":
-            self._q("insert into memories_fts(text, id, profile_id) values (?, ?, ?)",
-                    (mem.text, mid, profile))  # fmt: skip
+            steps.append(("insert into memories_fts(text, id, profile_id) values (?, ?, ?)",
+                          (mem.text, mid, profile)))  # fmt: skip
+        self._tx(*steps)
         mem.status = status
         return mem
 
     def forget(self, mid: str, profile: str) -> None:
         """Deleted, not marked: nothing of it stays in the file or the index."""
-        self._q("delete from memories_fts where id = ? and profile_id = ?", (mid, profile))
-        self._q("delete from memories where id = ? and profile_id = ?", (mid, profile))
+        self._tx(
+            ("delete from memories_fts where id = ? and profile_id = ?", (mid, profile)),
+            ("delete from memories where id = ? and profile_id = ?", (mid, profile)),
+        )
+
+    def reindex(self) -> int:
+        """Rebuild the notes index from the notes table: exactly the kept notes, once each.
+        Returns how many notes the index holds. `pablo memory reindex` runs it."""
+        self._tx(
+            ("delete from memories_fts", ()),
+            ("insert into memories_fts(text, id, profile_id) "
+             "select text, id, profile_id from memories where status = 'kept'", ()),
+        )  # fmt: skip
+        return int(self._q("select count(*) as n from memories_fts")[0]["n"])
 
     # search ---------------------------------------------------------------------------------
 
-    def search(self, profile: str, text: str, limit: int = 20) -> dict[str, list[dict[str, Any]]]:
+    def search(
+        self,
+        profile: str,
+        text: str,
+        limit: int = 20,
+        *,
+        project: str | None = None,
+        role: str | None = None,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Your messages and kept notes that match. `project` keeps messages to one project,
+        `role` to one speaker."""
         q = fts_query(text)
         if not q:
             return {"messages": [], "memories": []}
+        where, args = "messages_fts match ? and c.profile_id = ?", [q, profile]
+        if project is not None:
+            where, args = where + " and c.project = ?", [*args, project]
+        if role is not None:
+            where, args = where + " and m.role = ?", [*args, role]
         msgs = self._q(
             "select m.id, m.conversation_id, m.role, m.content, m.created_at, c.title "
             "from messages_fts f join messages m on m.id = f.rowid "
             "join conversations c on c.id = m.conversation_id "
-            "where messages_fts match ? and c.profile_id = ? order by bm25(messages_fts) limit ?",
-            (q, profile, limit),
+            f"where {where} order by bm25(messages_fts) limit ?",
+            (*args, limit),
         )
         mems = self._q(
             "select id, text from memories_fts where memories_fts match ? and profile_id = ? "
@@ -462,21 +625,55 @@ class Store:
         )
         return {"messages": [dict(r) for r in msgs], "memories": [dict(r) for r in mems]}
 
-    def recall(self, profile: str, text: str, *, exclude: str, k: int = 3) -> list[dict[str, Any]]:
-        """The best-matching lines from your other conversations."""
-        hits = self.search(profile, text, limit=k * 4)["messages"]
-        return [h for h in hits if h["conversation_id"] != exclude][:k]
+    def recall(
+        self,
+        profile: str,
+        text: str,
+        *,
+        exclude: str,
+        project: str,
+        k: int = 3,
+        now: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        """What you said in your other conversations about the same project, when it matches.
+
+        Only your own messages: a model's old reply, right or wrong, never comes back as
+        "from earlier conversations". A hit must share two of the message's words (one, if
+        the message has only one), so a lone "file" or "test" doesn't pull in noise. Among
+        hits, more shared words first, halved every 30 days of age.
+        """
+        wanted = query_words(text)
+        if not wanted:
+            return []
+        need = min(2, len(wanted))
+        when = now or datetime.now(UTC)
+        hits = self.search(profile, text, limit=k * 8, project=project, role="user")["messages"]
+        scored: list[tuple[float, int, dict[str, Any]]] = []
+        for i, hit in enumerate(hits):
+            if hit["conversation_id"] == exclude:
+                continue
+            shared = len(set(wanted) & set(query_words(hit["content"], limit=10_000)))
+            if shared < need:
+                continue
+            decay = 0.5 ** (_age_days(hit["created_at"], when) / RECALL_HALF_LIFE_DAYS)
+            scored.append((shared * decay, -i, hit))  # ties keep bm25's order
+        scored.sort(key=lambda row: (row[0], row[1]), reverse=True)
+        return [hit for _, _, hit in scored[:k]]
 
     def relevant_memories(self, profile: str, project: str, text: str, k: int = 12) -> list[str]:
-        kept = self.memories(profile, status="kept", scopes=["profile", f"project:{project}"])
+        """Up to k kept notes for this profile and project: all of them when they fit, else the
+        best matches for `text`, then the newest. Another project's notes never come back."""
+        scopes = ["profile", f"project:{project}"]
+        kept = self.memories(profile, status="kept", scopes=scopes)
         if len(kept) <= k:
             return [m.text for m in kept]
         q = fts_query(text)
         ranked = (
             self._q(
-                "select text from memories_fts where memories_fts match ? and profile_id = ? "
-                "order by bm25(memories_fts) limit ?",
-                (q, profile, k),
+                "select m.text from memories_fts f join memories m on m.id = f.id "
+                "where memories_fts match ? and m.profile_id = ? and m.status = 'kept' "
+                "and m.scope in (?, ?) order by bm25(memories_fts) limit ?",
+                (q, profile, *scopes, k),
             )
             if q
             else []
@@ -624,15 +821,19 @@ class Chat:
             self.store.rename(cid, profile, title)
             conv.title = title
 
-        said = _SAID_REMEMBER.match(text)
+        said = said_remember(text)
         if said:
-            mem = self.store.remember(profile, said.group(1), source=cid)
+            fact, here = said
+            scope = f"project:{conv.project}" if here else "profile"
+            mem = self.store.keep(profile, fact, scope=scope, source=cid)
             reply = self.store.add_message(cid, "assistant", f"Kept: {mem.text}", lane=label)
             return Turn(conv, user, reply, kept=[mem])
 
-        # Spoken turns rank notes without the message, so the list (and the prompt) stays put.
+        # Spoken turns (and the stable layout) rank notes without the message, so the list, and
+        # the system prompt it sits in, stays put from turn to turn.
+        steady = spoken or orch.settings.chat.stable_prefix
         notes = [] if remote else self.store.relevant_memories(
-            profile, conv.project, "" if spoken else text
+            profile, conv.project, "" if steady else text
         )  # fmt: skip
         if do:
             run = self._run(text, name, notes, profile, orch, unfiltered, think)
@@ -659,11 +860,15 @@ class Chat:
         answer = done.text
         self.store.record_usage(profile, label, done.prompt_tokens, done.completion_tokens)
         task = next((m.group(1) for m in _RUN.finditer(answer)), "") if can_run else ""
-        facts = [m.group(1) for m in _REMEMBER.finditer(answer)]
+        facts = [(m.group(2), bool(m.group(1))) for m in _REMEMBER.finditer(answer)]
         visible = _CONTROL.sub("", _REMEMBER.sub("", _RUN.sub("", answer))).strip()
         proposed = [
-            self.store.remember(profile, f, status="proposed", source=cid) for f in facts[:3]
-        ]
+            m
+            for f, here in facts[:3]
+            if (m := self.store.propose(
+                profile, f, scope=f"project:{conv.project}" if here else "profile", source=cid,
+            )) is not None
+        ]  # fmt: skip
         extra: list[str] = []
         plan_obj: Plan | None = None
         decided: Run | None = None
@@ -838,18 +1043,17 @@ class Chat:
         think: bool = False,
     ) -> Run:
         orch = orch or self.orch
-        if notes:
-            task += "\n\nNotes from the user (keep to these):\n" + "\n".join(
-                f"- {n}" for n in notes[:6]
-            )
+        # Notes ride beside the task, never inside it: the task text reaches the router,
+        # lessons, traces, teammates' views and (on escalate) Claude. Local coders see them.
         # Hybrid (AUTO): the router picks, checks and the judge review, and deep retries a
         # broken change right away. A model you picked by name answers alone: no retry.
         target, retry = (None, "now") if lane == AUTO else (lane, "off")
         if unfiltered:  # the one model, by name: no router, no retry elsewhere
             target, retry = "coder", "off"
         if self.background:
-            return orch.start_background(task, lane=target, by=profile, retry=retry, think=think)
-        return orch.start(task, lane=target, by=profile, retry=retry, think=think)
+            return orch.start_background(task, lane=target, by=profile, retry=retry,
+                                         think=think, notes=notes)  # fmt: skip
+        return orch.start(task, lane=target, by=profile, retry=retry, think=think, notes=notes)
 
     @staticmethod
     def _run_line(run: Run) -> str:
@@ -885,6 +1089,10 @@ class Chat:
         builds = name == AUTO or cfg.writes_code
         system = (ADVISOR_BUILDS if advisor else CHAT_PROMPT) if builds else ADVISOR_PROMPT
         parts = [system + (SPOKEN if spoken else "")]
+        # The stable layout keeps per-message parts out of the system prompt (see ChatConfig).
+        stable = orch.settings.chat.stable_prefix and not spoken
+        lead: list[str] = []
+        per_message = lead if stable else parts
         if not remote:
             who = self.store.profile(profile).name
             if notes:
@@ -897,18 +1105,22 @@ class Chat:
                 if name == AUTO or cfg.writes_code:
                     parts.append("The repo at a glance:\n" + self.repo_glance(orch))
             else:
-                recalled = self.store.recall(profile, text, exclude=conv.id)
+                recalled = self.store.recall(profile, text, exclude=conv.id, project=conv.project)
                 if recalled:
-                    parts.append("From earlier conversations:\n" + "\n".join(
+                    per_message.append("From earlier conversations:\n" + "\n".join(
                         f"- ({h['title']}) {h['role']}: {clip(h['content'], 80)}" for h in recalled
                     ))  # fmt: skip
             if (name == AUTO or cfg.writes_code) and not spoken:
                 context = build_coder_context(
                     orch.repo, text, budget=self.CONTEXT, home=orch.settings.home
                 )
-                parts.append("The repo, for this message:\n" + context)
+                per_message.append("The repo, for this message:\n" + context)
         sys_text = "\n\n".join(parts)
-        sent = min(tokens(text), self.MESSAGE_MAX)
+        state = self._state_note(conv, cfg, name, remote)
+        if lead:
+            # One bracket, like the state note: Pablo's context, not the user's words.
+            state = "[Pablo, not the user:\n" + "\n\n".join(lead) + "]\n\n" + state
+        sent = min(tokens(text), self.MESSAGE_MAX) + tokens(state)
         room = max(self.HISTORY_MIN, cfg.context_tokens - tokens(sys_text) - sent)
         kept: list[Message] = []
         for msg in reversed(history):
@@ -923,6 +1135,6 @@ class Chat:
             # A pasted log can't overflow the window; the stored message stays whole.
             {
                 "role": "user",
-                "content": self._state_note(conv, cfg, name, remote) + clip(text, self.MESSAGE_MAX),
+                "content": state + clip(text, self.MESSAGE_MAX),
             },
         ]

@@ -27,6 +27,9 @@ gpu:                      # one GPU, many people (src/pablo/gpu.py)
       conflicts: [pablo/deep]
       warmup_s: 90
 
+chat:                     # chat prompt layout (src/pablo/convos.py)
+  stable_prefix: false    # true: per-message context rides on the message so llama.cpp reuses its cache
+
 learn:                    # learning without retraining (src/pablo/lessons.py); recording is always on
   examples: false         # show the coder 1 or 2 right answers from this repo
   failures: false         # warn the coder what broke on similar changes before
