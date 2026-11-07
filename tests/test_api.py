@@ -88,3 +88,29 @@ def test_compare_events_and_hunk_approve_api(settings: Settings, repo: Path) -> 
         == 403
     )
     assert client.get("/api/runs/nope/events").status_code == 404
+
+
+def test_the_inbox_marks_stale_runs_and_discards_them_together(
+    settings: Settings, repo: Path
+) -> None:
+    """Work's queue: old runs and runs a retry replaced fold into Stale; one call clears them."""
+    orch = Orchestrator(settings, demo_backend(), repo=repo, checks={})
+    client = TestClient(create_app(orch), client=("127.0.0.1", 50000))
+    fresh = orch.start("add a demo note", lane="coder", retry="off")
+    old = orch.start("add another demo note", lane="coder", retry="off")
+    old.created_at = "2020-01-01T00:00:00+00:00"
+    orch._save(old)
+    replaced = orch.start("add a third demo note", lane="coder", retry="off")
+    replaced.retry_run = fresh.id
+    orch._save(replaced)
+
+    rows = {r["id"]: r for r in client.get("/api/inbox").json()}
+    assert rows[fresh.id]["stale"] is False and rows[fresh.id]["project"] == repo.name
+    assert rows[old.id]["stale"] and rows[old.id]["stale_reason"].startswith("waiting")
+    assert rows[replaced.id]["stale_reason"] == f"replaced by its retry {fresh.id}"
+    assert "conversation_title" in rows[fresh.id]
+
+    gone = client.post("/api/inbox/discard-stale").json()["discarded"]
+    assert set(gone) == {old.id, replaced.id}
+    assert [r["id"] for r in client.get("/api/inbox").json()] == [fresh.id]
+    assert not (repo / "PABLO_DEMO.md").exists()  # discarding never touches the repo

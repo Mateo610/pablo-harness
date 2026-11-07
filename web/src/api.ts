@@ -80,6 +80,12 @@ export interface Run {
   /** Your conversation that started this run, if any. */
   conversation_id?: string | null;
   conversation_lane?: string | null;
+  conversation_title?: string | null;
+  /** The project (repo folder) the run changes. */
+  project?: string;
+  /** On the inbox only: nobody needs to decide this any more, and why. */
+  stale?: boolean;
+  stale_reason?: string;
   created_at: string;
 }
 
@@ -344,6 +350,7 @@ export const api = {
   planGo: (project = "") =>
     call<Plan>(`/api/plan/go${project ? `?project=${encodeURIComponent(project)}` : ""}`, { method: "POST" }),
   inbox: () => call<Run[]>("/api/inbox"),
+  discardStale: () => call<{ discarded: string[] }>("/api/inbox/discard-stale", { method: "POST" }),
   run: (id: string) => call<Run>(`/api/runs/${id}`),
   start: (task: string, lane?: string, taskId?: string) =>
     call<Run>("/api/runs", {

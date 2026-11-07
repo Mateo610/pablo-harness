@@ -450,14 +450,15 @@ class Store:
         self._q("insert into usage values (?, ?, ?, ?, ?)",
                 (_now(), profile, lane, tokens_in, tokens_out))  # fmt: skip
 
-    def conversation_for_run(self, run_id: str, profile: str) -> tuple[str, str] | None:
-        """(conversation id, lane) of your conversation that started this run, if any."""
+    def conversation_for_run(self, run_id: str, profile: str) -> tuple[str, str, str] | None:
+        """(conversation id, lane, title) of your conversation that started this run, if any."""
         rows = self._q(
-            "select c.id, c.lane from messages m join conversations c on c.id = m.conversation_id "
+            "select c.id, c.lane, c.title from messages m "
+            "join conversations c on c.id = m.conversation_id "
             "where m.run_id = ? and c.profile_id = ? limit 1",
             (run_id, profile),
         )
-        return (rows[0]["id"], rows[0]["lane"]) if rows else None
+        return (rows[0]["id"], rows[0]["lane"], rows[0]["title"]) if rows else None
 
     def usage_since(self, stamp: str) -> list[dict[str, Any]]:
         return [dict(r) for r in self._q("select * from usage where at >= ?", (stamp,))]

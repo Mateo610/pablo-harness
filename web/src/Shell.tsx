@@ -1,9 +1,10 @@
-// Cockpit v2: the rail and the pages. Phones keep the phone view; the Workbench keeps every
-// v1 tool (plan, compare, hunks, replay) until each one has a home in the new pages.
+// Cockpit v2: the rail and the pages. Phones keep the phone view (App). Work is the review
+// desk: every change waiting for a decision.
 import { useEffect, useState } from "react";
 import { setLaneNames } from "./components";
 import { api, type Lane, type Me, type Resources } from "./api";
 import { App } from "./App";
+import { Work } from "./Work";
 import { Agents } from "./Agents";
 import { ChatPage } from "./Chat";
 import { Home } from "./Home";
@@ -87,7 +88,7 @@ export function Shell() {
         {page === "advisor" && <ChatPage key="advisor" mode="advisor" id={route.id} me={me} lanes={lanes} />}
         {page === "voice" && <Voice me={me} />}
         {page === "agents" && <Agents lanes={lanes} res={res} />}
-        {page === "work" && <App />}
+        {page === "work" && <Work me={me} focus={route.id} />}
       </main>
     </div>
   );
