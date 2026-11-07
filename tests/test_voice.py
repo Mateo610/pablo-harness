@@ -122,7 +122,7 @@ def test_the_advisor_speaks_in_its_own_voice_and_keeps_its_conversation(
     first = events(c.post("/api/voice/turn?lane=advisor", content=b"W"))
     cid = first[0]["id"]
     again = events(c.post(f"/api/voice/turn?lane=advisor&conversation={cid}", content=b"W"))
-    assert again[0]["id"] == cid and tts.said[0] == ("Don't. Ship less.", "deep-voice")
+    assert again[0]["id"] == cid and tts.said[0] == ("Don't.", "deep-voice")
     assert c.get(f"/api/conversations/{cid}").json()["conversation"]["lane"] == "advisor"
 
 
@@ -293,3 +293,24 @@ def test_a_voice_server_stopped_elsewhere_reads_as_sleeping(
     status = c.get("/api/voice/status").json()
     assert status["tts"] is False and status["tts_state"] == "paused"  # the page says it wakes
     assert gpu.residents["tts"].state == "paused"
+
+
+def test_the_first_thing_said_is_short() -> None:
+    """Speech costs time per word, so the first piece ends at its first clause or sentence."""
+    text = (
+        "Okay, so the plan has three steps, and the first one reads the sensor. "
+        "Then we add alerts. Want me to start?"
+    )
+    cut = SentenceCutter()
+    out: list[str] = []
+    for i in range(0, len(text), 5):
+        out += cut.feed(text[i : i + 5])
+    out += cut.flush()
+    assert out == [
+        "Okay, so the plan has three steps,",
+        "and the first one reads the sensor.",
+        "Then we add alerts. Want me to start?",
+    ]
+    first = SentenceCutter()
+    assert first.feed("Four. ") == ["Four."]  # a one-word answer goes out at once
+    assert first.feed("Next, a longer one, ") == []  # after that, whole sentences only

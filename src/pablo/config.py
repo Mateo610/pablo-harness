@@ -225,6 +225,9 @@ class GpuConfig(BaseModel):
     idle_s: float = 120.0  # balanced: background work waits this long after the last live call
     residents: list[ResidentConfig] = Field(default_factory=list)
     unload_url: str = ""
+    # llama-swap's unload drops every model, the CPU router too. These are asked for again in
+    # the background right after an unload, so the next chat isn't the one that waits.
+    keep_warm: list[str] = Field(default_factory=list)
     # Where every Pablo process shares its GPU lease table. Empty: the home. An eval runs in a
     # throwaway home but sets this to the real one, so it queues with `pablo serve`.
     shared_dir: str = ""  # llama-swap's unload endpoint: frees an idle model's VRAM for a resident
