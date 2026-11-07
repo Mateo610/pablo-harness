@@ -225,6 +225,9 @@ class GpuConfig(BaseModel):
     idle_s: float = 120.0  # balanced: background work waits this long after the last live call
     residents: list[ResidentConfig] = Field(default_factory=list)
     unload_url: str = ""
+    # llama-swap's unload drops every model, the CPU router too. These are asked for again in
+    # the background right after an unload, so the next chat isn't the one that waits.
+    keep_warm: list[str] = Field(default_factory=list)
     # Where every Pablo process shares its GPU lease table. Empty: the home. An eval runs in a
     # throwaway home but sets this to the real one, so it queues with `pablo serve`.
     shared_dir: str = ""  # llama-swap's unload endpoint: frees an idle model's VRAM for a resident
@@ -238,6 +241,17 @@ class LearnConfig(BaseModel):
     failures: bool = False  # warn the coder what broke on similar changes before
     routing: bool = False  # send a kind of task to deep when deep clearly does better here
     example_tokens: int = 1500
+
+
+class ChatConfig(BaseModel):
+    """How chat prompts are laid out (src/pablo/convos.py)."""
+
+    # True: the system prompt holds only what stays put between turns (instructions and your
+    # notes, newest first), and the per-message parts (recall, the repo for this message, the
+    # plan) ride on your message. llama.cpp then reuses its cache for the system prompt and the
+    # history instead of reading the whole prompt again every turn. Off until a timing on Pablo
+    # shows the first word comes sooner and the chat eval holds.
+    stable_prefix: bool = False
 
 
 class PracticeConfig(BaseModel):
@@ -260,6 +274,7 @@ class Settings(BaseModel):
     learn: LearnConfig = Field(default_factory=LearnConfig)
     practice: PracticeConfig = Field(default_factory=PracticeConfig)
     projects: ProjectsConfig = Field(default_factory=ProjectsConfig)
+    chat: ChatConfig = Field(default_factory=ChatConfig)
     lanes: dict[str, Lane]
     home: Path = Field(default_factory=lambda: default_home())
 

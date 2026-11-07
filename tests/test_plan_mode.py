@@ -10,12 +10,13 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from tests.fakes import FakeBackend
 
 from pablo.api import create_app
 from pablo.config import Settings
 from pablo.convos import CHAT_PROMPT, Chat, show_spec
 from pablo.files import FileStore, safe_name
-from pablo.gateway import FakeBackend, Message
+from pablo.gateway import Message
 from pablo.orchestrator import Orchestrator
 from pablo.plans import PlanBusy, Plans, parse_phases
 from pablo.projects import Workspace

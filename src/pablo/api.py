@@ -10,13 +10,21 @@ import asyncio
 import contextlib
 import json
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlencode
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+    StreamingResponse,
+)
 from pydantic import BaseModel
 
 from pablo import __version__
@@ -50,6 +58,8 @@ from pablo.voice import (
     reachable,
     vocabulary,
 )
+
+STALE_AFTER = timedelta(days=3)  # a run left waiting this long folds into Stale on Work
 
 
 class TaskIn(BaseModel):
@@ -125,6 +135,10 @@ class MemoryIn(BaseModel):
     scope: str = "profile"
 
 
+class NoteEditIn(BaseModel):
+    text: str
+
+
 def asdict_profile(p: Any) -> dict[str, Any]:
     return dict(p.__dict__)
 
@@ -158,6 +172,23 @@ def _token(request: Request) -> str:
     if auth.lower().startswith("bearer "):
         return auth[7:].strip()
     return request.cookies.get(TOKEN_COOKIE, "") or request.query_params.get("token", "")
+
+
+def join_page(title: str, detail: str, go: bool = False) -> str:
+    """The small page an invite link lands on. Plain HTML: the cockpit loads right after."""
+    from html import escape
+
+    refresh = '<meta http-equiv="refresh" content="2;url=/">' if go else ""
+    return (
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        f"<title>Pablo</title>{refresh}"
+        "<style>body{font:16px/1.5 system-ui,sans-serif;max-width:32rem;margin:15vh auto;"
+        "padding:0 1.5rem;color-scheme:light dark}h1{font-size:1.5rem}</style></head><body>"
+        f"<h1>{escape(title, quote=False)}</h1><p>{escape(detail, quote=False)}</p>"
+        + ('<p><a href="/">Open Pablo</a></p>' if go else "")
+        + "</body></html>"
+    )
 
 
 def create_app(
@@ -199,7 +230,12 @@ def create_app(
         headers = {k.lower(): v for k, v in request.headers.items()}
         try:
             caller = await run_in_threadpool(
-                gate.resolve, client, server[0] if server else None, headers, _token(request)
+                gate.resolve,
+                client,
+                server[0] if server else None,
+                headers,
+                _token(request),
+                request.method,
             )
         except Denied as exc:
             if not guarded:
@@ -209,12 +245,38 @@ def create_app(
         request.state.caller = caller
         if caller.profile != OWNER:
             await run_in_threadpool(store.ensure_profile, caller.profile, caller.name, caller.role)
+        token = request.query_params.get("token")
+        if caller.is_owner and token and not guarded and request.method == "GET":
+            # The link `pablo token` prints: sign the browser in, then drop the token from the
+            # address bar so it doesn't sit in history or get shared with the page's URL.
+            rest = [(k, v) for k, v in request.query_params.multi_items() if k != "token"]
+            target = path + (f"?{urlencode(rest)}" if rest else "")
+            redirect = RedirectResponse(target, status_code=303)
+            redirect.set_cookie(TOKEN_COOKIE, token, httponly=True, samesite="strict")
+            return redirect
         response = await call_next(request)
         if caller.is_owner and request.query_params.get("token"):
             # `pablo token` gives a link; the cookie keeps the browser signed in on this box.
             response.set_cookie(TOKEN_COOKIE, request.query_params["token"], httponly=True,
                                 samesite="strict")  # fmt: skip
         return response
+
+    @app.get("/join", response_class=HTMLResponse)
+    async def join(request: Request, code: str = "") -> HTMLResponse:
+        """An invite link: a tailnet peer with a valid code goes on the access list."""
+        client = request.client.host if request.client else None
+        server = request.scope.get("server")
+        headers = {k.lower(): v for k, v in request.headers.items()}
+        try:
+            caller = await run_in_threadpool(
+                gate.join, client, server[0] if server else None, headers, code
+            )
+        except Denied as exc:
+            return HTMLResponse(join_page("Not in yet", str(exc)), status_code=exc.status)
+        if caller.profile != OWNER:
+            await run_in_threadpool(store.ensure_profile, caller.profile, caller.name, caller.role)
+        first = caller.name.split()[0] if caller.name else "there"
+        return HTMLResponse(join_page(f"You're in, {first}.", "Opening Pablo…", go=True))
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
@@ -352,9 +414,18 @@ def create_app(
             run_in_threadpool(reachable, cfg.stt_url), run_in_threadpool(reachable, cfg.tts_url)
         )
         # The voice server may be paused for deep: it wakes on the next turn, so that's ready.
-        state = "running" if tts else (resident.state if resident else "down")
-        if state == "unknown":
+        # Trust the health check over this process's memory: another Pablo process (a CLI deep
+        # run, say) can stop the unit without this one hearing about it.
+        if tts:
+            state = "running"
+        elif resident is None:
+            state = "down"
+        elif resident.state == "starting":
+            state = "starting"
+        else:
             state = "paused"
+            if resident.state == "running":
+                resident.state = "paused"  # so the next turn wakes it, and says so
         return {"enabled": cfg.enabled, "stt": stt, "tts": tts, "voices": cfg.voices,
                 "tts_state": state}  # fmt: skip
 
@@ -507,10 +578,54 @@ def create_app(
         except KeyError as exc:
             raise HTTPException(404, f"no run {run_id}") from exc
 
+    def stale_reasons(waiting: list[Any]) -> dict[str, str]:
+        """Why a waiting run is no longer worth deciding: replaced, superseded, or old."""
+        recent = orch.recent(200)
+        by_id = {r.id: r for r in recent}
+        applied_groups = {r.group for r in recent if r.group and r.state == "approved"}
+        now = datetime.now(UTC)
+        out: dict[str, str] = {}
+        for r in waiting:
+            if r.retry_run and r.retry_run in by_id:
+                out[r.id] = f"replaced by its retry {r.retry_run}"
+            elif r.group and r.group in applied_groups:
+                out[r.id] = "another version of this change was applied"
+            else:
+                try:
+                    age = now - datetime.fromisoformat(r.created_at)
+                except ValueError:
+                    continue
+                if age > STALE_AFTER:
+                    out[r.id] = f"waiting {age.days} days"
+        return out
+
     @app.get("/api/inbox")
     def inbox(request: Request) -> list[dict[str, Any]]:
+        """Runs waiting for a decision, needs-you first. Each says if it has gone stale."""
         items = sorted(orch.inbox(), key=lambda r: (r.state != "needs_you", r.created_at))
-        return [linked(r, request) for r in items]
+        stale = stale_reasons(items)
+        return [
+            {**linked(r, request), "stale": r.id in stale, "stale_reason": stale.get(r.id, "")}
+            for r in items
+        ]
+
+    @app.post("/api/inbox/discard-stale")
+    async def discard_stale(request: Request) -> dict[str, Any]:
+        """Reject every stale waiting run at once. Nothing in any repo changes."""
+        owner_only(request)
+
+        def go() -> dict[str, Any]:
+            stale = stale_reasons(orch.inbox())
+            done = []
+            for run_id in stale:
+                try:
+                    _decide("reject", run_id)
+                    done.append(run_id)
+                except HTTPException:
+                    continue  # decided meanwhile, or its project is gone
+            return {"discarded": done}
+
+        return await run_in_threadpool(go)
 
     @app.get("/api/promotions")
     def promotions() -> dict[str, Any]:
@@ -583,7 +698,9 @@ def create_app(
             raise HTTPException(404, f"no run {run_id}") from exc
 
     @app.post("/api/compare")
-    async def compare(body: CompareIn) -> list[dict[str, Any]]:
+    async def compare(body: CompareIn, request: Request) -> list[dict[str, Any]]:
+        # One task on several lanes holds the GPU for each in turn (deep for minutes).
+        owner_only(request)
         try:
             runs = await run_in_threadpool(
                 orch.compare, body.task, body.lanes, task_id=body.task_id
@@ -701,7 +818,7 @@ def create_app(
         return [j.to_dict() for j in jobs[-50:]]
 
     @app.post("/api/queue")
-    def add_job(body: JobIn) -> dict[str, Any]:
+    def add_job(body: JobIn, request: Request) -> dict[str, Any]:
         try:
             target = ws.orch(body.project)
         except KeyError as exc:
@@ -714,7 +831,9 @@ def create_app(
             if lane.requires_approval:
                 raise HTTPException(403, f"lane '{lane.name}' can't be queued; escalate instead")
         project = "" if target is orch else target.repo.name
-        return queue.add(body.task, body.lane, body.task_id, project=project).to_dict()
+        return queue.add(
+            body.task, body.lane, body.task_id, project=project, by=profile_of(request)
+        ).to_dict()
 
     @app.delete("/api/queue/{job_id}")
     def cancel_job(job_id: str, request: Request) -> dict[str, Any]:
@@ -751,7 +870,9 @@ def create_app(
         """The run, plus the conversation that started it if that conversation is yours."""
         data: dict[str, Any] = run.to_dict()
         hit = store.conversation_for_run(run.id, profile_of(request))
-        data["conversation_id"], data["conversation_lane"] = hit if hit else (None, None)
+        data["conversation_id"], data["conversation_lane"], data["conversation_title"] = (
+            hit if hit else (None, None, None)
+        )
         return data
 
     def _found(fn: Any, *args: Any) -> Any:
@@ -852,7 +973,15 @@ def create_app(
 
     @app.post("/api/memories")
     def add_memory(body: MemoryIn, request: Request) -> dict[str, Any]:
-        return store.remember(profile_of(request), body.text, scope=body.scope).__dict__
+        return store.keep(profile_of(request), body.text, scope=body.scope).__dict__
+
+    @app.patch("/api/memories/{mid}")
+    def edit_memory(mid: str, body: NoteEditIn, request: Request) -> dict[str, Any]:
+        try:
+            mem: Memory = _found(store.edit, mid, profile_of(request), body.text)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return dict(mem.__dict__)
 
     @app.post("/api/memories/{mid}/keep")
     def keep_memory(mid: str, request: Request) -> dict[str, Any]:

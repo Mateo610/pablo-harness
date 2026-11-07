@@ -27,6 +27,12 @@ away. Picking a model by name means that model alone, no retry.
   this repo) is built and off; it needs real outcomes.
 - **[gap]** The router has never been measured on chat messages, only on task text.
 
+- **[observed]** Fixed (2026-11-06, `reliability-fixes`): a retry queued for tonight still ran
+  after you approved the run it retried, and could hand you a second diff for a done task.
+  Approving now cancels it, and the night runner skips any job whose group has an approved run.
+  Night retries keep who started them (and their notes). The queue file takes an flock for every
+  change, so a retry thread, `pablo serve` and the CLI can't drop each other's jobs.
+
 ## Ideas
 
 | Idea | How we'd know |

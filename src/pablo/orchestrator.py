@@ -10,7 +10,8 @@ import json
 import re
 import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from contextlib import suppress
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -47,6 +48,7 @@ from pablo.verify import (
     Verdict,
     _recount_hunks,
     apply_diff,
+    tree_hash,
     verify_diff,
 )
 
@@ -128,9 +130,16 @@ ANSWER_PROMPT = """You are a specialist on a small local team. Answer directly a
 
 
 class PartialChecksFailed(RuntimeError):
-    def __init__(self, verdict: Verdict) -> None:
-        super().__init__(f"checks failed on the hunks you kept: {verdict.summary()}")
+    def __init__(self, verdict: Verdict, what: str = "the hunks you kept") -> None:
+        super().__init__(f"checks failed on {what}: {verdict.summary()}")
         self.verdict = verdict
+
+
+class StaleChecksFailed(PartialChecksFailed):
+    """The repo changed since the diff was checked, and on today's repo the checks fail."""
+
+    def __init__(self, verdict: Verdict) -> None:
+        super().__init__(verdict, "today's repo (it changed since this was checked)")
 
 
 @dataclass
@@ -163,13 +172,22 @@ class Run:
     fix_outcome: str = ""
     project: str = ""  # the project (repo folder name) the run changes
     think: bool = False  # extended thinking: the lane's thinking variant writes it
+    # Written and judged by one no-guardrails model (the Advisor, or an unfiltered project).
+    self_judged: bool = False
     # How a Needs-you run retries: "" the lane's config, "now" (Hybrid: deep tries it right
     # away, at your urgency), "off" (you picked one model: it answers alone).
     retry: str = ""
+    # Memory notes of the profile that started it. Private: shown to local coders in `_work`,
+    # never part of `task` (which reaches Claude on escalate, the router, lessons and traces),
+    # and left out of `to_dict()` so no API answer carries them. Only `_save` writes them.
+    notes: list[str] = field(default_factory=list)
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
 
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+    def to_dict(self, *, private: bool = False) -> dict[str, Any]:
+        data = asdict(self)
+        if not private:
+            data.pop("notes", None)
+        return data
 
 
 def extract_diff(text: str) -> tuple[str, str]:
@@ -241,6 +259,7 @@ class Orchestrator:
             default_mode=settings.gpu.mode,
             residents_cfg=settings.gpu.residents,
             unload_url=settings.gpu.unload_url,
+            keep_warm=settings.gpu.keep_warm,
             shared_dir=Path(settings.gpu.shared_dir) if settings.gpu.shared_dir else None,
         )
         self.backend: ChatBackend = ScheduledBackend(backend, self.gpu, off_gpu_models(settings))
@@ -257,6 +276,9 @@ class Orchestrator:
         self.baselines = Baselines()  # checks on the unedited repo, run once per repo state
         # Run `retry_on` retries in the caller's thread (evals, tests) instead of in the background.
         self.retry_inline = False
+        # One no-guardrails model writes and judges (Workspace sets it for the Advisor and
+        # unfiltered projects); every run this orchestrator starts says so.
+        self.self_judged = False
         self.router = Router(settings, self.backend)
         self.lessons = Lessons(settings.home)
         # Which repo lessons belong to. Evals set the seed's name; one dir per task otherwise.
@@ -264,6 +286,7 @@ class Orchestrator:
         self.traces = TraceStore(settings.traces_dir)
         self.runs: dict[str, Run] = {}
         self._lock = threading.Lock()
+        self._deciding = threading.RLock()
 
     # ---- helpers -------------------------------------------------------------
     def _emit(self, kind: str, run: Run, **data: Any) -> None:
@@ -336,7 +359,12 @@ class Orchestrator:
             self.runs[run.id] = run
         folder = self.settings.home / "runs"
         folder.mkdir(parents=True, exist_ok=True)
-        (folder / f"{run.id}.json").write_text(json.dumps(run.to_dict(), indent=2), "utf-8")
+        # Write a temp file and rename it over: a crash mid-write leaves the old run whole,
+        # never a half file that `recent()` would skip (and the inbox would lose).
+        path = folder / f"{run.id}.json"
+        tmp = path.with_name(f".{run.id}.{threading.get_ident()}.tmp")
+        tmp.write_text(json.dumps(run.to_dict(private=True), indent=2), "utf-8")
+        tmp.replace(path)
 
     def get(self, run_id: str) -> Run:
         with self._lock:
@@ -384,12 +412,13 @@ class Orchestrator:
         by: str = "",
         retry: str = "",
         think: bool = False,
+        notes: Sequence[str] = (),
     ) -> Run:
         return self.finish(
             self.begin(
                 task, lane=lane, task_id=task_id, escalate=escalate,
                 escalated_from=escalated_from, group=group, retried_from=retried_from, by=by,
-                retry=retry, think=think,
+                retry=retry, think=think, notes=notes,
             )
         )  # fmt: skip
 
@@ -401,9 +430,10 @@ class Orchestrator:
         by: str = "",
         retry: str = "",
         think: bool = False,
+        notes: Sequence[str] = (),
     ) -> Run:
         """Route and save the run now; do the work on a thread. Events report its progress."""
-        run = self.begin(task, lane=lane, by=by, retry=retry, think=think)
+        run = self.begin(task, lane=lane, by=by, retry=retry, think=think, notes=notes)
         if self.retry_inline:  # tests and evals: no threads
             return self.finish(run)
         threading.Thread(target=self.finish, args=(run,), name=f"run-{run.id}", daemon=True).start()
@@ -422,8 +452,12 @@ class Orchestrator:
         by: str = "",
         retry: str = "",
         think: bool = False,
+        notes: Sequence[str] = (),
     ) -> Run:
-        """Route the task and save the run as running. `finish` does the work."""
+        """Route the task and save the run as running. `finish` does the work.
+
+        `notes` are the starter's memory notes: they reach local coders only (see `Run.notes`).
+        """
         decision = self.router.route(task, lane=ESCALATION_LANE if escalate else lane)
         reason = decision.reason
         if (
@@ -460,6 +494,8 @@ class Orchestrator:
             project=self.repo.name,
             retry=retry,
             think=think,
+            self_judged=self.self_judged,
+            notes=[n for n in notes if n.strip()] if lane_cfg.kind == "local" else [],
         )
         self._save(run)
         self._emit("route", run, reason=reason, confidence=decision.confidence)
@@ -555,7 +591,7 @@ class Orchestrator:
 
             job = JobQueue(self.settings.home).add(
                 run.task, lane=target, task_id=run.task_id, group=run.group, retried_from=run.id,
-                project=self.repo.name,
+                project=self.repo.name, by=run.by, notes=run.notes,
             )  # fmt: skip
             run.retry_job = job.id
             run.question = f"{run.question} {target.capitalize()} will try it tonight.".strip()
@@ -574,7 +610,7 @@ class Orchestrator:
             with gpu_job(urgency, run.by):  # RETRY waits for a quiet GPU in balanced mode
                 retry = self.start(
                     run.task, lane=target, task_id=run.task_id, group=run.group,
-                    retried_from=run.id, by=run.by,
+                    retried_from=run.id, by=run.by, notes=run.notes,
                 )  # fmt: skip
             run.retry_run = retry.id
             verdict = "is ready for you" if retry.state == "ready" else "needs you too"
@@ -742,11 +778,13 @@ class Orchestrator:
         blocks = lane.edit_format == "blocks"
         system = (CODER_BLOCKS_PROMPT if blocks else CODER_PROMPT) if wants_diff else ANSWER_PROMPT
         learned = self._lessons_for(run.task) if wants_diff and lane.kind == "local" else ""
-        budget = Budget.for_window(lane.context_tokens).shrunk(tokens(learned))
+        noted = notes_section(run.notes) if lane.kind == "local" else ""
+        budget = Budget.for_window(lane.context_tokens).shrunk(tokens(learned) + tokens(noted))
         repo_text = build_coder_context(self.repo, run.task, budget=budget, home=self.settings.home)
+        extra = "".join(f"\n\n{part}" for part in (noted, learned) if part)
         messages: list[Message] = [
             {"role": "system", "content": system},
-            {"role": "user", "content": repo_text + (f"\n\n{learned}" if learned else "")},
+            {"role": "user", "content": repo_text + extra},
         ]
         shown = context_files(self.repo, run.task, budget, home=self.settings.home)
         self._emit("context", run, files=shown, budget_tokens=budget.total)
@@ -901,6 +939,10 @@ class Orchestrator:
         If those checks fail you get PartialChecksFailed; `force` applies it anyway.
         Partial approvals are not training data: the model's output wasn't what you kept.
         """
+        with self._deciding:  # two approvals of one run (a double click, chat + button) apply once
+            return self._approve(run_id, hunks, force=force)
+
+    def _approve(self, run_id: str, hunks: list[str] | None, *, force: bool) -> Run:
         run = self.get(run_id)
         if run.state not in ("ready", "needs_you"):
             raise ValueError(f"run {run_id} is {run.state}")
@@ -924,6 +966,8 @@ class Orchestrator:
                 if not verdict.clean and not force:
                     raise PartialChecksFailed(verdict)
                 run.applied_hunks = [h for h in every if h in keep]
+        if patch and decision == "approved":
+            self._recheck_if_stale(run, force=force)
         if patch:
             ok, err = apply_diff(self.repo, patch)
             if not ok:
@@ -945,7 +989,37 @@ class Orchestrator:
                     )
                 ):
                     self.reject(other.id)
+            self._cancel_night_retries(run.group)
         return run
+
+    def _cancel_night_retries(self, group: str) -> None:
+        """You approved one of the group: a retry still queued for tonight has nothing to do."""
+        from pablo.overnight import JobQueue
+
+        queue = JobQueue(self.settings.home)
+        for job in queue.pending():
+            if job.group == group:
+                with suppress(KeyError, ValueError):  # it started or went meanwhile
+                    queue.cancel(job.id)
+
+    def _recheck_if_stale(self, run: Run, *, force: bool) -> None:
+        """A whole diff was checked against the repo as it was then. If the repo has changed
+        since (another approval, your own edits), check it again before it lands: a diff can
+        still apply cleanly and break what changed. A change that was clean and now isn't
+        stops here unless `force`; one that already failed you accepted as it was."""
+        checked = (run.verdict or {}).get("tree", "")
+        if not checked or checked == tree_hash(self.repo):
+            return
+        verdict = verify_diff(
+            self.repo, run.diff, self.checks, sandbox=self.sandbox, baselines=self.baselines
+        )
+        was_clean = bool((run.verdict or {}).get("clean"))
+        run.verdict = verdict.to_dict()
+        self._emit("evidence", run, summary=verdict.summary(), passed=verdict.passed,
+                   clean=verdict.clean, recheck=True)  # fmt: skip
+        if was_clean and not verdict.clean and not force:
+            self._save(run)
+            raise StaleChecksFailed(verdict)
 
     def reject(self, run_id: str) -> Run:
         run = self.get(run_id)
@@ -978,6 +1052,17 @@ class Orchestrator:
         return self.start(
             original.task, escalate=True, escalated_from=original.id, task_id=original.task_id
         )
+
+
+MAX_NOTES = 6
+
+
+def notes_section(notes: Sequence[str]) -> str:
+    """The starter's memory notes, for a local coder's prompt. Never part of the task text."""
+    kept = [n.strip() for n in notes if n.strip()][:MAX_NOTES]
+    if not kept:
+        return ""
+    return "Notes from the user (keep to these):\n" + "\n".join(f"- {n}" for n in kept)
 
 
 def _better(new: Verdict, old: Verdict) -> bool:

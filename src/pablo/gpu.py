@@ -34,6 +34,7 @@ A lease can't stop a generation that has started; it decides what starts next.
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import itertools
 import json
@@ -202,6 +203,17 @@ def http_post(url: str) -> None:
         httpx.post(url, timeout=30).raise_for_status()
 
 
+def http_warm(unload_url: str, model: str) -> None:
+    """Ask llama-swap for `model` once (one token), so it loads now rather than on a request."""
+    import httpx
+
+    base = unload_url.rsplit("/unload", 1)[0]
+    ask = {"model": model, "messages": [{"role": "user", "content": "hi"}], "max_tokens": 1}
+    # Warming is a courtesy: if it fails, the next real request loads the model anyway.
+    with contextlib.suppress(httpx.HTTPError):
+        httpx.post(f"{base}/v1/chat/completions", json=ask, timeout=180)
+
+
 @dataclass
 class Resident:
     cfg: ResidentConfig
@@ -223,6 +235,8 @@ class GpuScheduler:
     run: Callable[[str], None] = run_command
     up: Callable[[str], bool] = http_up
     unload: Callable[[str], None] = http_post
+    keep_warm: list[str] = field(default_factory=list)
+    warm: Callable[[str, str], None] = http_warm
     sleep: Callable[[float], None] = time.sleep
     # Where the lease table every process shares lives (the real home); None: `home`.
     shared_dir: Path | None = None
@@ -430,6 +444,10 @@ class GpuScheduler:
                     self._resident = None
             if idle_conflict and self.unload_url:
                 self.unload(self.unload_url)
+                for model in self.keep_warm:  # the unload took these too
+                    threading.Thread(
+                        target=self.warm, args=(self.unload_url, model), daemon=True
+                    ).start()
             r.state = "starting"
             self.run(r.cfg.start)
             waited = 0.0

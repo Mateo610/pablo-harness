@@ -19,39 +19,56 @@ run the overnight queue by hand.
 A request that carries them (from `tailscale serve` or `funnel`) is refused with a message.
 **Don't put `tailscale serve` or `funnel` in front of Pablo.** Bind it to its Tailscale IP.
 
-## Set up
+## Invite someone
 
-1. On Pablo, write `~/.pablo/access.yaml`. It lives outside the repo, because logins are personal.
+1. Once: in the Tailscale admin console, Machines → pablo → ⋯ → Share → Copy invite link, with
+   **Reusable link** on. Sharing gives them this one machine and nothing else on your tailnet,
+   and they keep their own tailnet.
+2. `pablo invite --share-link <that link> --note "Sam"`. Later invites reuse the saved link:
+   `pablo invite --note "Alex"`.
+3. Send the message it prints. Their command (`scripts/join.sh` or `scripts/join.ps1`, fetched
+   from GitHub `main`) installs Tailscale if needed, signs them in, opens the share to accept,
+   waits until Pablo answers, then opens `https://pablo.<tailnet>.ts.net:8710/join?code=…`.
+4. That page asks `tailscaled` who they are and, if the code is good, adds that login to
+   `members` in `~/.pablo/access.yaml`. Each code works once, for 7 days (`--days`). Only a hash
+   is stored, in `~/.pablo/invites.json` (0600). `pablo invite --list` shows who used what.
 
-   ```yaml
-   owner: you@github          # your Tailscale login (`tailscale whois <your laptop ip>`)
-   members:
-     - friend@github
-   loopback: auto             # auto: token only when members exist · owner · token
-   ```
+Run `pablo cert` first so the link is HTTPS; without it the browser won't allow the mic.
 
-2. Serve on the Tailscale IP:
-   `pablo serve --host $(tailscale ip -4)`. It still refuses `0.0.0.0`.
-3. Optional, recommended: in your tailnet policy, let teammates reach only the cockpit port, not
-   SSH or anything else on Pablo:
+Once the first teammate joins, the browser on Pablo itself needs the owner token (`pablo token`),
+because `loopback: auto` switches to token mode when `members` is set.
 
-   ```json
-   "hosts": { "pablo": "100.x.y.z" },
-   "grants": [
-     { "src": ["friend@github"], "dst": ["pablo"], "ip": ["tcp:8710"] }
-   ]
-   ```
+To remove someone: delete their line from `members` and revoke their share in the admin console.
 
-   If you tag the Pablo node, its owner becomes `tagged-devices`. Set `owner:` explicitly then.
+## Set up by hand
 
-4. Check it: `pablo whoami --url http://<pablo tailscale ip>:8710` from each device.
+Instead of invites you can write `~/.pablo/access.yaml` yourself:
 
-## Teammates connect
+```yaml
+owner: you@github          # your Tailscale login (`tailscale whois <your laptop ip>`)
+members:
+  - friend@github
+loopback: auto             # auto: token only when members exist · owner · token
+hosts: [pablo]             # other names you open Pablo by, if any (see below)
+```
 
-- Browser: `http://pablo:8710` (MagicDNS) or `http://<pablo tailscale ip>:8710`. The traffic is
-  inside WireGuard.
-- Terminal: install Pablo on their own machine (`uv tool install git+https://github.com/Mateo610/pablo-harness`),
-  then `pablo tui --url http://pablo:8710`.
+Pablo knows you by your address, so `/api` answers only names a browser could have used to
+reach Pablo itself: any IP, `localhost`, this machine's hostname, `*.ts.net`, the name
+`pablo cert` issued, and `hosts`. That stops a web page you have open from pointing its own
+domain at Pablo's IP (DNS rebinding) and acting as you. A request that changes something
+must also come from a page Pablo served. If the MagicDNS short name (`http://pablo:8710`)
+differs from the machine's hostname, list it under `hosts`.
+
+Serve on the Tailscale IP (`pablo serve --host $(tailscale ip -4)`; it refuses `0.0.0.0`).
+Optional, recommended: in your tailnet policy, let teammates reach only the cockpit port:
+
+```json
+"grants": [
+  { "src": ["friend@github"], "dst": ["pablo"], "ip": ["tcp:8710"] }
+]
+```
+
+If you tag the Pablo node, its owner becomes `tagged-devices`. Set `owner:` explicitly then.
 
 **A shell on Pablo is owner-level.** Don't give teammates shell accounts on Pablo. A shell under
 your account can read `~/.pablo` and the repo. With `members` set, another account on the box gets

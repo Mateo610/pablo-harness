@@ -9,7 +9,7 @@ import { Markdown } from "./Markdown";
 
 const WHO = {
   coder: { label: "ORCHESTRATOR", model: "coder · Qwen3.6-35B", color: "#4fe0c0", deep: "#0b5a4c", glow: "#4fe0c08c", blurb: "Breaks what you say into tasks and hands them to lanes." },
-  advisor: { label: "ADVISOR", model: "Mistral 3.2 24B heretic", color: "#b9a3ff", deep: "#3a2a8a", glow: "#b9a3ff8c", blurb: "No guardrails, no code, no handoffs. Talks it through and pushes back." },
+  advisor: { label: "ADVISOR", model: "Mistral 3.2 24B heretic", color: "#b9a3ff", deep: "#3a2a8a", glow: "#b9a3ff8c", blurb: "No guardrails, no handoffs. Pushes back, then builds it alone if you say go." },
 } as const;
 type Who = keyof typeof WHO;
 type Phase = "idle" | "listening" | "thinking" | "speaking";

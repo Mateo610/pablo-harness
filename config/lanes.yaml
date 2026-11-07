@@ -19,6 +19,7 @@ gpu:                      # one GPU, many people (src/pablo/gpu.py)
   # Residents: GPU processes outside llama-swap. The voice server can't share the 3090 with
   # deep, so it's paused before deep loads and woken (after unloading deep) on a voice turn.
   unload_url: http://127.0.0.1:8100/unload   # llama-swap: drop whatever model is loaded
+  keep_warm: [router]       # unload drops the CPU router too: load it again right after
   residents:
     - name: tts
       start: systemctl --user start pablo-tts.service
@@ -26,6 +27,9 @@ gpu:                      # one GPU, many people (src/pablo/gpu.py)
       health: http://127.0.0.1:8880          # any HTTP answer means it is up
       conflicts: [pablo/deep]
       warmup_s: 90
+
+chat:                     # chat prompt layout (src/pablo/convos.py)
+  stable_prefix: false    # true: per-message context rides on the message so llama.cpp reuses its cache
 
 learn:                    # learning without retraining (src/pablo/lessons.py); recording is always on
   examples: false         # show the coder 1 or 2 right answers from this repo

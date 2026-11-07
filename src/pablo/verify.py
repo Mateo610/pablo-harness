@@ -157,6 +157,7 @@ class Verdict:
     error: str = ""
     sandbox: str = "local"
     notes: list[str] = field(default_factory=list)
+    tree: str = ""  # tree_hash of the repo the diff was checked against (approve compares it)
 
     @property
     def passed(self) -> bool:
@@ -374,6 +375,7 @@ def verify_diff(
             "current files; rebuild it (pablo sandbox build) after approving."
         )
     commands = checks if checks is not None else DEFAULT_CHECKS
+    verdict.tree = tree_hash(repo)
     with tempfile.TemporaryDirectory(prefix="pablo-verify-") as tmp:
         scratch = Path(tmp) / "work"
         shutil.copytree(repo, scratch, ignore=IGNORE)

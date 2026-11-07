@@ -14,23 +14,38 @@ from this machine or from a tailnet peer.
 
 The access list lives in `~/.pablo/access.yaml`, not in the repo: logins are personal.
 
+Teammates usually get on it through an invite (`pablo invite`): a one-time code in a link.
+A tailnet peer that opens the link with a valid code is added to `members` under the login
+tailscaled reports, so you never need to know their Tailscale login ahead of time.
+
     owner: you@github            # your Tailscale login
     members: [friend@github]     # teammates: chat, runs, their own memory; no approve
     loopback: auto               # auto · owner · token
+    hosts: [pablo.home.arpa]     # extra names you open Pablo by (IPs, localhost, this
+                                 # machine's hostname and *.ts.net always work)
+
+Names matter because the owner is known by address, not by a password: a web page you have
+open elsewhere could point its own domain at Pablo's IP (DNS rebinding) and then talk to Pablo
+from your laptop, as you. Such a request carries that page's name in `Host`, so `/api` answers
+only names Pablo knows, and a request that changes something must come from a page Pablo
+served (`Origin`).
 """
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import json
 import os
 import secrets
+import socket
 import subprocess
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 import yaml
 from pydantic import BaseModel, Field
@@ -41,6 +56,9 @@ TAILNET_V4 = ipaddress.ip_network("100.64.0.0/10")
 TAILNET_V6 = ipaddress.ip_network("fd7a:115c:a1e0::/48")
 SERVE_HEADERS = ("tailscale-user-login", "tailscale-user-name", "tailscale-funnel-request")
 TOKEN_COOKIE = "pablo_token"
+# The Vite dev server (web/vite.config.ts) proxies /api from these pages.
+DEV_ORIGINS = ("http://localhost:5173", "http://127.0.0.1:5173")
+SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
 
 Whois = Callable[[str], "tuple[str, str] | None"]
 
@@ -49,6 +67,7 @@ class AccessConfig(BaseModel):
     owner: str = ""  # your Tailscale login; empty: whoever owns this machine on the tailnet
     members: list[str] = Field(default_factory=list)
     loopback: Literal["auto", "owner", "token"] = "auto"
+    hosts: list[str] = Field(default_factory=list)  # extra names Pablo answers to
 
     @property
     def local_mode(self) -> Literal["owner", "token"]:
@@ -111,6 +130,73 @@ def tailscale_self_login() -> str:
         return ""
 
 
+def add_member(home: Path, login: str) -> None:
+    """Append a login to `members` in access.yaml, keeping its other settings."""
+    path = home / "access.yaml"
+    data: dict[str, Any] = {}
+    if path.is_file():
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    members = [str(m) for m in data.get("members") or []]
+    if login in members:
+        return
+    data["members"] = [*members, login]
+    home.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+
+def _digest(code: str) -> str:
+    return hashlib.sha256(code.encode("utf-8")).hexdigest()
+
+
+class Invites:
+    """One-time invite codes in `~/.pablo/invites.json` (0600). Only their hashes are kept."""
+
+    def __init__(self, home: Path) -> None:
+        self.path = home / "invites.json"
+
+    def _load(self) -> dict[str, dict[str, Any]]:
+        if not self.path.is_file():
+            return {}
+        data = json.loads(self.path.read_text(encoding="utf-8") or "{}")
+        return data if isinstance(data, dict) else {}
+
+    def _save(self, data: dict[str, dict[str, Any]]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=1)
+
+    def create(self, days: float = 7, note: str = "", now: float | None = None) -> str:
+        """A new code, good once, for `days` days."""
+        at = time.time() if now is None else now
+        code = secrets.token_urlsafe(12)
+        data = self._load()
+        data[_digest(code)] = {
+            "note": note,
+            "created": at,
+            "expires": at + days * 86400,
+            "used_by": "",
+        }
+        self._save(data)
+        return code
+
+    def redeem(self, code: str, login: str, now: float | None = None) -> bool:
+        """Spend a code on `login`. False if it's unknown, expired, or already used."""
+        if not code:
+            return False
+        at = time.time() if now is None else now
+        data = self._load()
+        entry = data.get(_digest(code))
+        if entry is None or entry.get("used_by") or at > float(entry.get("expires", 0)):
+            return False
+        entry["used_by"], entry["used_at"] = login, at
+        self._save(data)
+        return True
+
+    def listing(self) -> list[dict[str, Any]]:
+        return sorted(self._load().values(), key=lambda e: float(e.get("created", 0)))
+
+
 class CachedWhois:
     def __init__(self, lookup: Whois = tailscale_whois, ttl_s: float = 300) -> None:
         self.lookup, self.ttl_s = lookup, ttl_s
@@ -147,6 +233,16 @@ class Denied(Exception):
         self.status = status
 
 
+def host_name(header: str) -> str:
+    """The name in a Host header, without its port: "pablo:8710" → "pablo", "[::1]:80" → "::1"."""
+    header = header.strip().lower()
+    if header.startswith("["):
+        return header[1 : header.find("]")] if "]" in header else header
+    if header.count(":") == 1:
+        return header.split(":", 1)[0]
+    return header
+
+
 def _ip(host: str | None) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
     try:
         return ipaddress.ip_address(host or "")
@@ -178,14 +274,54 @@ class Access:
     def token(self) -> str:
         return owner_token(self.home)
 
+    def names(self) -> set[str]:
+        """Names Pablo answers to, besides any IP address."""
+        found = {"localhost", socket.gethostname().lower()}
+        cert = self.home / "tls" / "name"  # `pablo cert` writes the name it was issued for
+        if cert.is_file():
+            found.add(cert.read_text(encoding="utf-8").strip().lower())
+        found.update(h.strip().lower() for h in self.config.hosts)
+        return {n for n in found if n}
+
+    def host_ok(self, header: str) -> bool:
+        """Is this a name a browser could only have used to reach Pablo itself? An IP literal
+        can't be rebound; a name must be one of `names()` or a Tailscale MagicDNS name."""
+        name = host_name(header)
+        if not name:
+            return False
+        if _ip(name) is not None:
+            return True
+        return name in self.names() or name.endswith(".ts.net")
+
+    def origin_ok(self, origin: str) -> bool:
+        if origin in DEV_ORIGINS:
+            return True
+        parts = urlsplit(origin)
+        return parts.scheme in ("http", "https") and self.host_ok(parts.netloc)
+
     def resolve(
         self,
         client: str | None,
         server: str | None,
         headers: dict[str, str],
         token: str = "",
+        method: str = "GET",
     ) -> Caller:
-        """Identify one request or raise Denied. `headers` keys are lower-case."""
+        """Identify one request or raise Denied. `headers` keys are lower-case.
+
+        A `host` header must name Pablo (see `host_ok`), and a request that changes something
+        and says where it came from (`origin`) must come from a page Pablo serves.
+        """
+        host = headers.get("host")
+        if host is not None and not self.host_ok(host):
+            raise Denied(
+                403,
+                f"Pablo doesn't answer to the name {host_name(host)!r}. Open it by its IP or "
+                "Tailscale name, or add the name to hosts in ~/.pablo/access.yaml.",
+            )
+        origin = headers.get("origin")
+        if method.upper() not in SAFE_METHODS and origin is not None and not self.origin_ok(origin):
+            raise Denied(403, f"Pablo only takes changes from its own pages, not {origin}")
         if any(h in headers for h in SERVE_HEADERS):
             raise Denied(
                 403,
@@ -212,3 +348,30 @@ class Access:
                 return Caller(login, "member", name, login, "tailnet")
             raise Denied(403, f"{login} isn't on Pablo's access list (~/.pablo/access.yaml)")
         raise Denied(403, "Pablo only answers this machine and your tailnet")
+
+    def join(
+        self,
+        client: str | None,
+        server: str | None,
+        headers: dict[str, str],
+        code: str,
+    ) -> Caller:
+        """Let a tailnet peer in with an invite code; anyone already allowed just passes."""
+        try:
+            return self.resolve(client, server, headers)
+        except Denied as denied:
+            ip = _ip(client)
+            if ip is None or not (ip in TAILNET_V4 or ip in TAILNET_V6):
+                raise
+            found = self.whois(str(ip))
+            if found is None or denied.status != 403:
+                raise
+            login, name = found
+            if not Invites(self.home).redeem(code, login):
+                raise Denied(
+                    403, "This invite link was already used or has expired. Ask for a new one."
+                ) from denied
+            add_member(self.home, login)
+            if login not in self.config.members:
+                self.config.members.append(login)
+            return Caller(login, "member", name, login, "tailnet")

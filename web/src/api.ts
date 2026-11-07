@@ -67,6 +67,8 @@ export interface Run {
   /** This run retries that one on another local lane (coder → deep). */
   retried_from?: string | null;
   think?: boolean;
+  /** Written and judged by the no-guardrails model alone (the Advisor, or an unfiltered project). */
+  self_judged?: boolean;
   /** The retry started for this run, or the overnight job that will run it. */
   retry_run?: string | null;
   retry_job?: string | null;
@@ -78,6 +80,12 @@ export interface Run {
   /** Your conversation that started this run, if any. */
   conversation_id?: string | null;
   conversation_lane?: string | null;
+  conversation_title?: string | null;
+  /** The project (repo folder) the run changes. */
+  project?: string;
+  /** On the inbox only: nobody needs to decide this any more, and why. */
+  stale?: boolean;
+  stale_reason?: string;
   created_at: string;
 }
 
@@ -395,6 +403,7 @@ export const api = {
   planDiscard: (project: string, conversation: string) =>
     call<{ discarded: boolean }>(`/api/plan${planQuery(project, conversation)}`, { method: "DELETE" }),
   inbox: () => call<Run[]>("/api/inbox"),
+  discardStale: () => call<{ discarded: string[] }>("/api/inbox/discard-stale", { method: "POST" }),
   /** The run as text to copy or send to chat, and the plan step it belongs to (if any). */
   runDetails: (id: string) =>
     call<{ text: string; plan: { conversation: string; step: string; status: string; goal: string } | null }>(`/api/runs/${id}/details`),

@@ -49,6 +49,23 @@ every chat's plan and warns when two live plans share files.
 - **[measured]** Plan mode again at `b48581d`: accepted 4/5 (`build-units`, `build-todo`,
   `build-ratelimit`, `build-mdtoc`), planned 5/5, finished 4/5, mean 2.8 steps, 3 steps
   rejected, 7 unsure, wall 5801 s. `build-csvstats` finished and failed. No project errored.
+- **[observed]** Memory review (2026-11-06, branch `memory-fixes`) found and fixed, each with a
+  test in `tests/test_convos.py`:
+  - notes were appended to the run's *task*, so escalating sent them to Claude, and teammates
+    (`/api/runs`), lessons, routing and traces all saw them. They now ride in `Run.notes`, reach
+    local coders only, and stay out of every API answer;
+  - past 12 kept notes, ranking ignored scope (another project's notes came back), and recall
+    searched every project;
+  - chat could only save profile notes: now `remember for this project: …` and
+    `REMEMBER (project): …`;
+  - any message starting "remember that…" became a note without reaching the model (questions
+    included);
+  - a note and its search row were separate commits; now one transaction, a self-check on open,
+    and `pablo memory reindex`;
+  - the same note could be suggested every turn and kept twice. Now a match (same words, or 80%
+    of them) is never added again, a suggestion you rejected isn't made again, suggestions left
+    14 days are set aside, and notes can be edited (`PATCH /api/memories/{id}`,
+    `pablo memory edit`).
 
 ## Weaknesses
 
@@ -66,6 +83,14 @@ every chat's plan and warns when two live plans share files.
   can't see the diff, so you approve on trust in the checks and judge.
 - **[measured]** Voice first word on Pablo, 2026-11-07, coder and the voice server already up. Five orchestrator turns: 4.58, 4.69, 4.37, 4.10, 4.80 s (median 4.58, worst 4.80). Five advisor turns: 11.19, 7.15, 8.47, 5.76, 5.83 s (median 7.15, worst 11.19). The 2.5 s target is missed. On a warm orchestrator turn, speech-to-text is ~1.96 s and the first token ~0.30 s after that; speaking the one-word reply takes about 2 s more. Wake after a deep run, not part of the warm time: 22.9 s from the transcript to the first audio. The Voice page showed "waking the voice…".
 - **[gap]** The phone layout is the old cockpit.
+- **[suspected]** Typed chat put per-message parts (ranked notes, recall, repo context) in the
+  system prompt, so llama.cpp re-read the whole prompt every turn. `chat.stable_prefix` moves them
+  onto your message; off until timed.
+- **[suspected]** Recall used to match any shared word and include the model's own replies. Now:
+  your messages only, two shared words, halved every 30 days. The thresholds are guesses; no
+  recall test measures them yet.
+- **[gap]** Long chats drop old turns with no summary. A note that replaces another (`supersedes`)
+  isn't modelled: edit the old note instead. The cockpit has no edit button yet (API and CLI do).
 - **[gap]** Plan mode's prompts (`src/pablo/prompts/plan_minor.md`, `plan_major.md`) have only met
   scripted replies (`tests/test_plan_mode.py`). Nobody has seen whether Qwen asks one question at
   a time, stops asking, writes a well-formed `SPEC:` block, or writes `PHASE:` lines. The chat
@@ -84,6 +109,9 @@ every chat's plan and warns when two live plans share files.
 | Spoken summaries of a diff in one sentence ("adds a threshold function and two tests") from the judge's summary | you approve by voice without opening the screen (observed) |
 | Ask "apply it?" back when consent words are mixed with changes ("yes, but…") | fewer wrong applies (observed) |
 | Log first-word latency on each turn and show it | p50/p95 on Agents; the 2026-11-07 sample is median 4.6 s, worst 4.8 s on the orchestrator |
+| `chat.stable_prefix: true` | first-token latency on turn 2+ drops on Pablo; the chat set holds |
+| A recall test: 20 questions with the earlier message they should find | hit rate and wrong hits, before tuning the two-word floor or the half-life |
+| A rolling summary of the turns a long chat drops | a planning chat still knows its first decisions on turn 40 (observed) |
 | A Plan-mode set for `pablo eval-chat`: does Minor ask ≤ 2 questions, does Major ask one at a time and end in a spec, then phases | questions per reply, turns to a spec, well-formed `PHASE:` lines (measured) |
 
 ## Open questions

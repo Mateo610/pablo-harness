@@ -208,3 +208,48 @@ def test_a_question_starts_nothing_even_if_the_model_offers_work(
     turn = chat.say(conv.id, "Do we have tests for by_payee?")
     assert turn.run is None and "Nothing started" in turn.reply.content
     assert "RUN:" not in turn.reply.content
+
+
+def test_the_advisor_plans_and_builds_alone_in_a_standard_project(
+    settings: Settings, repo: Path
+) -> None:
+    """The Advisor tab: its plan's steps are written and judged by the advisor, nothing else."""
+    marker = "RUN: <a complete task"  # in both chat prompts, never in a coder or judge prompt
+
+    def advisor(model: str, msgs: Sequence[Message]) -> str:
+        last = msgs[-1]["content"]
+        if marker in msgs[0]["content"]:
+            assert msgs[0]["content"].startswith("You are the advisor")
+            return chat_reply(last.split("]\n\n")[-1].lower())
+        if "certainty" in msgs[0]["content"].lower():
+            return JUDGE
+        name = re.search(r"create (\w+)\.py", last)
+        fn = name.group(1) if name else "x"
+        return (f"Done.\n\n{fn}.py\n<<<<<<< SEARCH\n=======\n"
+                f"def {fn}(name):\n    return 'hi ' + name\n>>>>>>> REPLACE\n")  # fmt: skip
+
+    model = settings.lanes["advisor"].model
+    fake = FakeBackend(scripts={model: advisor})
+    orch = Orchestrator(settings, fake, repo=repo, checks=CHECKS)
+    orch.retry_inline = True
+    ws = Workspace(orch)
+    plans = Plans(ws, background=False)
+    chat = Chat(orch, workspace=ws, plans=plans)
+
+    conv = chat.start(lane="advisor")
+    drafted = chat.say(conv.id, "let's plan a greeter")
+    assert drafted.plan and drafted.plan["lane"] == "advisor"
+    assert drafted.reply.lane == "advisor"  # filed under the Advisor, not Hybrid
+    chat.say(conv.id, "go")
+    plan = plans.get(conversation=conv.id)  # one plan per chat since C14
+    assert plan and Plans.steps(plan)[0].status == "needs_you"
+    run_id = Plans.steps(plan)[0].run or ""
+    run = ws.for_run(run_id).get(run_id)
+    assert run.self_judged and run.model == model and run.retry == "off"
+    assert {m for m, _ in fake.calls} == {model}  # chat, code and judge: one model
+    with pytest.raises(KeyError):
+        ws.for_run(run_id).escalate(run_id)  # no Claude on the Advisor's side
+
+    chat.say(conv.id, "apply it")
+    assert (repo / "greet.py").is_file()
+    assert ws.orch().self_judged is False  # Hybrid in the same project is untouched

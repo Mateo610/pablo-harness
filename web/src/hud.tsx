@@ -281,8 +281,8 @@ export function RunCard({ id, me, initial }: { id: string; me: Me | null; initia
         <span style={{ fontSize: 11, letterSpacing: ".24em", fontWeight: 700, color: STATE_COLOR[run.state] }}>
           {stateLabel(run).toUpperCase()}
         </span>
-        <span className="h-mono" style={{ fontSize: 12, color: laneColor(run.lane) }}>
-          {laneName(run.lane)}
+        <span className="h-mono" style={{ fontSize: 12, color: laneColor(run.self_judged ? "advisor" : run.lane) }}>
+          {run.self_judged ? `${laneName("advisor")} · self-judged` : laneName(run.lane)}
           {run.think ? " · extended thinking" : ""}
         </span>
         {run.retried_from && <span className="h-mono h-faint" style={{ fontSize: 12 }}>retry of {run.retried_from}</span>}
@@ -350,8 +350,8 @@ export function RunCard({ id, me, initial }: { id: string; me: Me | null; initia
             REJECT
           </button>
         )}
-        <a className="h-btn" href={`#/work`} title="Hunk-by-hunk review, replay, and compare live in Work">
-          REVIEW HUNKS
+        <a className="h-btn" href={`#/work/${run.id}`} title="Open this run in Work: its history, every hunk, and your decision">
+          OPEN IN WORK
         </a>
       </div>
       {(stuck || run.state === "ready") && mineToFix && (
