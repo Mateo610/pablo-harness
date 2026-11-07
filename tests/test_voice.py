@@ -267,3 +267,29 @@ def test_a_finished_run_is_said_out_loud(settings: Settings, repo: Path) -> None
     assert news_line(R()).endswith("needs you. The checks got worse")
     assert "waiting for the owner" in news_line(type("X", (R,), {"state": "ready"})(),
                                                 can_apply=False)  # fmt: skip
+
+
+def test_a_voice_server_stopped_elsewhere_reads_as_sleeping(
+    settings: Settings, repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A CLI deep run stops the TTS unit; a long-running serve must not keep saying running."""
+    import pablo.api
+    from pablo.config import ResidentConfig
+    from pablo.gpu import GpuScheduler
+
+    tts_cfg = ResidentConfig(name="tts", start="start", stop="stop",
+                             health="http://127.0.0.1:8880", conflicts=["pablo/deep"])  # fmt: skip
+    gpu = GpuScheduler(settings.home, residents_cfg=[tts_cfg], run=lambda c: None,
+                       up=lambda url: False, sleep=lambda s: None)  # fmt: skip
+    gpu.residents["tts"].state = "running"  # what this process last saw
+    settings.voice.stt_url, settings.voice.tts_url = (
+        "http://127.0.0.1:8090",
+        "http://127.0.0.1:8880",
+    )
+    stt_url = settings.voice.stt_url
+    monkeypatch.setattr(pablo.api, "reachable", lambda url: url == stt_url)
+    orch = Orchestrator(settings, FakeBackend(), repo=repo, checks=CHECKS, gpu=gpu)
+    c = TestClient(create_app(orch), client=("127.0.0.1", 5000))
+    status = c.get("/api/voice/status").json()
+    assert status["tts"] is False and status["tts_state"] == "paused"  # the page says it wakes
+    assert gpu.residents["tts"].state == "paused"
