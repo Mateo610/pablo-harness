@@ -34,14 +34,23 @@ finishes.
 - **[measured]** Plan mode on 5 empty projects at `90319fc`: accepted 1/5, mean 3.8 steps, wall
   1059 s, nothing rejected. At `bc535d9`: accepted 2/5 (`build-units`, `build-ratelimit`),
   planned 5/5, finished 4/5, mean 3.4 steps, 4 steps rejected, wall 3873 s. No project errored.
+- **[measured]** Spoken only, same 22 messages, at `b48581d`: 22/22, talk 8/8, run 8/8, plan
+  6/6. Confusion (wanted → talk / run / plan): talk 8/0/0, run 0/8/0, plan 0/0/6. Wall 25 s.
+  Against `bc535d9` spoken (18/22, talk 6/8, plan 4/6), the two talk misses and the two
+  plans that became a single run are gone. Typed stays the `bc535d9` measurement.
+- **[measured]** Plan mode again at `b48581d`: accepted 4/5 (`build-units`, `build-todo`,
+  `build-ratelimit`, `build-mdtoc`), planned 5/5, finished 4/5, mean 2.8 steps, 3 steps
+  rejected, 7 unsure, wall 5801 s. `build-csvstats` finished and failed. No project errored.
 
 ## Weaknesses
 
-- **[measured]** A finished plan still usually fails its acceptance test: 2 of 5 at `bc535d9`,
-  up from 1 of 5 at `90319fc`. `build-csvstats` stopped after two rejected steps.
-- **[measured]** A question still starts a run 2 times out of 8, typed and spoken (`bc535d9`).
-  That was 4 of 8 typed and 6 of 8 spoken at `2563ea6`. Spoken turns 2 of 6 plan requests into
-  one run.
+- **[measured]** Acceptance is 4 of 5 at `b48581d`, from 2 of 5 at `bc535d9` and 1 of 5 at
+  `90319fc`. `build-csvstats` finished (3 steps, each approved, each unsure) and failed: the
+  acceptance test could not import `csvstats`. `build-units` passed and was not marked finished
+  (2 of its steps rejected).
+- **[measured]** Spoken questions stay talk, and spoken plans stay plans, at `b48581d` (talk
+  8/8, plan 6/6). At `bc535d9` spoken talk was 6/8 and 2 of 6 plans became a single run. Typed
+  stays `bc535d9`: 20/22, and 2 of 8 questions started a run.
 - **[suspected]** Consent is a word list (`apply`, `yes`, `looks good`, …). "Yes, but change the
   name first" counts as yes. Safe enough while only you can apply, and the model must also write
   `APPLY:`, but crude.
@@ -54,7 +63,7 @@ finishes.
 
 | Idea | How we'd know |
 |---|---|
-| Keep a question as talk, and a spoken plan as a plan, on this same 22-message set | typed and spoken talk above 6/8, spoken plan back to 6/6, without losing run 8/8 |
+| Typed questions stay talk on this same 22-message set, and `build-csvstats` passes acceptance | typed talk 8/8 without losing run 8/8 (spoken is already 22/22 at `b48581d`); `build-csvstats` accepted |
 | Spoken summaries of a diff in one sentence ("adds a threshold function and two tests") from the judge's summary | you approve by voice without opening the screen (observed) |
 | Ask "apply it?" back when consent words are mixed with changes ("yes, but…") | fewer wrong applies (observed) |
 | Time first-word latency per turn and log it | p50/p95 on Agents |

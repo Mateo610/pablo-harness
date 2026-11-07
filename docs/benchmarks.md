@@ -2696,3 +2696,25 @@ Accepted 2/5 · planned 5 (asked twice 1) · finished 4 · mean steps 3.4 · wal
 | build-csvstats | yes | 3 | 1 (1 unsure) | 2 | no | fail | 1124 s |
 | build-ratelimit | yes | 4 | 3 (1 unsure) | 0 | yes | **pass** | 489 s |
 | build-mdtoc | yes | 4 | 1 (0 unsure) | 0 | yes | fail | 22 s |
+
+### Build set · auto · `b48581d`
+
+Accepted 4/5 · planned 5 (asked twice 0) · finished 4 · mean steps 2.8 · wall 5800.8 s
+
+| Project | Planned | Steps | Approved | Rejected | Finished | Acceptance | Wall |
+|---|---|---|---|---|---|---|---|
+| build-units | yes | 3 | 2 (1 unsure) | 2 | no | **pass** | 2930 s |
+| build-todo | yes | 3 | 3 (1 unsure) | 0 | yes | **pass** | 279 s |
+| build-csvstats | yes | 3 | 3 (3 unsure) | 0 | yes | fail | 68 s |
+| build-ratelimit | yes | 2 | 2 (0 unsure) | 0 | yes | **pass** | 41 s |
+| build-mdtoc | yes | 3 | 3 (2 unsure) | 1 | yes | **pass** | 2483 s |
+
+### Chat behavior · auto · spoken · `b48581d`
+
+Right 22/22 (100%) · by label {'talk': 1.0, 'run': 1.0, 'plan': 1.0}
+
+| wanted \ chose | talk | run | plan |
+|---|---|---|---|
+| talk | 8 | 0 | 0 |
+| run | 0 | 8 | 0 |
+| plan | 0 | 0 | 6 |

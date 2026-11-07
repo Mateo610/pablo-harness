@@ -30,8 +30,9 @@ flaky and never-passed tasks. `eval-judge` scores judges on replayed real diffs.
   over time we risk tuning to them (rule 7 forbids prompts tuned on hidden tests, but choosing
   ideas from suite failures is a softer version of the same thing).
 - **[measured]** Chat behavior at `2563ea6`: Hybrid typed 14/22, spoken 16/22. At `bc535d9`:
-  typed 20/22, spoken 18/22 (tables in conversation.md). First spoken word, and whether
-  "apply it" lands, are still unmeasured.
+  typed 20/22, spoken 18/22. Spoken again at `b48581d`: 22/22 (typed left at `bc535d9`).
+  Tables in conversation.md. First spoken word, and whether "apply it" lands, are still
+  unmeasured.
 - **[observed]** A run takes 25–45 minutes (hours for Best alone), so one evening buys one
   comparison.
 
@@ -41,7 +42,10 @@ flaky and never-passed tasks. `eval-judge` scores judges on replayed real diffs.
 - **[measured]** `pablo eval-build` at `90319fc`: accepted 1/5, planned 5/5, finished 5/5,
   mean steps 3.8, wall 1059 s. No project errored. At `bc535d9`: accepted 2/5, planned 5/5
   (asked twice 1), finished 4/5, mean steps 3.4, rejected 4, wall 3873 s. `build-units` flipped
-  from fail to pass. `build-ratelimit` passed again. No project errored.
+  from fail to pass. `build-ratelimit` passed again. No project errored. At `b48581d`:
+  accepted 4/5, planned 5/5 (asked twice 0), finished 4/5, mean steps 2.8, rejected 3,
+  unsure 7, wall 5801 s. `build-todo` and `build-mdtoc` flipped to pass. `build-csvstats`
+  finished and failed. No project errored.
 
   | Project | Planned | Steps | Approved | Rejected | Finished | Acceptance | Wall |
   |---|---|---|---|---|---|---|---|
@@ -60,9 +64,20 @@ flaky and never-passed tasks. `eval-judge` scores judges on replayed real diffs.
   | build-csvstats | yes | 3 | 1 (1 unsure) | 2 | no | fail | 1124 s |
   | build-ratelimit | yes | 4 | 3 (1 unsure) | 0 | yes | pass | 489 s |
   | build-mdtoc | yes | 4 | 1 (0 unsure) | 0 | yes | fail | 22 s |
+
+  Same five at `b48581d`:
+
+  | Project | Planned | Steps | Approved | Rejected | Finished | Acceptance | Wall |
+  |---|---|---|---|---|---|---|---|
+  | build-units | yes | 3 | 2 (1 unsure) | 2 | no | pass | 2930 s |
+  | build-todo | yes | 3 | 3 (1 unsure) | 0 | yes | pass | 279 s |
+  | build-csvstats | yes | 3 | 3 (3 unsure) | 0 | yes | fail | 68 s |
+  | build-ratelimit | yes | 2 | 2 (0 unsure) | 0 | yes | pass | 41 s |
+  | build-mdtoc | yes | 3 | 3 (2 unsure) | 1 | yes | pass | 2483 s |
 - **[measured]** `pablo eval-chat` at `2563ea6`: typed 14/22 (talk 3/8, run 5/8, plan 6/6),
   spoken 16/22 (talk 2/8, run 8/8, plan 6/6). At `bc535d9`: typed 20/22 (talk 6/8, run 8/8,
-  plan 6/6), spoken 18/22 (talk 6/8, run 8/8, plan 4/6).
+  plan 6/6), spoken 18/22 (talk 6/8, run 8/8, plan 4/6). Spoken again at `b48581d`: 22/22
+  (talk 8/8, run 8/8, plan 6/6). Typed was left at `bc535d9`.
 - **[gap]** `pablo eval --lane claude --allow-remote`: Claude on the main suite, for scale. On hold
   until there is an API key.
 

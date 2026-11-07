@@ -20,12 +20,12 @@ records raw numbers; this folder says what they add up to, area by area.
 Tags: **[measured]** a number says so · **[observed]** seen in use, not counted ·
 **[suspected]** reasoning only · **[gap]** not built yet.
 
-## Scorecard (2026-11-06)
+## Scorecard (2026-11-07)
 
 | Area | Health | Biggest weakness | Next step |
 |---|---|---|---|
 | [Models](models.md) | measured on our suite; thinking timed in Chat | the `--think` suite, and Q4 vs Q5, are still open | `pablo eval --cascade --think` on a free night |
-| [Evals](evals.md) | chat and build measured twice | plan mode accepts 2 of 5 small tools | first runs of holdout and Claude (M7e) |
+| [Evals](evals.md) | build accepts 4 of 5; spoken chat 22/22 | csvstats finishes and fails acceptance | first runs of holdout and Claude (M7e) |
 | [Context](context.md) | measured, mixed | the coder sees ~10.5k tokens; the repo map didn't beat the spread | measure what the misses were missing |
 | [Editing](editing.md) | strong | fix-on-red never cleared the noise floor | per-task view of what fix rounds change |
 | [Verification](verification.md) | strong core, blind spot | checks pass when the coder writes a test that agrees with its own bug | spec checks with assertion-only failures, measured off-suite |
@@ -33,7 +33,7 @@ Tags: **[measured]** a number says so · **[observed]** seen in use, not counted
 | [Routing and Hybrid](routing.md) | measured | the cascade's quality comes from deep, and deep is slow | learned routing on real outcomes |
 | [Learning](learning.md) | built, unmeasured | LoRA window of 256 tokens can't hold a real example | measure lessons (examples, failures) on the suite |
 | [GPU](gpu.md) | built, lightly tested | no latency numbers under contention; voice wake cost unknown | the evening checklist, then timings |
-| [Chat, voice, plans](conversation.md) | chat and plans measured twice | a question still starts a run 2/8; a finished tool fails acceptance 3/5 | holdout, then another prompt pass on the 22 messages |
+| [Chat, voice, plans](conversation.md) | spoken 22/22; plans accept 4 of 5 | typed talk is still 6/8 from `bc535d9`; csvstats fails acceptance | holdout, then typed chat on the 22 messages |
 | [Projects](projects.md) | built, untested | unfiltered projects run on a model never measured as a coder | eval the advisor model as a coder |
 
 ## The pattern so far
