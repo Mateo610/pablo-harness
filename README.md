@@ -1,63 +1,107 @@
 # Pablo
 
-**A private cockpit for a team of local AI models.**
+**A private AI coding assistant that runs on one box we own.**
 
-Pablo routes each coding task to the model that's best at it, runs every diff through real checks in a
-scratch copy, has a judge model score how sure it is, and puts the result in front of you with the
-evidence beside it. You stay the merge button. Everything runs on one box you own; Claude is an
-escalation lane you call on purpose, and its outputs are never used for training.
+You ask in chat or by voice. Pablo picks a local model, makes the change in a scratch copy, runs
+the tests and type checks in a sealed container, and has a judge model score how sure it is.
+Nothing lands in your repo until you approve it. No cloud, no telemetry; Claude is only an
+escalation you choose on purpose.
 
 ```
- you ── cockpit (web · terminal · phone) ── harness API ── router ─┬─ coder   (Qwen3.6 35B-A3B)
-                                                │                  ├─ deep    (gpt-oss-120b, overnight)
-                                                │                  ├─ media   (image · 3D · video)
-                                                │                  └─ claude  (escalate only)
-                                                ├─ verifier: diff → no-network container → tests, types
-                                                ├─ judge: certainty ≥ 0.75 → ready, else "needs you"
-                                                └─ traces → approved only → LoRA → eval gate
+you ── chat · voice · terminal ── Pablo ── router (Qwen3.5 4B) ─┬─ Base           Qwen3.6 35B-A3B
+                                    │                           ├─ Best           gpt-oss-120b
+                                    │                           └─ No guardrails  Mistral Small 3.2 24B
+                                    ├─ checks: diff → no-network container → tests, types
+                                    └─ judge (Qwen3.8 27B): sure → ready · unsure → needs you
 ```
 
-## Status
-Early. The harness core, API, CLI, web cockpit, terminal client, and phone app work today with scripted models (`--fake`).
-Real models arrive milestone by milestone: see [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md).
+## How it does
 
-## Try it (no GPU needed)
+Measured on our own hardware (one RTX 3090). Our eval sets, not public benchmarks:
+[docs/review](docs/review/README.md) has the details and the weak spots.
+
+| | Result |
+|---|---|
+| 36 coding tasks, scored by hidden tests: Base | **86%** ± 3 (3 runs) |
+| Same tasks, Hybrid (router picks, judge, retry) | **89%** ± 7 (3 runs) |
+| Same tasks, Best alone | **94%** (1 run, ~3.5 h) |
+| Chat does the right thing (answer, change, or plan) on 22 messages | **20/22** typed, **18/22** spoken |
+| Small tools built from an empty project in plan mode | **2/5** pass their acceptance test |
+| Base speed | ~120 tokens/s, first word in 2–5 s |
+
+## Use it (teammates)
+
+You need to be on our tailnet. Matt adds your Tailscale login to Pablo's access list.
+
+- **Browser:** open `http://pablo:8710`
+- **Terminal:**
+  ```bash
+  uv tool install git+https://github.com/Mateo610/pablo-harness
+  pablo whoami --url http://pablo:8710   # should print your login
+  pablo tui --url http://pablo:8710
+  ```
+
+You get your own conversations and memory, and you see the team's runs. Only the owner applies
+changes. More in [docs/teammates.md](docs/teammates.md).
+
+## Try it locally (no GPU)
+
+Scripted fake models, so you can see the flow on any machine:
+
 ```bash
 git clone https://github.com/Mateo610/pablo-harness && cd pablo-harness
 uv sync
-cd web && npm install && npm run build && cd ..
+(cd web && npm install && npm run build)
 
-mkdir -p /tmp/hello && git -C /tmp/hello init && uv run pablo init -C /tmp/hello
-uv run pablo serve --fake -C /tmp/hello      # open http://127.0.0.1:8710
+mkdir -p ~/projects/hello && git -C ~/projects/hello init
+uv run pablo init -C ~/projects/hello
+uv run pablo serve --fake -C ~/projects/hello    # open http://127.0.0.1:8710
 ```
-Or from the terminal: `uv run pablo run "add a demo note" --fake -C /tmp/hello`, then
-`pablo approve <run-id>`.
 
-## Commands
+Or stay in the terminal:
+
+```bash
+uv run pablo run "add a demo note" --fake -C ~/projects/hello
+uv run pablo approve <run-id>
+```
+
+## Everyday commands
+
 | | |
 |---|---|
-| `pablo init` | create `.pablo/plan.yaml` (phases, tasks, gates) |
-| `pablo plan` | show the plan and the next task |
-| `pablo run "<task>"` or `pablo run 1.2` | route → work → verify → judge |
-| `pablo approve / reject / escalate <run>` | your decision; only approve touches your repo |
-| `pablo hunks <run>` · `pablo approve <run> --hunks 0:0,1:0` | keep only some hunks (re-checked before applying; never training data) |
-| `pablo compare "<task>" --lanes coder,deep` | same task on two lanes; approving one rejects the other |
-| `pablo replay <run>` | every step of a run, in order |
-| `pablo serve` | API + cockpit on 127.0.0.1 (put `tailscale serve` in front for HTTPS) |
-| `pablo tui [--url …]` | the cockpit in your terminal, local or over Tailscale |
-| `pablo queue add "<task>"` / `list` / `cancel` / `run` | overnight queue: slow work runs 01:00–06:30 |
-| `pablo brief [--make]` | the morning brief: what finished overnight and what needs you |
-| `pablo doctor` | gateway, GPU, disk |
-| `pablo eval [--lane coder] [--cascade] [--repeat 3] [--write]` | score a lane on 36 tasks against hidden tests: pass rate, false ready, judge calibration, spread across runs |
-| `pablo eval-judge [--set holdout] [--write]` | score the judge on fixed good/bad diffs (tune on `main`, report `holdout`) |
-| `pablo export-training` | approved, trainable traces as chat JSONL |
-| `pablo export-traces` | daily TOON stats files (no prompts or code) |
+| `pablo run "<task>"` | make a change: route, write, check, judge |
+| `pablo approve / reject <run>` | your call; only approve touches the repo |
+| `pablo chat` | talk in the terminal |
+| `pablo tui` | the full cockpit in the terminal |
+| `pablo queue add "<task>"` | overnight queue (runs 01:00–06:30) |
+| `pablo brief` | what finished overnight and what needs you |
+| `pablo doctor` | check the model gateway, GPU and disk |
+| `pablo eval` · `eval-chat` · `eval-build` | rerun the numbers above |
 
-## Principles
-- **Proof beside claim.** Every answer comes with test results, type checks, and the diff.
-- **Amber means your move.** The UI only asks for attention when a decision is yours.
-- **Local first, owned outright.** Weights archived with checksums, no telemetry, runs offline.
-- **Escalation is explicit.** The router can't pick Claude; only you can.
+`pablo --help` lists the rest.
+
+## Running the server
+
+Pablo is built for one Ubuntu box with a 24 GB GPU and 64 GB of RAM, on Tailscale.
+
+```bash
+bash scripts/bootstrap-pablo.sh --install   # checks GPU, CUDA, Tailscale; installs the basics
+bash scripts/start-lanes.sh                 # model swapper + gateway as systemd user units
+uv run pablo cert                           # HTTPS, so the browser allows the mic
+uv run pablo serve --host $(tailscale ip -4)
+```
+
+Pablo only binds to 127.0.0.1 or the Tailscale IP, never every interface.
+[docs/BUILD_PLAN.md](docs/BUILD_PLAN.md) has the full setup and roadmap, and
+[AGENTS.md](AGENTS.md) has the rules every change follows.
+
+## Ground rules
+
+- **Proof beside the claim.** Every change comes with its test results and the diff.
+- **You're the merge button.** Models never write to your repo on their own.
+- **Owned outright.** Weights are archived with checksums, it runs offline, and Claude's outputs
+  are never used for training.
 
 ## License
+
 Apache-2.0. See [NOTICE](NOTICE) and [THIRD_PARTY.md](THIRD_PARTY.md).
