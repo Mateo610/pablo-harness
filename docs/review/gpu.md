@@ -13,12 +13,13 @@ unloading an idle Best) on a voice turn. Evals hold Deep Work and check every mo
 - **[measured]** Without residents, Best returned 500 within ~9 s on 12 tasks: the voice server
   held VRAM Best needs. That cost two eval runs.
 - **[measured]** Coder ↔ judge swap 7.6 s; Best load is minutes.
-- **[gap]** Everything since (residents, shared table) is tested with fakes only.
+- **[measured]** Voice wake on 2026-11-07. `pablo run --lane deep "say hi"` stopped `pablo-tts` as soon as deep started (deep process 22734 MiB, card 23109). The run then loaded the judge (16784 MiB) and left TTS down. The next voice turn said "waking the voice…". TTS answered at 7.3 s, the coder was listed at 7.7 s, the first token at 18.4 s, and the first audio at 22.9 s after the transcript. Deep was already gone, so that interval has no deep unload. `GET /unload` on llama-swap v269 (`9fbc47c`) returns 200 and drops every model, including the CPU router.
+- **[observed]** A `pablo serve` that had already marked TTS running kept `tts_state: running` after a CLI deep run stopped the unit. The Voice page then said "text-to-speech isn't answering" and disabled the orb. Restarting serve made the state `paused`, and the chip said the voice was sleeping.
 
 ## Weaknesses
 
 - **[gap]** No timing under contention: how long does a chat wait behind a Hybrid retry on Best?
-  How long is a voice wake (unload Best, start TTS, first audio)?
+  The wake measured above started with the judge loaded, not with an idle Best still holding VRAM.
 - **[suspected]** A lease can't stop a generation. A 30-minute Best call blocks a voice turn for
   30 minutes; the only answer today is "don't use Best during a call".
 - **[suspected]** Cross-process ordering uses wall-clock age, local ordering uses who was served

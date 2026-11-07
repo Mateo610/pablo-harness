@@ -2718,3 +2718,21 @@ Right 22/22 (100%) · by label {'talk': 1.0, 'run': 1.0, 'plan': 1.0}
 | talk | 8 | 0 | 0 |
 | run | 0 | 8 | 0 |
 | plan | 0 | 0 | 6 |
+
+## 2026-11-07 · M9b voice latency
+
+Clock: the voice-turn request the page sends when the button comes up, until the first audio event the page plays. One 2.48 s clip ("What is two plus two?", heard as "What is 2 plus 2?"). Coder and advisor each kept one conversation. Stock voices: Vivian, Serena. Clip deleted after the run.
+
+Speech-to-text: whisper.cpp v1.9.5, `small.en`, CPUs 4–7. Text-to-speech: Qwen3-TTS 0.6B CustomVoice, sdpa, 127.0.0.1:8880. A 12-word sentence with the coder resident returned the whole wav in 11.0 s the first time (compile) and 7.6–8.7 s after that.
+
+| Who | Already loaded | First audio, five turns (s) | Median | Worst |
+|---|---|---|---|---|
+| Orchestrator | coder + TTS | 4.58, 4.69, 4.37, 4.10, 4.80 | 4.58 | 4.80 |
+| Advisor | TTS; first turn swaps off the coder | 11.19, 7.15, 8.47, 5.76, 5.83 | 7.15 | 11.19 |
+| Wake (not a warm turn) | TTS down; judge had replaced deep | 22.9 from the transcript | | |
+
+Warm orchestrator turns: speech-to-text ~1.96 s, first token ~0.30 s later, then about 2 s to speak a one-word sentence. The first advisor turn's first token was ~7.7 s later than a warm advisor turn.
+
+VRAM, card / 24576 MiB: coder alone 20332; coder + TTS 22851 (TTS process 2506); advisor + TTS 21962 (advisor process 18650); deep with TTS stopped 23109 (deep process 22734).
+
+`systemctl --user stop pablo-tts.service` 0.45 s. Start answered in 7 s. llama-swap v269 `GET /unload` returned 200 and unloaded every model, including the router.
