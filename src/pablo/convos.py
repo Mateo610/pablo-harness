@@ -106,9 +106,9 @@ STEP: <a complete task for the coder that builds on the steps before it>
 Write 3 to 8 STEP lines. Keep every name, signature, file and behavior the user asked for
 exactly as they said it. For a new project, the first step sets up the package the user named
 and a test runner with one passing test; later steps add a test for what they build. The user
-reviews the plan with you; to change it, write the whole plan again. When the user says to go
-ahead and build it, add a line: BUILD: go
-Each step waits for the user's approval before the next one starts.
+reviews the plan with you; to change it, write the whole plan again. When the user approves
+it (go, looks good, build it), reply with one short sentence and a line: BUILD: go
+Don't write the plan again then. Each step waits for the user's approval before the next starts.
 
 When the user says to apply the change that is waiting for them, add a line: APPLY: it
 When they say to throw it away, add a line: DISCARD: it
@@ -125,7 +125,9 @@ SPOKEN = """
 
 This turn is a voice call: your reply is read aloud. Talk like a person on a call: one to three
 short sentences, no code, no lists, no markdown, no file paths unless asked. A question still
-gets only an answer. The RUN, plan and REMEMBER lines still work and are never read aloud."""
+gets only an answer: if you offer to do something, wait for a yes before any RUN line. The RUN,
+PLAN, STEP and REMEMBER lines still work and are never read aloud, so a larger piece of work
+still gets its whole plan, written in full, after your spoken sentences."""
 
 _RUN = re.compile(r"^\s*RUN:\s*(.+?)\s*$", re.M)
 _PLAN = re.compile(r"^\s*PLAN:\s*(.+?)\s*$", re.M)
@@ -146,6 +148,23 @@ _SAYS_APPLY = re.compile(
     r"|looks good|looks great|perfect|great)\b",
     re.I,
 )
+_CHANGE_WORDS = re.compile(
+    r"\b(but|instead|change|except|without|drop|remove|add|rename|split)\b", re.I
+)
+# A question, not a request phrased as one ("can you add…?" is a request).
+_QUESTION = re.compile(
+    r"^\s*(what|what's|whats|how|why|which|where|when|who|is|are|does|do|did|should|would|"
+    r"explain|tell me|describe)\b",
+    re.I,
+)
+_REQUEST = re.compile(r"\b(can you|could you|would you|will you|please|go ahead|do it)\b", re.I)
+
+
+def is_question(text: str) -> bool:
+    t = text.strip()
+    return bool(_QUESTION.search(t)) and not _REQUEST.search(t)
+
+
 _SAYS_DISCARD = re.compile(r"\b(discard|reject|throw|toss|drop|scrap|undo|no|nope|don'?t)\b", re.I)
 _REMEMBER = re.compile(r"^\s*REMEMBER:\s*(.+?)\s*$", re.M)
 _SAID_REMEMBER = re.compile(r"^\s*remember(?:\s+that)?\s*[:,-]?\s+(.+)$", re.I | re.S)
@@ -621,10 +640,23 @@ class Chat:
         extra: list[str] = []
         plan_obj: Plan | None = None
         decided: Run | None = None
+        if can_run and do is None and is_question(text) and (task or _STEP.search(answer)):
+            # A question gets an answer. The model offered work anyway: keep the offer, start
+            # nothing, and let a "yes, do it" start it on the next turn.
+            task = ""
+            answer = _STEP.sub("", _PLAN.sub("", answer))
+            extra.append(
+                '(Nothing started: that was a question. Say "do it" if you want the change.)'
+            )
+        consent_only = self._consent_only(conv, text)
         if can_run and do is not False:
+            if consent_only and _STEP.search(answer):
+                answer = _STEP.sub("", _PLAN.sub("", answer))  # "go" isn't a new plan: keep it
             plan_obj = self._planning(conv, name, profile, answer, extra, think, request=text)
             if plan_obj is not None:
                 task = ""  # a plan takes the place of a single run
+            if consent_only and not _BUILD.search(answer):
+                answer += "\nBUILD: go"  # the user said go; the model only restated it
             if _APPLY.search(answer) and _SAYS_APPLY.search(text):
                 decided = self._decide_waiting(conv, profile, approve=True, out=extra)
             elif _DISCARD.search(answer) and _SAYS_DISCARD.search(text):
@@ -646,6 +678,18 @@ class Chat:
                     decided=decided.to_dict() if decided else None)  # fmt: skip
 
     # plan mode and spoken approvals ------------------------------------------------------
+
+    def _consent_only(self, conv: Conversation, text: str) -> bool:
+        """A short "go" to a draft plan: build it, and don't let a restated plan replace it."""
+        if self.plans is None or len(text.split()) > 8 or not _SAYS_GO.search(text):
+            return False
+        if _CHANGE_WORDS.search(text):
+            return False  # "go, but make step 2 smaller" is a change to the plan
+        try:
+            plan = self.plans.get(conv.project)
+        except KeyError:
+            return False
+        return plan is not None and plan.state in ("draft", "paused")
 
     def _planning(
         self,

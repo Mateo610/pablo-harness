@@ -160,3 +160,50 @@ def test_every_step_sees_the_users_own_words(settings: Settings, repo: Path) -> 
     step_prompt = next(m for _, m in fake.calls if "step 1 of a plan" in m[-1]["content"])
     assert "The user's request (keep its names and behavior):" in step_prompt[-1]["content"]
     assert "returns 'hi ' + name" in step_prompt[-1]["content"]
+
+
+def test_go_builds_the_reviewed_plan_even_if_the_model_restates_it(
+    settings: Settings, repo: Path
+) -> None:
+    """Saying go to a draft keeps that plan: a restated, shorter plan doesn't replace it."""
+
+    def coder(model: str, msgs: Sequence[Message]) -> str:
+        last = msgs[-1]["content"].split("]\n\n")[-1].lower()
+        if CHAT_PROMPT.splitlines()[0] in msgs[0]["content"]:
+            if "go" in last:
+                return "Great, here it is.\nPLAN: greeter\nSTEP: create greet.py with everything"
+            return PLAN
+        return ("Done.\n\ngreet.py\n<<<<<<< SEARCH\n=======\ndef greet(name):\n"
+                "    return 'hi ' + name\n>>>>>>> REPLACE\n")  # fmt: skip
+
+    fake = FakeBackend(scripts={"pablo/coder": coder, "pablo/judge": lambda m, x: JUDGE})
+    orch = Orchestrator(settings, fake, repo=repo, checks=CHECKS)
+    orch.retry_inline = True
+    ws = Workspace(orch)
+    plans = Plans(ws, background=False)
+    chat = Chat(orch, workspace=ws, plans=plans)
+    conv = chat.start()
+    chat.say(conv.id, "let's plan a greeter")
+    turn = chat.say(conv.id, "looks good, go")
+    plan = plans.get()
+    assert plan and len(Plans.steps(plan)) == 2 and plan.state == "running"
+    assert "Building step 1" in turn.reply.content
+
+
+def test_a_question_starts_nothing_even_if_the_model_offers_work(
+    settings: Settings, repo: Path
+) -> None:
+    from pablo.convos import is_question
+
+    assert is_question("Do we have tests for by_payee?")
+    assert is_question("Explain the difference between total and monthly.")
+    assert not is_question("Can you add a test for by_payee?")
+    assert not is_question("Make load skip blank lines.")
+
+    fake = FakeBackend(scripts={"pablo/coder": lambda m, x: "No tests yet.\nRUN: add a test"})
+    orch = Orchestrator(settings, fake, repo=repo, checks=CHECKS)
+    chat = Chat(orch)
+    conv = chat.start()
+    turn = chat.say(conv.id, "Do we have tests for by_payee?")
+    assert turn.run is None and "Nothing started" in turn.reply.content
+    assert "RUN:" not in turn.reply.content

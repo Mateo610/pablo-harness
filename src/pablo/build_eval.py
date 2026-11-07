@@ -190,6 +190,8 @@ def run_build(
                                 break  # nothing waiting and not paused: stuck
                     plan = plans.get(project.name)
                     result.finished = plan is not None and plan.state == "done"
+                    if plan is not None:
+                        result.steps = len(Plans.steps(plan))  # as built, if "go" changed it
                 box = sandbox or ws.orch(project.name).sandbox
                 result.accepted, tail = acceptance_check(
                     task, Path(project.path), box, python=python

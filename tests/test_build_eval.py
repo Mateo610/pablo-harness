@@ -78,4 +78,5 @@ def test_what_it_records_when_the_model_doesnt_plan_or_doesnt_start(settings: Se
     assert no_plan.asked_twice and not no_plan.planned and not no_plan.accepted
     lazy = run_build(settings, fake_builder("build-todo", says_build=False), only={"build-todo"},
                      sandbox=LocalSandbox(), python=PY)[0]  # fmt: skip
-    assert lazy.pressed_build and lazy.finished and lazy.accepted
+    # "Looks good, go." to a draft builds it even when the model forgets BUILD: go.
+    assert not lazy.pressed_build and lazy.finished and lazy.accepted
