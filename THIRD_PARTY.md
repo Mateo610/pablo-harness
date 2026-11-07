@@ -41,6 +41,7 @@ and how it is used. Add a row before adding a dependency or copying code.
 | Promptfoo | MIT | dev tool (evals) | M7 |
 | Unsloth | Apache-2.0 | process (LoRA training in `$PABLO_DATA/engines/unsloth`; `UNSLOTH_DISABLE_STATISTICS=1`) | M8 |
 | whisper.cpp v1.9.5 (`d1be6fde11ac6e0407606b4e42fe72d34add8037`) | MIT (LICENSE file in the tag) | process (`whisper-server` on 127.0.0.1:8090, CPU) | M9b |
+| Qwen3-TTS OpenAI server (`groxaxo/Qwen3-TTS-Openai-Fastapi` `783bf0e51596f1eb1e70124258f0e1ea4bf3b40a`) | Apache-2.0 (LICENSE file in the checkout) | process (uvicorn on 127.0.0.1:8880); not imported | M9b |
 | MiroFish-Offline | AGPL-3.0 | process only, never imported | later |
 
 ## Model weights (never committed; archived with scripts/archive-model.sh)
@@ -55,3 +56,4 @@ Record each model's name, source URL, license, and revision in its archive SOURC
 | gpt-oss-20b MXFP4 (`ggml-org/gpt-oss-20b-GGUF` of `openai/gpt-oss-20b`, GGUF rev `15dcfc7e7c608c6161507211ed43c5b590801b4b`, upstream rev `6cee5e81ee83917806bbde320786a8fb61efebee`) | Apache-2.0 | archived bake-off loser (`~/pablo-data/archive/gpt-oss-20b`); not served |
 | Qwen3.8-27B UD-Q4_K_M (Unsloth GGUF of `Qwen/Qwen3.8-27B`, GGUF rev `4ca720788d1e01f1bff70c033e0d0028fd02e502`, upstream rev `1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0`) | Apache-2.0 | judge (`pablo/judge` → `judge-qwen-dense`) |
 | Whisper `ggml-small.en.bin` (`ggerganov/whisper.cpp`, repo rev `5359861c739e955e79d9a303bcbc70fb988958b1`) | MIT | speech-to-text (served). `ggml-large-v3-turbo-q5_0.bin` from the same repo is archived, not served |
+| Qwen3-TTS-12Hz-0.6B-CustomVoice (`Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice`, rev `85e237c12c027371202489a0ec509ded67b5e4b5`) | Apache-2.0 | text-to-speech (served, GPU). 0.6B Base and 1.7B VoiceDesign are downloaded and not served; custom voices are parked |

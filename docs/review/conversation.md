@@ -56,7 +56,7 @@ finishes.
   `APPLY:`, but crude.
 - **[observed]** Spoken news says "Step 2 … is ready" but not *what changed*. On a voice call you
   can't see the diff, so you approve on trust in the checks and judge.
-- **[gap]** Voice latency (first word after you stop talking) is unmeasured on Pablo.
+- **[measured]** Voice first word on Pablo, 2026-11-07, coder and the voice server already up. Five orchestrator turns: 4.58, 4.69, 4.37, 4.10, 4.80 s (median 4.58, worst 4.80). Five advisor turns: 11.19, 7.15, 8.47, 5.76, 5.83 s (median 7.15, worst 11.19). The 2.5 s target is missed. On a warm orchestrator turn, speech-to-text is ~1.96 s and the first token ~0.30 s after that; speaking the one-word reply takes about 2 s more. Wake after a deep run, not part of the warm time: 22.9 s from the transcript to the first audio. The Voice page showed "waking the voice…".
 - **[gap]** The phone layout is the old cockpit.
 
 ## Ideas
@@ -66,7 +66,7 @@ finishes.
 | Typed questions stay talk on this same 22-message set, and `build-csvstats` passes acceptance | typed talk 8/8 without losing run 8/8 (spoken is already 22/22 at `b48581d`); `build-csvstats` accepted |
 | Spoken summaries of a diff in one sentence ("adds a threshold function and two tests") from the judge's summary | you approve by voice without opening the screen (observed) |
 | Ask "apply it?" back when consent words are mixed with changes ("yes, but…") | fewer wrong applies (observed) |
-| Time first-word latency per turn and log it | p50/p95 on Agents |
+| Log first-word latency on each turn and show it | p50/p95 on Agents; the 2026-11-07 sample is median 4.6 s, worst 4.8 s on the orchestrator |
 
 ## Open questions
 

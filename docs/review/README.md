@@ -32,7 +32,7 @@ Tags: **[measured]** a number says so · **[observed]** seen in use, not counted
 | [Judge](judge.md) | measured | Qwen judge no better than the heretic on the suite; 2 tasks no judge catches | replay both judges on the 45 new diffs |
 | [Routing and Hybrid](routing.md) | measured | the cascade's quality comes from deep, and deep is slow | learned routing on real outcomes |
 | [Learning](learning.md) | built, unmeasured | LoRA window of 256 tokens can't hold a real example | measure lessons (examples, failures) on the suite |
-| [GPU](gpu.md) | built, lightly tested | no latency numbers under contention; voice wake cost unknown | the evening checklist, then timings |
+| [GPU](gpu.md) | wake measured at 22.9 s | no latency numbers under contention; the wake started after the judge had replaced Best | the evening checklist, then a wake with Best still resident |
 | [Chat, voice, plans](conversation.md) | spoken 22/22; plans accept 4 of 5 | typed talk is still 6/8 from `bc535d9`; csvstats fails acceptance | holdout, then typed chat on the 22 messages |
 | [Projects](projects.md) | built, untested | unfiltered projects run on a model never measured as a coder | eval the advisor model as a coder |
 

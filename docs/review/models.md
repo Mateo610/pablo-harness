@@ -9,7 +9,7 @@
 | Judge | Qwen3.8-27B dense UD-Q4_K_M | GPU, `--reasoning off`, threshold 0.75 |
 | Best (deep) | gpt-oss-120b MXFP4 | experts on CPU (`--n-cpu-moe 25`), 64k window, reasoning on, ~25 tok/s |
 | No guardrails (advisor) | Mistral Small 3.2 24B heretic Q5_K_M | GPU, talks only (builds only in unfiltered projects) |
-| Voice | whisper.cpp small.en (CPU), Qwen3-TTS 0.6B (GPU) | |
+| Voice | whisper.cpp small.en (CPU), Qwen3-TTS 0.6B CustomVoice (GPU, Vivian / Serena) | first word median 4.6 s with the coder already loaded |
 
 ## What we know
 
