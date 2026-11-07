@@ -17,6 +17,15 @@ type Phase = "idle" | "listening" | "thinking" | "speaking";
 const SPOKES = 64;
 const SILENCE_MS = 900;
 const SPEECH_LEVEL = 0.035;
+// Open mic while Pablo talks: its own voice comes back through the mic (a laptop's speakers sit
+// an inch from it). To cut Pablo off you have to be louder than Pablo's own output times
+// ECHO_RATIO, for BARGE_MS, and not in the first GRACE_S of a clip (when the echo canceller is
+// still catching up). Tune these if it's too hard, or too easy, to interrupt.
+const ECHO_RATIO = 0.8;
+const BARGE_MS = 250;
+const GRACE_S = 0.6;
+// Keep this much from before you started speaking, so your first syllable isn't cut.
+const LEAD_IN_S = 0.4;
 
 interface Line {
   role: "user" | "assistant";
@@ -65,7 +74,7 @@ export function Voice({ me }: { me: Me | null }) {
     for (const t of plan?.phases.flatMap((p) => p.tasks) ?? []) if (t.run) watched.current.add(t.run);
   }, [lines, plan]);
   const speakNews = useCallback(async () => {
-    if (phaseRef.current !== "idle" || rec.current) return;
+    if (phaseRef.current !== "idle" || rec.current || player.current?.busy) return; // never over a reply
     const id = news.current.shift();
     if (!id) return;
     try {
@@ -143,6 +152,7 @@ export function Voice({ me }: { me: Me | null }) {
       p.onIdle = () => {
         if (phaseRef.current === "speaking") setPhase("idle");
       };
+      p.onError = (m) => setError(m);
       let reply = "";
       const at = new Date().toISOString();
       const onEvent = (e: VoiceEvent) => {
@@ -162,7 +172,8 @@ export function Voice({ me }: { me: Me | null }) {
         if (e.type === "done") {
           setLines((l) => [...l.slice(0, -1), { ...l[l.length - 1], text: e.turn.reply.content.replace(/\n*\[run [^\]]+\]\s*$/, ""), runId: e.turn.reply.run_id }]);
           if (e.tts_error) setError(`Text-to-speech failed: ${e.tts_error}`);
-          if (!p.playing) setPhase("idle");
+          // The last clips may still be decoding: the reply is over when they've played.
+          if (!p.busy) setPhase("idle");
         }
       };
       try {
@@ -170,19 +181,28 @@ export function Voice({ me }: { me: Me | null }) {
       } catch (e) {
         if ((e as Error).name !== "AbortError") setError((e as ApiError).message);
         setLines((l) => (l.length && l[l.length - 1].role === "assistant" && !l[l.length - 1].text ? l.slice(0, -1) : l));
-        setPhase("idle");
+        setPhase((ph) => (ph === "listening" ? ph : "idle")); // a barge-in is already listening
       }
     },
     [who, conv, project?.name],
   );
 
-  const startTalking = useCallback(async () => {
-    if (!ready || rec.current) return;
-    player.current?.stop(); // barge-in
+  /** Start a take. `interrupt` (holding the button): you're talking now, so Pablo stops. The
+   * open mic starts a take without interrupting: it only listens until it hears you, and
+   * decides then whether that was you or Pablo's own voice (the open-mic loop below). */
+  // You're talking over Pablo: stop its voice and stop taking the rest of that reply. (The turn
+  // still finishes on Pablo and is in the conversation.)
+  const bargeIn = () => {
+    player.current?.stop();
     abort.current?.abort();
+  };
+
+  const startTalking = useCallback(async (interrupt = true) => {
+    if (!ready || rec.current) return;
+    if (interrupt) bargeIn();
     try {
       rec.current = await record();
-      setPhase("listening");
+      if (interrupt || !player.current?.busy) setPhase("listening");
     } catch (e) {
       setError(`The browser didn't give Pablo the microphone: ${(e as Error).message}`);
     }
@@ -226,13 +246,15 @@ export function Voice({ me }: { me: Me | null }) {
     let alive = true;
     let quietSince = 0;
     let speaking = false;
+    let loudSince = 0;
     let watcher: { analyser: AnalyserNode } | null = null;
     const buf = new Uint8Array(256);
     const tick = async () => {
       if (!alive) return;
       if (!rec.current && phaseRef.current !== "thinking") {
         // Listen for the start of speech with a recorder that's thrown away if nothing comes.
-        await startTalking();
+        // Never as an interruption: this runs the moment Pablo starts to answer.
+        await startTalking(false);
         speaking = false;
         quietSince = performance.now();
         watcher = rec.current;
@@ -241,12 +263,30 @@ export function Voice({ me }: { me: Me | null }) {
       if (r && watcher) {
         const level = rms(r.analyser, buf);
         const now = performance.now();
-        // While Pablo talks, its own voice can leak into the mic; interrupting takes a clear voice.
-        const needed = phaseRef.current === "speaking" ? SPEECH_LEVEL * 3 : SPEECH_LEVEL;
-        if (level > needed) {
+        const p = player.current;
+        const pabloTalking = Boolean(p?.busy) || phaseRef.current === "speaking";
+        if (pabloTalking && !speaking) {
+          // Is that you, or Pablo coming back through the mic? (See ECHO_RATIO.)
+          const ctx = audioContext();
+          const inGrace = p ? ctx.currentTime - p.clipStartedAt < GRACE_S : false;
+          const needed = Math.max(SPEECH_LEVEL * 3, (p?.level() ?? 0) * ECHO_RATIO);
+          if (!inGrace && level > needed) {
+            loudSince ||= now;
+            if (now - loudSince >= BARGE_MS) {
+              bargeIn();
+              setPhase("listening");
+              r.keepLast(LEAD_IN_S + BARGE_MS / 1000);
+              speaking = true;
+              quietSince = now;
+            }
+          } else {
+            loudSince = 0;
+            r.keepLast(LEAD_IN_S); // what the mic hears under Pablo's voice isn't your turn
+          }
+        } else if (level > SPEECH_LEVEL) {
+          if (!speaking) r.keepLast(LEAD_IN_S);
           speaking = true;
           quietSince = now;
-          if (phaseRef.current === "speaking") player.current?.stop();
         } else if (speaking && now - quietSince > SILENCE_MS) {
           stopTalking();
           watcher = null;

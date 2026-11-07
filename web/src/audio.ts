@@ -4,6 +4,8 @@
 export interface Recorder {
   stop(): Blob;
   cancel(): void;
+  /** Forget all but the last `seconds`: an open mic keeps only what came just before you spoke. */
+  keepLast(seconds: number): void;
   analyser: AnalyserNode;
   level(): number;
 }
@@ -56,6 +58,10 @@ export async function record(): Promise<Recorder> {
     analyser,
     level: () => rms(analyser, buf),
     cancel: end,
+    keepLast: (seconds) => {
+      let keep = Math.ceil((seconds * ctx.sampleRate) / 4096);
+      if (chunks.length > keep) chunks.splice(0, chunks.length - (keep = Math.max(1, keep)));
+    },
     stop: () => {
       end();
       return wav(downsample(concat(chunks), ctx.sampleRate, 16000), 16000);
@@ -117,6 +123,26 @@ function wav(samples: Float32Array, rate: number): Blob {
   return new Blob([view], { type: "audio/wav" });
 }
 
+/**
+ * The clip without the silence the voice server pads it with at both ends (keeps `pad` seconds).
+ * Back to back, that padding was most of the gap between sentences.
+ */
+export function trimSilence(ctx: BaseAudioContext, buffer: AudioBuffer, threshold = 0.01, pad = 0.06): AudioBuffer {
+  const data = buffer.getChannelData(0);
+  let first = 0;
+  while (first < data.length && Math.abs(data[first]) < threshold) first++;
+  let last = data.length - 1;
+  while (last > first && Math.abs(data[last]) < threshold) last--;
+  if (first >= last) return buffer; // all quiet: leave it as it came
+  const padding = Math.round(pad * buffer.sampleRate);
+  const from = Math.max(0, first - padding);
+  const to = Math.min(data.length, last + 1 + padding);
+  if (from === 0 && to === data.length) return buffer;
+  const out = ctx.createBuffer(buffer.numberOfChannels, to - from, buffer.sampleRate);
+  for (let c = 0; c < buffer.numberOfChannels; c++) out.copyToChannel(buffer.getChannelData(c).subarray(from, to), c);
+  return out;
+}
+
 /** Plays spoken sentences back to back, in the order they were sent. */
 export class Player {
   readonly analyser: AnalyserNode;
@@ -124,8 +150,15 @@ export class Player {
   private sources = new Set<AudioBufferSourceNode>();
   private waiting = new Map<number, ArrayBuffer>();
   private expected = 0;
+  private pending = 0; // clips taken in and not yet playing (being decoded)
+  private dropping = false; // stopped by barge-in: the rest of this reply is not wanted
+  private gen = 0; // which reply: a clip still decoding from an older one never plays
   private chain: Promise<void> = Promise.resolve();
+  private levelBuf = new Uint8Array(256);
+  /** When the clip now sounding started (AudioContext time), for the open mic's grace period. */
+  clipStartedAt = 0;
   onIdle: () => void = () => undefined;
+  onError: (message: string) => void = () => undefined;
 
   constructor() {
     const ctx = audioContext();
@@ -139,20 +172,41 @@ export class Player {
     return this.sources.size > 0;
   }
 
+  /** Playing, or about to: a clip is decoding or waiting for its turn. Until this is false the
+   * reply isn't over, so nothing else may start talking over it or reset it. */
+  get busy(): boolean {
+    return this.sources.size > 0 || this.pending > 0 || this.waiting.size > 0;
+  }
+
+  /** How loud Pablo is right now (what the mic may be hearing back). */
+  level(): number {
+    return this.sources.size > 0 ? rms(this.analyser, this.levelBuf) : 0;
+  }
+
   /** Base64 audio for sentence `seq`. Out-of-order arrivals wait for their turn. */
   push(seq: number, base64: string): void {
+    if (this.dropping) return;
     const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
     this.waiting.set(seq, bytes.buffer);
     while (this.waiting.has(this.expected)) {
       const data = this.waiting.get(this.expected)!;
       this.waiting.delete(this.expected++);
-      this.chain = this.chain.then(() => this.play(data)).catch(() => undefined);
+      this.pending++;
+      const gen = this.gen;
+      this.chain = this.chain
+        .then(() => this.play(data, gen))
+        .catch((e: Error) => this.onError(`Couldn't play Pablo's voice: ${e.message || e.name}`))
+        .finally(() => {
+          this.pending--;
+          if (!this.busy) this.onIdle();
+        });
     }
   }
 
-  private async play(data: ArrayBuffer): Promise<void> {
+  private async play(data: ArrayBuffer, gen: number): Promise<void> {
     const ctx = audioContext();
-    const buffer = await ctx.decodeAudioData(data);
+    const buffer = trimSilence(ctx, await ctx.decodeAudioData(data));
+    if (this.dropping || gen !== this.gen) return;
     const src = ctx.createBufferSource();
     src.buffer = buffer;
     src.connect(this.analyser);
@@ -162,13 +216,27 @@ export class Player {
     this.sources.add(src);
     src.onended = () => {
       this.sources.delete(src);
-      if (this.sources.size === 0) this.onIdle();
+      if (!this.busy) this.onIdle();
     };
+    if (this.sources.size === 1) this.clipStartedAt = at;
   }
 
-  /** Barge-in: you started talking, so it stops. */
+  /** Barge-in: you started talking, so it stops, and the rest of this reply is dropped. */
   stop(): void {
+    this.dropping = true;
+    this.silence();
+  }
+
+  /** A new reply: forget the last one and take clips again. */
+  reset(): void {
+    this.silence();
+    this.dropping = false;
+  }
+
+  private silence(): void {
+    this.gen++;
     this.sources.forEach((s) => {
+      s.onended = null;
       try {
         s.stop();
       } catch {
@@ -180,9 +248,5 @@ export class Player {
     this.expected = 0;
     this.next = 0;
     this.chain = Promise.resolve();
-  }
-
-  reset(): void {
-    this.stop();
   }
 }
