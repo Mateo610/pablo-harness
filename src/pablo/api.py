@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlencode
@@ -52,6 +53,8 @@ from pablo.voice import (
     reachable,
     vocabulary,
 )
+
+STALE_AFTER = timedelta(days=3)  # a run left waiting this long folds into Stale on Work
 
 
 class TaskIn(BaseModel):
@@ -517,10 +520,54 @@ def create_app(
         except KeyError as exc:
             raise HTTPException(404, f"no run {run_id}") from exc
 
+    def stale_reasons(waiting: list[Any]) -> dict[str, str]:
+        """Why a waiting run is no longer worth deciding: replaced, superseded, or old."""
+        recent = orch.recent(200)
+        by_id = {r.id: r for r in recent}
+        applied_groups = {r.group for r in recent if r.group and r.state == "approved"}
+        now = datetime.now(UTC)
+        out: dict[str, str] = {}
+        for r in waiting:
+            if r.retry_run and r.retry_run in by_id:
+                out[r.id] = f"replaced by its retry {r.retry_run}"
+            elif r.group and r.group in applied_groups:
+                out[r.id] = "another version of this change was applied"
+            else:
+                try:
+                    age = now - datetime.fromisoformat(r.created_at)
+                except ValueError:
+                    continue
+                if age > STALE_AFTER:
+                    out[r.id] = f"waiting {age.days} days"
+        return out
+
     @app.get("/api/inbox")
     def inbox(request: Request) -> list[dict[str, Any]]:
+        """Runs waiting for a decision, needs-you first. Each says if it has gone stale."""
         items = sorted(orch.inbox(), key=lambda r: (r.state != "needs_you", r.created_at))
-        return [linked(r, request) for r in items]
+        stale = stale_reasons(items)
+        return [
+            {**linked(r, request), "stale": r.id in stale, "stale_reason": stale.get(r.id, "")}
+            for r in items
+        ]
+
+    @app.post("/api/inbox/discard-stale")
+    async def discard_stale(request: Request) -> dict[str, Any]:
+        """Reject every stale waiting run at once. Nothing in any repo changes."""
+        owner_only(request)
+
+        def go() -> dict[str, Any]:
+            stale = stale_reasons(orch.inbox())
+            done = []
+            for run_id in stale:
+                try:
+                    _decide("reject", run_id)
+                    done.append(run_id)
+                except HTTPException:
+                    continue  # decided meanwhile, or its project is gone
+            return {"discarded": done}
+
+        return await run_in_threadpool(go)
 
     @app.get("/api/promotions")
     def promotions() -> dict[str, Any]:
@@ -687,7 +734,9 @@ def create_app(
         """The run, plus the conversation that started it if that conversation is yours."""
         data: dict[str, Any] = run.to_dict()
         hit = store.conversation_for_run(run.id, profile_of(request))
-        data["conversation_id"], data["conversation_lane"] = hit if hit else (None, None)
+        data["conversation_id"], data["conversation_lane"], data["conversation_title"] = (
+            hit if hit else (None, None, None)
+        )
         return data
 
     def _found(fn: Any, *args: Any) -> Any:
