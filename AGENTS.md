@@ -21,7 +21,7 @@ and leaves the merge decision to the human. Claude is an escalation lane, never 
   - `tasks.py` task type + quick/build/deep · `context.py` budgeted prompt (files picked by the symbols a task names, per-lane `context_tokens`) + skill cards (`skills/*.md`)
   - `edits.py` find-and-replace edit blocks → git-made diff (the coder's default edit format)
   - `evals.py` `pablo eval`: the 30-task suite in `evals/suite`, scored by hidden tests the model never sees
-- `web/` cockpit (React + Vite + cmdk); `Shell.tsx` pages (Home, Chat, Advisor, Voice, Agents, Work), `Work.tsx` the plans board over the v1 Workbench (`App.tsx` + `RunView.tsx`), phone `Phone.tsx` (PWA), styled only with tokens in `web/src/tokens.css`
+- `web/` cockpit (React + Vite + cmdk); `Shell.tsx` pages (Home, Chat, Advisor, Voice, Agents, Work), `Work.tsx` Work's three tabs: Changes (the review desk), Plans (every chat's plan), Workbench (v1: `App.tsx` + `RunView.tsx`), phone `Phone.tsx` (PWA), styled only with tokens in `web/src/tokens.css`
 - `config/` lanes and the LiteLLM gateway · `scripts/` Pablo bootstrap and model archiving
 - `docs/cursor-prompts/` one prompt per milestone, each with acceptance checks
 
