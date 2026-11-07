@@ -91,6 +91,19 @@ every chat's plan and warns when two live plans share files.
   recall test measures them yet.
 - **[gap]** Long chats drop old turns with no summary. A note that replaces another (`supersedes`)
   isn't modelled: edit the old note instead. The cockpit has no edit button yet (API and CLI do).
+- **[measured]** Open mic cut Pablo's own reply off, in Chrome on a Mac (Matt, 2026-11-07:
+  "rarely audible", hold-to-talk much better). Cause: the open mic started its next take the
+  moment the first clip arrived, and starting a take meant "you're interrupting": it stopped the
+  player and cancelled the reply's stream. Headless Chrome with a fake mic and a voice server that
+  takes 1.5 s a request: before, 1 of 3 sentences, cut partway; after, 3 of 3 (the first alone,
+  then the other two as one clip), nothing cut, 0.0 s between clips. Not yet heard on Pablo.
+- **[suspected]** Open mic barge-in now has to beat Pablo's own output level ×0.8 for 250 ms,
+  outside the first 0.6 s of a clip (`Voice.tsx`). Tuned by reasoning, not on a real laptop:
+  it may be too hard to interrupt, or still too easy with the speakers loud.
+- **[observed]** Long gaps between sentences: one voice request per sentence, each with ~0.3 s
+  of silence at both ends. Now the first piece (main's first clause) goes alone and everything waiting after it
+  goes in one request (`voice.gather`, up to 400 characters), and the player trims each clip's
+  padding to 60 ms. If gaps remain, synthesis itself is slower than speech.
 - **[gap]** Plan mode's prompts (`src/pablo/prompts/plan_minor.md`, `plan_major.md`) have only met
   scripted replies (`tests/test_plan_mode.py`). Nobody has seen whether Qwen asks one question at
   a time, stops asking, writes a well-formed `SPEC:` block, or writes `PHASE:` lines. The chat
