@@ -20,7 +20,9 @@ from pydantic import BaseModel
 
 from pablo import __version__
 from pablo.access import TOKEN_COOKIE, Access, Caller, Denied
-from pablo.convos import AUTO, OWNER, Chat, Memory, MemoryStatus
+from pablo.convos import AUTO, OWNER, Chat, Memory, MemoryStatus, PlanSize
+from pablo.files import MAX_BYTES as FILE_MAX_BYTES
+from pablo.files import FileStore
 from pablo.orchestrator import Orchestrator, PartialChecksFailed
 from pablo.overnight import (
     BriefStore,
@@ -104,6 +106,7 @@ class SayIn(BaseModel):
     confirm: bool = False  # required for a lane that leaves Pablo (Claude), every send
     stream: bool = False  # reply as NDJSON: {"type": "delta"} pieces, then "done" or "error"
     think: bool = False  # extended thinking (Base and Hybrid only; slower, more careful)
+    plan: PlanSize | None = None  # Plan mode: talk toward a plan, never start a run or build
 
 
 class ModeIn(BaseModel):
@@ -161,6 +164,7 @@ def create_app(
     queue = JobQueue(orch.settings.home)
     runner = OvernightRunner(orch, queue, orch.settings.overnight, workspace=ws)
     briefs = BriefStore(orch.settings.home)
+    files = FileStore(orch.settings.home)
     app.state.scheduler = Scheduler(runner, briefs, orch.repo)
     app.add_middleware(
         CORSMiddleware,
@@ -679,7 +683,8 @@ def create_app(
         if lane == "claude":
             owner_only(request)
         kw: dict[str, Any] = {"profile": who, "lane": body.lane, "do": body.do,
-                              "confirm": body.confirm, "think": body.think}  # fmt: skip
+                              "confirm": body.confirm, "think": body.think,
+                              "plan": body.plan}  # fmt: skip
         if not body.stream:
             try:
                 turn = await run_in_threadpool(chat.say, cid, body.text, **kw)
@@ -731,6 +736,26 @@ def create_app(
     def reject_memory(mid: str, request: Request) -> dict[str, Any]:
         mem: Memory = _found(store.decide, mid, profile_of(request), "rejected")
         return dict(mem.__dict__)
+
+    @app.get("/api/files")
+    def list_files(request: Request) -> list[dict[str, Any]]:
+        return [f.__dict__ for f in files.list(profile_of(request))]
+
+    @app.post("/api/files")
+    async def add_file(name: str, request: Request) -> dict[str, Any]:
+        """The raw bytes in the body, the name in the query: no multipart parser needed."""
+        if int(request.headers.get("content-length") or 0) > FILE_MAX_BYTES:
+            raise HTTPException(413, f"files are kept up to {FILE_MAX_BYTES // (1024 * 1024)} MB")
+        data = await request.body()
+        try:
+            return files.add(profile_of(request), name, data).__dict__
+        except ValueError as exc:
+            raise HTTPException(413 if len(data) > FILE_MAX_BYTES else 400, str(exc)) from exc
+
+    @app.delete("/api/files/{fid}")
+    def forget_file(fid: str, request: Request) -> dict[str, Any]:
+        _found(files.forget, profile_of(request), fid)
+        return {"forgot": fid}
 
     @app.delete("/api/memories/{mid}")
     def forget_memory(mid: str, request: Request) -> dict[str, Any]:

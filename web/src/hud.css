@@ -56,6 +56,13 @@
 .h-seg button { border: 0; background: transparent; color: var(--sys); padding: 7px 11px; font: 400 12px/1 var(--font-mono); }
 .h-seg button[aria-pressed="true"] { background: var(--sys); color: var(--ground-000); }
 .h-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; display: inline-block; }
+/* C14a composer: the thinking switch rides small above the model menu; files drop on the remember rail. */
+.h-model-stack { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.h-toggle { border: 1px solid var(--sys-line); background: transparent; color: var(--ink-muted); padding: 3px 8px; font: 400 10.5px/1 var(--font-mono); letter-spacing: .06em; text-transform: uppercase; }
+.h-toggle:hover { color: var(--sys); }
+.h-toggle[aria-pressed="true"] { color: var(--sys); border-color: var(--sys); background: var(--sys-wash); }
+.h-drop { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 12px; border: 1px dashed var(--sys-line); background: transparent; color: var(--ink-body); font-size: 12.5px; text-align: left; width: 100%; }
+.h-drop:hover, .h-drop.on { border-color: var(--sys); background: var(--sys-wash); color: var(--sys); }
 .h-input { font: inherit; font-size: 13px; padding: 9px 10px; background: #030a0f; border: 1px solid var(--line); color: var(--ink); width: 100%; }
 .h-error { padding: 10px 14px; border: 1px solid #5a2626; color: var(--status-fail); background: var(--fail-wash); font-size: 13px; }
 

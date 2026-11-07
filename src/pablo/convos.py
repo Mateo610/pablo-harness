@@ -129,6 +129,18 @@ gets only an answer: if you offer to do something, wait for a yes before any RUN
 PLAN, STEP and REMEMBER lines still work and are never read aloud, so a larger piece of work
 still gets its whole plan, written in full, after your spoken sentences."""
 
+PLAN_MODE = """
+
+The user turned on Plan mode ({size}). In Plan mode you never start a change: no RUN line and
+no BUILD line, whatever the user says. Work toward a plan instead.
+- Minor: ask at most two short questions, one per reply, and only when the answer would change
+  the plan. Then write the plan.
+- Major: ask one question per reply, each one building on the last answer, until you know the
+  goal, who it's for, what's in and out of scope, and how to tell it works. Then write the plan.
+Write the plan with the PLAN and STEP lines as usual. When the user approves it, say in one
+sentence that switching to Auto builds it."""
+PlanSize = Literal["minor", "major"]
+
 _RUN = re.compile(r"^\s*RUN:\s*(.+?)\s*$", re.M)
 _PLAN = re.compile(r"^\s*PLAN:\s*(.+?)\s*$", re.M)
 _STEP = re.compile(r"^\s*STEP:\s*(.+?)\s*$", re.M)
@@ -567,9 +579,12 @@ class Chat:
         on_delta: Delta | None = None,
         spoken: bool = False,
         think: bool = False,
+        plan: PlanSize | None = None,
     ) -> Turn:
         """`do`: True starts a run with your words as the task, False only talks, None lets
         the model decide (a RUN line). `confirm` is required for a remote lane, every time.
+        `plan`: Plan mode (chat only). The turn works toward a plan and never starts a run or
+        a build; `do` is ignored. Only the user turns it on.
         `think`: extended thinking, for Base and Hybrid in chat: the reply, the runs and the
         plan it starts use the coder's thinking variant. Never spoken (it's slow)."""
         conv = self.store.conversation(cid, profile)
@@ -578,6 +593,10 @@ class Chat:
         name = AUTO if unfiltered else (lane or conv.lane)
         cfg = self._lane(name, orch)
         think = think and not spoken and not unfiltered and cfg.thinking is not None
+        if spoken:
+            plan = None
+        if plan is not None:
+            do = None  # Plan mode talks and plans; it never runs your words as a task
         if think and cfg.thinking is not None:
             t = cfg.thinking
             cfg = cfg.model_copy(update={"model": t.model, "max_tokens": t.max_tokens,
@@ -614,7 +633,7 @@ class Chat:
             return Turn(conv, user, reply, run=run.to_dict(), shared_memory=bool(notes))
 
         messages = self._prompt(
-            profile, conv, cfg, name, history, text, notes, remote, spoken, orch
+            profile, conv, cfg, name, history, text, notes, remote, spoken, orch, plan
         )
         sampling: dict[str, Any] = {
             "temperature": cfg.temperature,
@@ -640,7 +659,11 @@ class Chat:
         extra: list[str] = []
         plan_obj: Plan | None = None
         decided: Run | None = None
-        if can_run and do is None and is_question(text) and (task or _STEP.search(answer)):
+        if plan is not None:
+            # Plan mode: a plan may be drafted or redrafted, never a single run or a build.
+            task = ""
+            answer = _BUILD.sub("", answer)
+        elif can_run and do is None and is_question(text) and (task or _STEP.search(answer)):
             # A question gets an answer. The model offered work anyway: keep the offer, start
             # nothing, and let a "yes, do it" start it on the next turn.
             task = ""
@@ -655,13 +678,13 @@ class Chat:
             plan_obj = self._planning(conv, name, profile, answer, extra, think, request=text)
             if plan_obj is not None:
                 task = ""  # a plan takes the place of a single run
-            if consent_only and not _BUILD.search(answer):
+            if consent_only and plan is None and not _BUILD.search(answer):
                 answer += "\nBUILD: go"  # the user said go; the model only restated it
             if _APPLY.search(answer) and _SAYS_APPLY.search(text):
                 decided = self._decide_waiting(conv, profile, approve=True, out=extra)
             elif _DISCARD.search(answer) and _SAYS_DISCARD.search(text):
                 decided = self._decide_waiting(conv, profile, approve=False, out=extra)
-            if self.plans and _BUILD.search(answer) and _SAYS_GO.search(text):
+            if self.plans and plan is None and _BUILD.search(answer) and _SAYS_GO.search(text):
                 plan_obj = self._build(conv, profile, extra) or plan_obj
         run_obj = None
         if task and do is not False:
@@ -852,9 +875,13 @@ class Chat:
         remote: bool,
         spoken: bool = False,
         orch: Orchestrator | None = None,
+        plan: PlanSize | None = None,
     ) -> list[Message]:
         orch = orch or self.orch
-        system = ADVISOR_PROMPT if not (name == AUTO or cfg.writes_code) else CHAT_PROMPT
+        builds = name == AUTO or cfg.writes_code
+        system = ADVISOR_PROMPT if not builds else CHAT_PROMPT
+        if plan is not None and builds:
+            system += PLAN_MODE.format(size=plan)
         parts = [system + (SPOKEN if spoken else "")]
         if not remote:
             who = self.store.profile(profile).name

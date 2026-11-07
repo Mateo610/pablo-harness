@@ -204,6 +204,17 @@ export interface ChatMessage {
   created_at: string;
 }
 
+/** Plan mode's size: Minor asks a question or two; Major interviews you first. */
+export type PlanSize = "minor" | "major";
+
+/** A file kept on the remember rail (Chat), per profile. */
+export interface KeptFile {
+  id: string;
+  name: string;
+  size: number;
+  created_at: string;
+}
+
 export interface Memory {
   id: string;
   profile_id: string;
@@ -386,22 +397,22 @@ export const api = {
   renameConversation: (id: string, title: string) =>
     call<Conversation>(`/api/conversations/${id}`, { method: "PATCH", body: JSON.stringify({ title }) }),
   deleteConversation: (id: string) => call<{ deleted: string }>(`/api/conversations/${id}`, { method: "DELETE" }),
-  say: (id: string, text: string, opts: { lane?: string; do?: boolean | null; confirm?: boolean } = {}) =>
+  say: (id: string, text: string, opts: { lane?: string; do?: boolean | null; confirm?: boolean; plan?: PlanSize | null } = {}) =>
     call<Turn>(`/api/conversations/${id}/messages`, {
       method: "POST",
-      body: JSON.stringify({ text, lane: opts.lane ?? null, do: opts.do ?? null, confirm: opts.confirm ?? false }),
+      body: JSON.stringify({ text, lane: opts.lane ?? null, do: opts.do ?? null, confirm: opts.confirm ?? false, plan: opts.plan ?? null }),
     }),
   /** Same as `say`, but the reply arrives piece by piece through `onDelta`. */
   sayStream: async (
     id: string,
     text: string,
-    opts: { lane?: string; do?: boolean | null; confirm?: boolean; think?: boolean },
+    opts: { lane?: string; do?: boolean | null; confirm?: boolean; think?: boolean; plan?: PlanSize | null },
     onDelta: (piece: string) => void,
   ): Promise<Turn> => {
     const res = await fetch(`/api/conversations/${id}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, lane: opts.lane ?? null, do: opts.do ?? null, confirm: opts.confirm ?? false, think: opts.think ?? false, stream: true }),
+      body: JSON.stringify({ text, lane: opts.lane ?? null, do: opts.do ?? null, confirm: opts.confirm ?? false, think: opts.think ?? false, plan: opts.plan ?? null, stream: true }),
     });
     if (!res.ok || !res.body) {
       const body = (await res.json().catch(() => ({}))) as { detail?: string };
@@ -474,6 +485,15 @@ export const api = {
   keepMemory: (id: string) => call<Memory>(`/api/memories/${id}/keep`, { method: "POST" }),
   rejectMemory: (id: string) => call<Memory>(`/api/memories/${id}/reject`, { method: "POST" }),
   forgetMemory: (id: string) => call<{ forgot: string }>(`/api/memories/${id}`, { method: "DELETE" }),
+  files: () => call<KeptFile[]>("/api/files"),
+  /** The bytes go as the body and the name in the query: the server needs no multipart parser. */
+  keepFile: (file: File) =>
+    call<KeptFile>(`/api/files?name=${encodeURIComponent(file.name)}`, {
+      method: "POST",
+      body: file,
+      headers: { "Content-Type": "application/octet-stream" },
+    }),
+  forgetFile: (id: string) => call<{ forgot: string }>(`/api/files/${id}`, { method: "DELETE" }),
   search: (q: string) => call<SearchHits>(`/api/search?q=${encodeURIComponent(q)}`),
   voice: async (audio: Blob) => {
     const res = await fetch("/api/voice", { method: "POST", body: audio });

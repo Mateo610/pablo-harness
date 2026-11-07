@@ -1,13 +1,37 @@
 // Chat (and the Advisor, which is the same page in violet): conversations that remember.
 // A reply can start a run; the run card shows the checks, and only the owner sees Apply.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, ApiError, type ChatMessage, type Conversation, type Lane, type Me, type Memory, type SearchHits } from "./api";
+import { api, ApiError, type ChatMessage, type Conversation, type KeptFile, type Lane, type Me, type Memory, type PlanSize, type SearchHits } from "./api";
 import { laneColor, laneName } from "./components";
 import { ago, go, pickProject, PlanCard, ProjectPicker, RunCard, useEvents, usePoll, useProject } from "./hud";
 import { Markdown } from "./Markdown";
 
 type Mode = "chat" | "advisor";
-type Act = "auto" | "talk" | "do";
+// Auto talks and works; Plan (you turn it on) talks it through and ends in a plan, never a run.
+type Act = "auto" | "plan";
+
+/** A choice remembered per browser; a private window just doesn't keep it. */
+function useStored<T extends string>(key: string, allowed: readonly T[], fallback: T): [T, (v: T) => void] {
+  const [value, setValue] = useState<T>(() => {
+    try {
+      const got = localStorage.getItem(key) as T | null;
+      return got && allowed.includes(got) ? got : fallback;
+    } catch {
+      return fallback;
+    }
+  });
+  const set = (v: T) => {
+    setValue(v);
+    try {
+      localStorage.setItem(key, v);
+    } catch {
+      /* not remembered in a private window */
+    }
+  };
+  return [value, set];
+}
+
+const KB = (n: number) => (n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
 
 interface Option {
   key: string;
@@ -68,7 +92,12 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
       }
       return !on;
     });
-  const [act, setAct] = useState<Act>("auto");
+  const [act, setAct] = useStored<Act>("pablo.act", ["auto", "plan"], "auto");
+  const [planSize, setPlanSize] = useStored<PlanSize>("pablo.planSize", ["minor", "major"], "minor");
+  const [files, reloadFiles] = usePoll(api.files, 0);
+  const [dropping, setDropping] = useState(false);
+  const [fileNote, setFileNote] = useState("");
+  const picker = useRef<HTMLInputElement>(null);
   const [menu, setMenu] = useState(false);
   const [confirm, setConfirm] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -87,6 +116,8 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
   // An open conversation keeps its own project; a new one starts in the chosen project.
   const unfiltered = conv ? convUnfiltered : startIn?.mode === "unfiltered";
   const projectName = conv ? conv.project : startIn?.name ?? "";
+  const canAct = !advisor && lane !== "claude";
+  const planning = canAct && act === "plan";
   const canThink = !advisor && !unfiltered && (lane === "coder" || lane === "auto") && Boolean(lanes.find((l) => l.name === "coder")?.thinking);
   const options = useMemo(() => {
     if (!unfiltered) return modelOptions(lanes, me);
@@ -147,8 +178,7 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
         cid = made.id;
         go(advisor ? "advisor" : "chat", cid);
       }
-      const doIt = advisor || lane === "claude" ? null : act === "do" ? true : act === "talk" ? false : null;
-      const turn = await api.sayStream(cid, text, { lane, do: doIt, confirm: confirmed, think: canThink && thinkOn }, (piece) =>
+      const turn = await api.sayStream(cid, text, { lane, do: null, confirm: confirmed, think: canThink && thinkOn, plan: planning ? planSize : null }, (piece) =>
         setStreamed((s) => s + piece),
       );
       setConv(turn.conversation);
@@ -167,6 +197,18 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
       setStatus("");
       box.current?.focus();
     }
+  };
+
+  const keep = async (list: FileList | null) => {
+    setFileNote("");
+    for (const f of Array.from(list ?? [])) {
+      try {
+        await api.keepFile(f);
+      } catch (e) {
+        setFileNote(`${f.name}: ${(e as Error).message}`);
+      }
+    }
+    reloadFiles();
   };
 
   const search = (q: string) => {
@@ -268,7 +310,11 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
               <span style={{ fontSize: 14, color: "var(--ink-body)", lineHeight: 1.6 }}>
                 {advisor
                   ? "The advisor talks only. It has no stake in your choices and no guardrails. Bring it a plan, a run, or a decision."
-                  : "Ask about the code, say what to change, or describe something bigger (\"let's build a tool that…\") and Pablo plans it with you, then builds it a step at a time when you say go. Every change shows its diff and checks here; only the owner can apply it. Type \"remember: …\" to keep a note."}
+                  : planning
+                    ? planSize === "major"
+                      ? "Plan · Major. Say what you're planning. Pablo asks one question at a time until it understands, then writes the plan. Nothing runs: switch to Auto to build it."
+                      : "Plan · Minor. Say what you're planning. Pablo asks a question or two at most, then writes the plan. Nothing runs: switch to Auto to build it."
+                    : "Ask about the code, say what to change, or describe something bigger (\"let's build a tool that…\") and Pablo plans it with you, then builds it a step at a time when you say go. Every change shows its diff and checks here; only the owner can apply it. Turn on Plan to think it through first. Type \"remember: …\" to keep a note."}
               </span>
             </div>
           )}
@@ -343,7 +389,7 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
               rows={2}
               value={draft}
               aria-label="Message"
-              placeholder={advisor ? "Ask for the honest take…" : "Ask, or describe a change…  (Enter sends · Shift+Enter new line)"}
+              placeholder={advisor ? "Ask for the honest take…" : planning ? "What are you planning?  (Enter sends · Shift+Enter new line)" : "Ask, or describe a change…  (Enter sends · Shift+Enter new line)"}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
@@ -352,8 +398,20 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
                 }
               }}
             />
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-              {!advisor && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "flex-end" }}>
+              {/* The thinking switch sits small, right above the model it changes. */}
+              <div className="h-model-stack">
+                {canThink && (
+                  <button
+                    className="h-toggle"
+                    aria-pressed={thinkOn}
+                    onClick={toggleThink}
+                    title="The base model thinks before it answers and before it writes code. Slower: often a minute or more."
+                  >
+                    {thinkOn ? "●" : "○"} thinking
+                  </button>
+                )}
+                {!advisor && (
                 <div style={{ position: "relative" }}>
                   <button className="h-btn" style={{ color: accent, borderColor: "var(--sys-line)" }} onClick={() => setMenu((o) => !o)} aria-haspopup="listbox" aria-expanded={menu}>
                     <span className="h-dot" style={{ background: accent }} aria-hidden="true" />
@@ -388,28 +446,27 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
                   )}
                 </div>
               )}
-              {canThink && (
-                <button
-                  className="h-btn"
-                  aria-pressed={thinkOn}
-                  onClick={toggleThink}
-                  title="The base model thinks before it answers and before it writes code. Slower: often a minute or more."
-                  style={thinkOn ? { color: "var(--sys)", borderColor: "var(--sys-line)" } : undefined}
-                >
-                  {thinkOn ? "● " : "○ "}EXTENDED THINKING
-                </button>
+              </div>
+              {canAct && (
+                <div className="h-seg" role="group" aria-label="Mode">
+                  {(["auto", "plan"] as Act[]).map((a) => (
+                    <button key={a} aria-pressed={act === a} onClick={() => setAct(a)} title={a === "auto" ? "Talks and works: Pablo decides whether to start a run" : "Talk it through first: ends in a plan, never starts a run"}>
+                      {a}
+                    </button>
+                  ))}
+                </div>
               )}
-              {!advisor && lane !== "claude" && (
-                <div className="h-seg" role="group" aria-label="What to do">
-                  {(["auto", "talk", "do"] as Act[]).map((a) => (
-                    <button key={a} aria-pressed={act === a} onClick={() => setAct(a)} title={a === "auto" ? "Pablo decides whether to start a run" : a === "talk" ? "Only talk; never start a run" : "Start a run with these words as the task"}>
-                      {a === "auto" ? "auto" : a === "talk" ? "just talk" : "do it"}
+              {planning && (
+                <div className="h-seg" role="group" aria-label="Plan size">
+                  {(["minor", "major"] as PlanSize[]).map((p) => (
+                    <button key={p} aria-pressed={planSize === p} onClick={() => setPlanSize(p)} title={p === "minor" ? "A question or two, then the plan" : "An interview, one question at a time, then a spec and the plan"}>
+                      {p}
                     </button>
                   ))}
                 </div>
               )}
               <span className="h-dim" style={{ fontSize: 12 }}>
-                {advisor ? "Talks only · local · never trained on" : lane === "claude" ? "Asks before sending · never gets your memory" : "Runs wait for Apply"}
+                {advisor ? "Talks only · local · never trained on" : lane === "claude" ? "Asks before sending · never gets your memory" : planning ? "Plans only · nothing runs" : "Runs wait for Apply"}
               </span>
               <button className={`h-btn solid ${advisor ? "violet" : ""}`} style={{ marginLeft: "auto" }} disabled={pending !== null || !draft.trim()} onClick={() => send(draft)} aria-label="Send">
                 ↑
@@ -439,6 +496,37 @@ export function ChatPage({ mode, id, me, lanes }: { mode: Mode; id: string; me: 
           >
             <input className="h-input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="+ remember something" aria-label="Remember something" />
           </form>
+          {(files ?? []).map((f: KeptFile) => (
+            <div key={f.id} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <span className="h-mono" style={{ flex: 1, fontSize: 12, color: "var(--ink-body)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={f.name}>
+                ▤ {f.name}
+              </span>
+              <span className="h-mono h-faint" style={{ fontSize: 11 }}>{KB(f.size)}</span>
+              <button className="h-faint" style={{ background: "none", border: 0, padding: 0 }} aria-label={`Forget: ${f.name}`} title="Forget" onClick={() => api.forgetFile(f.id).then(reloadFiles)}>
+                ×
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            className={`h-drop ${dropping ? "on" : ""}`}
+            onClick={() => picker.current?.click()}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDropping(true);
+            }}
+            onDragLeave={() => setDropping(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDropping(false);
+              void keep(e.dataTransfer.files);
+            }}
+          >
+            📎 Drop files to keep · or browse
+            <span className="h-faint" style={{ fontSize: 11 }}>Plans read them. Up to 5 MB each.</span>
+          </button>
+          <input ref={picker} type="file" multiple hidden onChange={(e) => (void keep(e.target.files), (e.target.value = ""))} />
+          {fileNote && <span className="h-error" style={{ fontSize: 12 }}>{fileNote}</span>}
         </div>
         {conv && (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
