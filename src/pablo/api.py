@@ -15,7 +15,7 @@ from typing import Any, Literal
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 from pablo import __version__
@@ -150,6 +150,23 @@ def _token(request: Request) -> str:
     return request.cookies.get(TOKEN_COOKIE, "") or request.query_params.get("token", "")
 
 
+def join_page(title: str, detail: str, go: bool = False) -> str:
+    """The small page an invite link lands on. Plain HTML: the cockpit loads right after."""
+    from html import escape
+
+    refresh = '<meta http-equiv="refresh" content="2;url=/">' if go else ""
+    return (
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        f"<title>Pablo</title>{refresh}"
+        "<style>body{font:16px/1.5 system-ui,sans-serif;max-width:32rem;margin:15vh auto;"
+        "padding:0 1.5rem;color-scheme:light dark}h1{font-size:1.5rem}</style></head><body>"
+        f"<h1>{escape(title, quote=False)}</h1><p>{escape(detail, quote=False)}</p>"
+        + ('<p><a href="/">Open Pablo</a></p>' if go else "")
+        + "</body></html>"
+    )
+
+
 def create_app(
     orch: Orchestrator,
     access: Access | None = None,
@@ -204,6 +221,23 @@ def create_app(
             response.set_cookie(TOKEN_COOKIE, request.query_params["token"], httponly=True,
                                 samesite="strict")  # fmt: skip
         return response
+
+    @app.get("/join", response_class=HTMLResponse)
+    async def join(request: Request, code: str = "") -> HTMLResponse:
+        """An invite link: a tailnet peer with a valid code goes on the access list."""
+        client = request.client.host if request.client else None
+        server = request.scope.get("server")
+        headers = {k.lower(): v for k, v in request.headers.items()}
+        try:
+            caller = await run_in_threadpool(
+                gate.join, client, server[0] if server else None, headers, code
+            )
+        except Denied as exc:
+            return HTMLResponse(join_page("Not in yet", str(exc)), status_code=exc.status)
+        if caller.profile != OWNER:
+            await run_in_threadpool(store.ensure_profile, caller.profile, caller.name, caller.role)
+        first = caller.name.split()[0] if caller.name else "there"
+        return HTMLResponse(join_page(f"You're in, {first}.", "Opening Pablo…", go=True))
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:

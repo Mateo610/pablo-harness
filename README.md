@@ -31,18 +31,25 @@ Measured on our own hardware (one RTX 3090). Our eval sets, not public benchmark
 
 ## Use it (teammates)
 
-You need to be on our tailnet. Matt adds your Tailscale login to Pablo's access list.
-
-- **Browser:** open `http://pablo:8710`
-- **Terminal:**
-  ```bash
-  uv tool install git+https://github.com/Mateo610/pablo-harness
-  pablo whoami --url http://pablo:8710   # should print your login
-  pablo tui --url http://pablo:8710
-  ```
+Matt sends you an invite. It has one command: paste it into Terminal (Mac, Linux) or
+PowerShell (Windows). It installs Tailscale if you don't have it, has you accept access to
+Pablo, then opens Pablo in your browser. Bookmark that page; that's it.
 
 You get your own conversations and memory, and you see the team's runs. Only the owner applies
-changes. More in [docs/teammates.md](docs/teammates.md).
+changes. Prefer the terminal? `uv tool install git+https://github.com/Mateo610/pablo-harness`,
+then `pablo tui --url <the address you bookmarked>`. More in [docs/teammates.md](docs/teammates.md).
+
+### Inviting someone (owner)
+
+```bash
+pablo invite --share-link <link> --note "Sam"   # first time; the share link is remembered
+pablo invite --note "Alex"                      # after that
+pablo invite --list                             # who used which invite
+```
+
+The share link is a reusable Tailscale share for this machine (admin console → Machines → pablo
+→ Share → Copy invite link). Each `pablo invite` makes a one-time code that works for 7 days and
+prints a message to send. Whoever opens it from the tailnet goes on `~/.pablo/access.yaml`.
 
 ## Everyday commands
 
