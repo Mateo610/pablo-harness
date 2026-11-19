@@ -12,7 +12,7 @@ Status: `todo` · `doing` · `done`. Update this table when a gate passes.
 |---|---|---|---|
 | M0 | Pablo baseline | `bootstrap-pablo.sh` reports ready; cockpit in `--fake` mode opens from your laptop over Tailscale and a demo run can be approved | done (phone install skipped) |
 | M1 | Gateway + router and coder lanes | `pablo doctor` shows gateway up; `pablo run` makes a real diff in a scratch repo, checks run, judge scores it | done |
-| M2 | Port the good parts of ai-coding-team | Complexity predictor and TOON export live under `src/pablo/` with tests; old folder archived read-only | done in core track (archive the old folder on Pablo: see M2 prompt step 6) |
+| M2 | Port the good parts of ai-coding-team | Complexity predictor and TOON export live under `src/pablo/` with tests; old folder archived read-only | done in core track (archive the old folder on Pablo: M2 prompt step 6, on the `archive/unused-2026-11` branch) |
 | M3 | Judge and deep engines + benchmarks | Judge lane on KTransformers (or best measured engine); `docs/benchmarks.md` compares engines on tok/s, VRAM, load time | done (judge; deep is fit-math only, GLM-5.2 not downloaded) |
 | M4 | Lane swapping + resources | Swapper loads lanes on demand inside 24 GB; `/api/resources` reports VRAM/RAM; no OOM across 20 mixed runs | done (coder and judge swap; deep waits on a model that fits) |
 | M4b | Deep lane | gpt-oss-120b (or Qwen3.5-122B-A10B) joins the GPU swap group; bake-off vs coder on 6 hard tasks decides keep or drop | done (deep off: both models scored 1 better, 1 worse, 4 same) |
