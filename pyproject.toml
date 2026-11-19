@@ -20,6 +20,10 @@ dependencies = [
   "tree-sitter-python>=0.23",
 ]
 
+[project.urls]
+Repository = "https://github.com/Mateo610/pablo-harness"
+Documentation = "https://github.com/Mateo610/pablo-harness/tree/main/docs"
+
 [project.scripts]
 pablo = "pablo.cli:app"
 

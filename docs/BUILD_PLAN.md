@@ -45,7 +45,7 @@ Status: `todo` · `doing` · `done`. Update this table when a gate passes.
 | C2 | Phone remote (PWA) | Installable on phone over Tailscale; approve, reject, hold to talk | done (voice waits on the voice lane) |
 | C3 | Overnight queue + morning brief | Tasks queued for the deep lane run overnight; brief summarizes results at 7:30 | done (runs inside `pablo serve`; real overnight test after M3) |
 | C4 | Hunk review, replay, compare | Accept per hunk; replay a run step by step; same task on two lanes side by side | done |
-| C5 | v0.1 public release | README with demo GIF, architecture diagram, install guide; repo flipped public | todo |
+| C5 | v0.1 public release | README with demo GIF, architecture diagram, install guide; repo flipped public | doing (repo public; README, docs index and `docs/running.md` written 2026-11-18; demo GIF still to do) |
 | C6 | Conversations + memory | Multi-turn chats per profile in `~/.pablo/pablo.db`; RUN lines start ordinary runs; notes kept only when you keep them; FTS search; nothing of memory goes to Claude | done (API + `pablo chat` / `pablo memory`; cockpit v2 Chat UI next) |
 | C7 | Profiles + teammate access | Tailscale identity → profile, owner/member roles, only the owner approves | done (`tailscale whois` per peer IP; headers never trusted; `~/.pablo/access.yaml`; see `docs/teammates.md`) |
 | C8 | Cockpit v2 in the browser | Home, Chat, Advisor, Agents live on the API; Voice shows the orb until M9b; v1 tools stay as Work | doing (pages live; voice lane, phone layout for the new pages, GPU mode switch to come) |

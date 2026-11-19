@@ -23,7 +23,7 @@ and leaves the merge decision to the human. Claude is an escalation lane, never 
   - `evals.py` `pablo eval`: the 30-task suite in `evals/suite`, scored by hidden tests the model never sees
 - `web/` cockpit (React + Vite + cmdk); `Shell.tsx` pages (Home, Chat, Advisor, Voice, Agents, Work), `Work.tsx` Work's three tabs: Changes (the review desk), Plans (every chat's plan), Workbench (v1: `App.tsx` + `RunView.tsx`), phone `Phone.tsx` (PWA), styled only with tokens in `web/src/tokens.css`
 - `config/` lanes and the LiteLLM gateway · `scripts/` Pablo bootstrap and model archiving
-- `docs/cursor-prompts/` one prompt per milestone, each with acceptance checks
+- `docs/` index in `docs/README.md`; `docs/cursor-prompts/` one prompt per open milestone, each with acceptance checks
 
 ## Commands
 ```
